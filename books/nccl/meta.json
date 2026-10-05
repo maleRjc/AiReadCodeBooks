@@ -1,0 +1,224 @@
+{
+  "slug": "nccl",
+  "title": "NCCL Deep Dive: The GPU Journey of an AllReduce Collective",
+  "titleZh": "NCCL 源码解读：一个 AllReduce 的 GPU 旅程",
+  "repo": "NVIDIA/nccl",
+  "repoUrl": "https://github.com/NVIDIA/nccl",
+  "stars": "6.2k",
+  "language": "C++/CUDA",
+  "category": "AI Infra & Deep Learning",
+  "categoryZh": "AI Infra 与大模型系统工程",
+  "chapterCount": 25,
+  "tags": [
+    "AllReduce",
+    "Topology Discovery",
+    "Ring/Tree Algorithms",
+    "GPUDirect RDMA",
+    "FACT Source Links"
+  ],
+  "summary": "A 25-chapter tour-de-force of NVIDIA NCCL: from topology graph discovery and algorithm tuning to multi-channel kernel scheduling, device-side LL/LL128/Simple protocols, and InfiniBand GPUDirect RDMA.",
+  "summaryZh": "全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。",
+  "webReaderUrl": "https://aireadcode.com/books/nccl.html",
+  "chapters": [
+    {
+      "index": 1,
+      "slug": "allreduce-external-behavior",
+      "titleEn": "Chapter 01: Execution & Phenomenon: External Behavior of an AllReduce",
+      "titleZh": "第 1 章：运行与现象：从一个 AllReduce 开始看外部行为",
+      "pathEn": "en/01-allreduce-external-behavior.md",
+      "pathZh": "zh/01-allreduce-external-behavior.md"
+    },
+    {
+      "index": 2,
+      "slug": "core-abstractions-topology-transport",
+      "titleEn": "Chapter 02: Core Abstraction Model: Collectives, Topology, Algorithms & Transports",
+      "titleZh": "第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层",
+      "pathEn": "en/02-core-abstractions-topology-transport.md",
+      "pathZh": "zh/02-core-abstractions-topology-transport.md"
+    },
+    {
+      "index": 3,
+      "slug": "ncclcomminitrank-initialization",
+      "titleEn": "Chapter 03: Initialization: How ncclCommInitRank Forms a Communicator Domain",
+      "titleZh": "第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域",
+      "pathEn": "en/03-ncclcomminitrank-initialization.md",
+      "pathZh": "zh/03-ncclcomminitrank-initialization.md"
+    },
+    {
+      "index": 4,
+      "slug": "topology-discovery-and-graph-search",
+      "titleEn": "Chapter 04: Topology Discovery & Graph Search: Mapping Multi-GPU Interconnects",
+      "titleZh": "第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联",
+      "pathEn": "en/04-topology-discovery-and-graph-search.md",
+      "pathZh": "zh/04-topology-discovery-and-graph-search.md"
+    },
+    {
+      "index": 5,
+      "slug": "tuning-algorithm-and-protocol-selection",
+      "titleEn": "Chapter 05: Tuning & Protocol Selection: Deciding Optimal Paths and Channels",
+      "titleZh": "第 5 章：算法与协议选型：tuning 模块如何决定通信路径",
+      "pathEn": "en/05-tuning-algorithm-and-protocol-selection.md",
+      "pathZh": "zh/05-tuning-algorithm-and-protocol-selection.md"
+    },
+    {
+      "index": 6,
+      "slug": "ncclallreduce-task-dispatch",
+      "titleEn": "Chapter 06: Collective Dispatch: Converting ncclAllReduce into Executable Tasks",
+      "titleZh": "第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务",
+      "pathEn": "en/06-ncclallreduce-task-dispatch.md",
+      "pathZh": "zh/06-ncclallreduce-task-dispatch.md"
+    },
+    {
+      "index": 7,
+      "slug": "task-scheduler-and-channels",
+      "titleEn": "Chapter 07: Task Scheduler: Multi-Channel & Kernel Execution Orchestration",
+      "titleZh": "第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序",
+      "pathEn": "en/07-task-scheduler-and-channels.md",
+      "pathZh": "zh/07-task-scheduler-and-channels.md"
+    },
+    {
+      "index": 8,
+      "slug": "kernel-launch-and-gpu-execution",
+      "titleEn": "Chapter 08: Kernel Launch & Device Execution: From Host Dispatch to GPU Warps",
+      "titleZh": "第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑",
+      "pathEn": "en/08-kernel-launch-and-gpu-execution.md",
+      "pathZh": "zh/08-kernel-launch-and-gpu-execution.md"
+    },
+    {
+      "index": 9,
+      "slug": "device-primitives-ll-ll128-simple",
+      "titleEn": "Chapter 09: Device Primitives: Data Transport in LL, LL128 & Simple Protocols",
+      "titleZh": "第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现",
+      "pathEn": "en/09-device-primitives-ll-ll128-simple.md",
+      "pathZh": "zh/09-device-primitives-ll-ll128-simple.md"
+    },
+    {
+      "index": 10,
+      "slug": "collective-kernels-allreduce-allgather",
+      "titleEn": "Chapter 10: Collective Kernels: Device Implementations of AllReduce & AllGather",
+      "titleZh": "第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现",
+      "pathEn": "en/10-collective-kernels-allreduce-allgather.md",
+      "pathZh": "zh/10-collective-kernels-allreduce-allgather.md"
+    },
+    {
+      "index": 11,
+      "slug": "transport-layer-p2p-shm-net-nvls",
+      "titleEn": "Chapter 11: Transport Abstraction: Unifying P2P, SHM, NET & NVLS Interfaces",
+      "titleZh": "第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下",
+      "pathEn": "en/11-transport-layer-p2p-shm-net-nvls.md",
+      "pathZh": "zh/11-transport-layer-p2p-shm-net-nvls.md"
+    },
+    {
+      "index": 12,
+      "slug": "proxy-threads-async-io-scheduler",
+      "titleEn": "Chapter 12: Proxy Threads: Decoupling Asynchronous Network I/O from GPU Kernels",
+      "titleZh": "第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行",
+      "pathEn": "en/12-proxy-threads-async-io-scheduler.md",
+      "pathZh": "zh/12-proxy-threads-async-io-scheduler.md"
+    },
+    {
+      "index": 13,
+      "slug": "infiniband-net-ib-verbs-gpudirect-rdma",
+      "titleEn": "Chapter 13: InfiniBand Networking: verbs Wrappers & GPUDirect RDMA Architecture",
+      "titleZh": "第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA",
+      "pathEn": "en/13-infiniband-net-ib-verbs-gpudirect-rdma.md",
+      "pathZh": "zh/13-infiniband-net-ib-verbs-gpudirect-rdma.md"
+    },
+    {
+      "index": 14,
+      "slug": "symmetric-memory-and-nvls-multicast",
+      "titleEn": "Chapter 14: Symmetric Memory & NVLS: Hardware Multicast & LSA Direct Addressing",
+      "titleZh": "第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址",
+      "pathEn": "en/14-symmetric-memory-and-nvls-multicast.md",
+      "pathZh": "zh/14-symmetric-memory-and-nvls-multicast.md"
+    },
+    {
+      "index": 15,
+      "slug": "rma-and-gin-remote-gpu-communication",
+      "titleEn": "Chapter 15: RMA & GIN: Remote Memory Access & GPU-Direct Interconnect Evolution",
+      "titleZh": "第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进",
+      "pathEn": "en/15-rma-and-gin-remote-gpu-communication.md",
+      "pathZh": "zh/15-rma-and-gin-remote-gpu-communication.md"
+    },
+    {
+      "index": 16,
+      "slug": "plugin-ecosystem-and-env-variables",
+      "titleEn": "Chapter 16: Plugin Ecosystem: Tuner Hooks, Profiler Interfaces & Environment Tuning",
+      "titleZh": "第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为",
+      "pathEn": "en/16-plugin-ecosystem-and-env-variables.md",
+      "pathZh": "zh/16-plugin-ecosystem-and-env-variables.md"
+    },
+    {
+      "index": 17,
+      "slug": "ras-fault-tolerance-and-degradation",
+      "titleEn": "Chapter 17: RAS & Fault Tolerance: Link Failure Detection & Graceful Degradation",
+      "titleZh": "第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级",
+      "pathEn": "en/17-ras-fault-tolerance-and-degradation.md",
+      "pathZh": "zh/17-ras-fault-tolerance-and-degradation.md"
+    },
+    {
+      "index": 18,
+      "slug": "memory-allocator-and-registration-cache",
+      "titleEn": "Chapter 18: Memory Allocator & Registration Cache: Host-to-Device Memory Optimization",
+      "titleZh": "第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化",
+      "pathEn": "en/18-memory-allocator-and-registration-cache.md",
+      "pathZh": "zh/18-memory-allocator-and-registration-cache.md"
+    },
+    {
+      "index": 19,
+      "slug": "device-communication-abi-devcomm",
+      "titleEn": "Chapter 19: Device Communicator & ABI Compatibility: devcomm Structure & Kernel Contracts",
+      "titleZh": "第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约",
+      "pathEn": "en/19-device-communication-abi-devcomm.md",
+      "pathZh": "zh/19-device-communication-abi-devcomm.md"
+    },
+    {
+      "index": 20,
+      "slug": "device-api-and-kernel-fusion",
+      "titleEn": "Chapter 20: Device Native APIs & Kernel Fusion: Collective Fusion in Custom Kernels",
+      "titleZh": "第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践",
+      "pathEn": "en/20-device-api-and-kernel-fusion.md",
+      "pathZh": "zh/20-device-api-and-kernel-fusion.md"
+    },
+    {
+      "index": 21,
+      "slug": "performance-tuning-and-benchmarking",
+      "titleEn": "Chapter 21: Performance Tuning in Practice: nccl-tests, Benchmarks & Methodology",
+      "titleZh": "第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论",
+      "pathEn": "en/21-performance-tuning-and-benchmarking.md",
+      "pathZh": "zh/21-performance-tuning-and-benchmarking.md"
+    },
+    {
+      "index": 22,
+      "slug": "production-troubleshooting-and-pitfalls",
+      "titleEn": "Chapter 22: Production Troubleshooting: Deadlocks, Timeouts & Diagnosis Workflows",
+      "titleZh": "第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案",
+      "pathEn": "en/22-production-troubleshooting-and-pitfalls.md",
+      "pathZh": "zh/22-production-troubleshooting-and-pitfalls.md"
+    },
+    {
+      "index": 23,
+      "slug": "ecosystem-nccl4py-nccl4rust-nccl-ep",
+      "titleEn": "Chapter 23: Ecosystem Extensions: nccl4py, nccl4rust, nccl_ep & nccl_ubx Bindings",
+      "titleZh": "第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目",
+      "pathEn": "en/23-ecosystem-nccl4py-nccl4rust-nccl-ep.md",
+      "pathZh": "zh/23-ecosystem-nccl4py-nccl4rust-nccl-ep.md"
+    },
+    {
+      "index": 24,
+      "slug": "architecture-evolution-programmable-comms",
+      "titleEn": "Chapter 24: Architectural Evolution: From Static Communication to Programmable Fabric",
+      "titleZh": "第 24 章：架构演进与未来方向：从静态通信到可编程通信",
+      "pathEn": "en/24-architecture-evolution-programmable-comms.md",
+      "pathZh": "zh/24-architecture-evolution-programmable-comms.md"
+    },
+    {
+      "index": 25,
+      "slug": "retrospective-allreduce-complete-journey",
+      "titleEn": "Chapter 25: Architectural Retrospective: The Complete Journey & Essence of AllReduce",
+      "titleZh": "第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓",
+      "pathEn": "en/25-retrospective-allreduce-complete-journey.md",
+      "pathZh": "zh/25-retrospective-allreduce-complete-journey.md"
+    }
+  ]
+}

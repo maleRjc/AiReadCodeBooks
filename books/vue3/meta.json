@@ -1,0 +1,136 @@
+{
+  "slug": "vue3",
+  "title": "Vue 3 Core Architecture: From Source Code to Full-Pipeline Engineering",
+  "titleZh": "Vue 3 源码与工程化全景架构",
+  "repo": "vuejs/core",
+  "repoUrl": "https://github.com/vuejs/core",
+  "stars": "45.8k",
+  "language": "TypeScript",
+  "category": "Frontend & Web Runtimes",
+  "categoryZh": "前端底层与全栈运行时",
+  "chapterCount": 14,
+  "tags": [
+    "Monorepo",
+    "SFC Compiler",
+    "Reactivity",
+    "Tree-shaking",
+    "FACT Source Links"
+  ],
+  "summary": "A comprehensive deep dive into the official vuejs/core repository, breaking down the monorepo architecture, compiler pipelines, reactivity subsystem, type testing framework, and production release automation.",
+  "summaryZh": "本书以 Vue 官方 core 仓库为蓝本，围绕「一次代码提交如何变成可发布的 npm 包」这一主线，逐层剖析 monorepo 工程化架构、构建流水线、类型测试体系、Playground 调试工具链与发布自动化机制。",
+  "webReaderUrl": "https://aireadcode.com/books/vue3.html",
+  "chapters": [
+    {
+      "index": 1,
+      "slug": "monorepo-philosophy",
+      "titleEn": "Chapter 01: Macro Cognition: Engineering Philosophy of the core Repository",
+      "titleZh": "第 1 章：宏观认知：core 仓库的工程化哲学",
+      "pathEn": "en/01-monorepo-philosophy.md",
+      "pathZh": "zh/01-monorepo-philosophy.md"
+    },
+    {
+      "index": 2,
+      "slug": "build-pipeline",
+      "titleEn": "Chapter 02: Build Closed-Loop: End-to-End Call Chain of a Build",
+      "titleZh": "第 2 章：构建闭环：一次构建的端到端调用链",
+      "pathEn": "en/02-build-pipeline.md",
+      "pathZh": "zh/02-build-pipeline.md"
+    },
+    {
+      "index": 3,
+      "slug": "dev-scripts-and-sfc",
+      "titleEn": "Chapter 03: Dynamic Build Pipeline: dev Script & SFC Precompilation Protocol",
+      "titleZh": "第 3 章：动态构建链路：dev 脚本与 SFC 预编译协议",
+      "pathEn": "en/03-dev-scripts-and-sfc.md",
+      "pathZh": "zh/03-dev-scripts-and-sfc.md"
+    },
+    {
+      "index": 4,
+      "slug": "tree-shaking-and-typing",
+      "titleEn": "Chapter 04: The Devil in the Details: Tree-shaking Semantics & Type Declarations",
+      "titleZh": "第 4 章：魔鬼在细节：Tree-shaking 语义与类型声明生成",
+      "pathEn": "en/04-tree-shaking-and-typing.md",
+      "pathZh": "zh/04-tree-shaking-and-typing.md"
+    },
+    {
+      "index": 5,
+      "slug": "type-testing-pipeline",
+      "titleEn": "Chapter 05: Type Testing Pipeline: Guardians of Source Code & Type Contracts",
+      "titleZh": "第 5 章：类型测试流水线：源码与类型契约的守门人",
+      "pathEn": "en/05-type-testing-pipeline.md",
+      "pathZh": "zh/05-type-testing-pipeline.md"
+    },
+    {
+      "index": 6,
+      "slug": "monorepo-package-decoupling",
+      "titleEn": "Chapter 06: Modular Monorepo: Decoupling Public packages & packages-private",
+      "titleZh": "第 6 章：模块化与 Monorepo：packages 与 packages-private 的解耦设计",
+      "pathEn": "en/06-monorepo-package-decoupling.md",
+      "pathZh": "zh/06-monorepo-package-decoupling.md"
+    },
+    {
+      "index": 7,
+      "slug": "reactivity-subsystem",
+      "titleEn": "Chapter 07: Core Reactivity Subsystem: Two-way Binding & Scheduler in @vue/reactivity",
+      "titleZh": "第 7 章：核心响应式子系统：@vue/reactivity 的双向绑定与调度",
+      "pathEn": "en/07-reactivity-subsystem.md",
+      "pathZh": "zh/07-reactivity-subsystem.md"
+    },
+    {
+      "index": 8,
+      "slug": "runtime-core-vdom",
+      "titleEn": "Chapter 08: Runtime Core: Virtual DOM & Component Lifecycle in @vue/runtime-core",
+      "titleZh": "第 8 章：运行时核心：@vue/runtime-core 的虚拟 DOM 与组件生命周期",
+      "pathEn": "en/08-runtime-core-vdom.md",
+      "pathZh": "zh/08-runtime-core-vdom.md"
+    },
+    {
+      "index": 9,
+      "slug": "compiler-core-ast",
+      "titleEn": "Chapter 09: Compiler Core: AST Transformation & Codegen in @vue/compiler-core",
+      "titleZh": "第 9 章：编译器核心：@vue/compiler-core 的 AST 转换与代码生成",
+      "pathEn": "en/09-compiler-core-ast.md",
+      "pathZh": "zh/09-compiler-core-ast.md"
+    },
+    {
+      "index": 10,
+      "slug": "compiler-sfc-parsing",
+      "titleEn": "Chapter 10: SFC Compilation: Block Parsing & Code Splitting in @vue/compiler-sfc",
+      "titleZh": "第 10 章：SFC 单文件组件编译：@vue/compiler-sfc 的解析与代码块分割",
+      "pathEn": "en/10-compiler-sfc-parsing.md",
+      "pathZh": "zh/10-compiler-sfc-parsing.md"
+    },
+    {
+      "index": 11,
+      "slug": "runtime-dom-events",
+      "titleEn": "Chapter 11: Platform Runtime: DOM Operations & Event Dispatch in @vue/runtime-dom",
+      "titleZh": "第 11 章：平台特定运行时：@vue/runtime-dom 的 DOM 操作与事件绑定",
+      "pathEn": "en/11-runtime-dom-events.md",
+      "pathZh": "zh/11-runtime-dom-events.md"
+    },
+    {
+      "index": 12,
+      "slug": "tooling-and-playground",
+      "titleEn": "Chapter 12: Tooling & Playground: Engineering Support in sfc-playground & template-explorer",
+      "titleZh": "第 12 章：开发调试与生态工具链：sfc-playground 与 template-explorer 的工程化支撑",
+      "pathEn": "en/12-tooling-and-playground.md",
+      "pathZh": "zh/12-tooling-and-playground.md"
+    },
+    {
+      "index": 13,
+      "slug": "performance-and-feature-flags",
+      "titleEn": "Chapter 13: Performance Optimization: Tree-shaking, Feature Flags & Rollup Plugins",
+      "titleZh": "第 13 章：性能优化与打包权衡：Tree-shaking、Feature Flags 与 Rollup 插件设计",
+      "pathEn": "en/13-performance-and-feature-flags.md",
+      "pathZh": "zh/13-performance-and-feature-flags.md"
+    },
+    {
+      "index": 14,
+      "slug": "architecture-evolution-and-best-practices",
+      "titleEn": "Chapter 14: Architectural Evolution & Future Outlook: Design Trade-offs & Pitfalls",
+      "titleZh": "第 14 章：架构演进与未来展望：Vue 3 源码的设计权衡与避坑指南",
+      "pathEn": "en/14-architecture-evolution-and-best-practices.md",
+      "pathZh": "zh/14-architecture-evolution-and-best-practices.md"
+    }
+  ]
+}
