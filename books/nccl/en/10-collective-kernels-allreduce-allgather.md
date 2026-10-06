@@ -18,7 +18,7 @@ Ring 算法的核心状态在 `ncclRing` 结构里（定义在 device.h，本章
 - `ring->index`：本 rank 在环中的逻辑位置，用于计算「第 j 步该处理哪个 chunk」。
 - `ring->prev` / `ring->next`：前驱和后继 rank 编号，作为 `Primitives` 构造函数的 recv/send peer 参数。
 
-关键的分块参数由 `ncclCollCbdPart` 计算（[FACT:src/device/all_reduce.h:21-22]）：
+关键的分块参数由 `ncclCollCbdPart` 计算（[FACT:src/device/all_reduce.h:21-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L21-L22)）：
 
 ```
 ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, sizeof(T), (ssize_t*)nullptr, &gridOffset, &channelCount, &chunkCount);
@@ -26,13 +26,13 @@ ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, sizeof(T), (ssize_t*)nullp
 
 这个函数把整个通信域的数据按 channel 切分，输出三个值：`gridOffset`（本 channel 负责的数据在整个 buffer 中的起始偏移）、`channelCount`（本 channel 负责的元素总数）、`chunkCount`（每个 rank 分到的 chunk 元素数）。`chunkCount` 是 Ring 算法的粒度——每一步搬运一个 chunk。
 
-`loopCount = nranks * chunkCount`（[FACT:src/device/all_reduce.h:23]）表示「转一整圈」处理的数据量。外层循环 `for (elemOffset = 0; elemOffset < channelCount; elemOffset += loopCount)`（[FACT:src/device/all_reduce.h:34]）意味着：如果 channel 数据量超过一圈能处理的量，就分多圈跑。
+`loopCount = nranks * chunkCount`（[FACT:src/device/all_reduce.h:23](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L23)）表示「转一整圈」处理的数据量。外层循环 `for (elemOffset = 0; elemOffset < channelCount; elemOffset += loopCount)`（[FACT:src/device/all_reduce.h:34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L34)）意味着：如果 channel 数据量超过一圈能处理的量，就分多圈跑。
 
 ### Step-by-Step Walkthrough：一次 Ring AllReduce 的完整调用流
 
 代入场景：4 个 rank（nranks=4），本 rank 的 `ringIx=0`，`chunkCount=100`，`channelCount=400`（正好一圈）。
 
-**第 0 步：把「自己的 chunk」推给下一个 GPU**（[FACT:src/device/all_reduce.h:42-47]）
+**第 0 步：把「自己的 chunk」推给下一个 GPU**（[FACT:src/device/all_reduce.h:42-47](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L42-L47)）
 
 ```
 chunk = modRanks(ringIx + nranks - 1);   // = 3
@@ -42,9 +42,9 @@ nelem = min(chunkCount, remCount - chunkOffset);
 prims.directSend(offset, offset, nelem);
 ```
 
-`modRanks` 是个 lambda，做模 nranks 的减法（[FACT:src/device/all_reduce.h:40]）。`ringIx + nranks - 1` 表示「本 rank 的前一个 chunk 编号」。为什么第 0 步发的是 chunk 3？因为 Ring 的 reduce-scatter 阶段，每个 rank 先把自己「不该保留」的那份数据（即前驱 rank 的 chunk）发出去。`directSend` 只发不接，因为此时还没收到任何数据。
+`modRanks` 是个 lambda，做模 nranks 的减法（[FACT:src/device/all_reduce.h:40](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L40)）。`ringIx + nranks - 1` 表示「本 rank 的前一个 chunk 编号」。为什么第 0 步发的是 chunk 3？因为 Ring 的 reduce-scatter 阶段，每个 rank 先把自己「不该保留」的那份数据（即前驱 rank 的 chunk）发出去。`directSend` 只发不接，因为此时还没收到任何数据。
 
-**第 1 到 nranks-2 步：边收边归约边转发**（[FACT:src/device/all_reduce.h:50-56]）
+**第 1 到 nranks-2 步：边收边归约边转发**（[FACT:src/device/all_reduce.h:50-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L50-L56)）
 
 ```
 for (int j = 2; j < nranks; ++j) {
@@ -56,7 +56,7 @@ for (int j = 2; j < nranks; ++j) {
 
 `directRecvReduceDirectSend` 是 Ring 的核心原语：从 `prev` 收一个 chunk，与本地数据做归约（比如加法），再把结果发给 `next`。注意 `offset` 和 `nelem` 在每次迭代都重新计算——因为每步处理的 chunk 不同。j 从 2 到 nranks-1，共 nranks-2 步。
 
-**第 nranks-1 步：收下最后一个 chunk 并归约，产生最终结果**（[FACT:src/device/all_reduce.h:58-64]）
+**第 nranks-1 步：收下最后一个 chunk 并归约，产生最终结果**（[FACT:src/device/all_reduce.h:58-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L58-L64)）
 
 ```
 chunk = ringIx + 0;
@@ -66,7 +66,7 @@ prims.directRecvReduceCopyDirectSend(offset, offset, nelem, /*postOp=*/true);
 
 这一步的 `postOp=true` 是关键：归约完成后要执行后置操作（比如求平均时的除法）。`directRecvReduceCopyDirectSend` 比上一步多了个 `Copy`——把归约结果同时写入本地 recvbuff 和发往 next。至此 reduce-scatter 阶段结束，每个 rank 手里有一个「完整归约」的 chunk。
 
-**all-gather 阶段：nranks-2 步纯转发**（[FACT:src/device/all_reduce.h:66-73]）
+**all-gather 阶段：nranks-2 步纯转发**（[FACT:src/device/all_reduce.h:66-73](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L66-L73)）
 
 ```
 for (int j = 1; j < nranks - 1; ++j) {
@@ -78,7 +78,7 @@ for (int j = 1; j < nranks - 1; ++j) {
 
 注意这里用的是 `directRecvCopyDirectSend`，没有 `Reduce`——因为数据已经归约完了，只需复制转发。
 
-**最后一步：收下最后一个 chunk**（[FACT:src/device/all_reduce.h:75-81]）
+**最后一步：收下最后一个 chunk**（[FACT:src/device/all_reduce.h:75-81](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L75-L81)）
 
 ```
 chunk = modRanks(ringIx + 1);
@@ -112,7 +112,7 @@ flowchart TD
 
 ### 生产踩坑：`remCount < loopCount` 时的对齐陷阱
 
-[FACT:src/device/all_reduce.h:38] 有一行容易被忽略的代码：
+[FACT:src/device/all_reduce.h:38](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L38) 有一行容易被忽略的代码：
 
 ```
 if (remCount < loopCount) chunkCount = alignUp(divUp(remCount, nranks), 16 / sizeof(T));
@@ -139,9 +139,9 @@ Tree 的状态在 `ncclTree` 里：
 
 ### Step-by-Step Walkthrough：runTreeUpDown 的三分支
 
-`runTreeUpDown` 的第一个代码块是归约阶段（[FACT:src/device/all_reduce.h:96-118]），根据本 rank 在树中的位置分三种情况：
+`runTreeUpDown` 的第一个代码块是归约阶段（[FACT:src/device/all_reduce.h:96-118](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L96-L118)），根据本 rank 在树中的位置分三种情况：
 
-**情况 A：本 rank 是根（`tree->up == -1`）**（[FACT:src/device/all_reduce.h:99-104]）
+**情况 A：本 rank 是根（`tree->up == -1`）**（[FACT:src/device/all_reduce.h:99-104](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L99-L104)）
 
 ```
 prims.directRecvReduceCopy(offset, offset, nelem, /*postOp=*/true);
@@ -149,7 +149,7 @@ prims.directRecvReduceCopy(offset, offset, nelem, /*postOp=*/true);
 
 根节点只收不发，从所有子节点收数据、归约、写入 recvbuff。`postOp=true` 执行后置操作。
 
-**情况 B：本 rank 是叶子（`tree->down[0] == -1`）**（[FACT:src/device/all_reduce.h:105-110]）
+**情况 B：本 rank 是叶子（`tree->down[0] == -1`）**（[FACT:src/device/all_reduce.h:105-110](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L105-L110)）
 
 ```
 prims.directSend(offset, offset, nelem);
@@ -157,7 +157,7 @@ prims.directSend(offset, offset, nelem);
 
 叶子节点只发不收，把自己的数据发给父节点。
 
-**情况 C：中间节点**（[FACT:src/device/all_reduce.h:111-117]）
+**情况 C：中间节点**（[FACT:src/device/all_reduce.h:111-117](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L111-L117)）
 
 ```
 prims.directRecvReduceDirectSend(offset, offset, nelem);
@@ -165,11 +165,11 @@ prims.directRecvReduceDirectSend(offset, offset, nelem);
 
 从子节点收、归约、发给父节点。
 
-广播阶段（[FACT:src/device/all_reduce.h:120-142]）逻辑对称：根节点 `directSendFromOutput`（从 recvbuff 发），叶子节点 `directRecv`，中间节点 `directRecvCopyDirectSend`。
+广播阶段（[FACT:src/device/all_reduce.h:120-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L120-L142)）逻辑对称：根节点 `directSendFromOutput`（从 recvbuff 发），叶子节点 `directRecv`，中间节点 `directRecvCopyDirectSend`。
 
 ### runTreeSplit：用线程拆分实现归约-广播流水
 
-`runTreeUpDown` 的问题是：归约阶段和广播阶段串行，中间有个全局同步点。`runTreeSplit` 把线程分成两组（[FACT:src/device/all_reduce.h:155-164]）：
+`runTreeUpDown` 的问题是：归约阶段和广播阶段串行，中间有个全局同步点。`runTreeSplit` 把线程分成两组（[FACT:src/device/all_reduce.h:155-164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L155-L164)）：
 
 ```
 if (Proto::Id == NCCL_PROTO_SIMPLE) {
@@ -182,7 +182,7 @@ if (Proto::Id == NCCL_PROTO_SIMPLE) {
 
 Simple 协议对半分；LL/LL128 协议按 7:3 分，因为「从 3 个源收数据做归约」比「发给 3 个目标」计算密集，所以归约组多分线程。
 
-然后 `tid < nthreadsSplit` 的线程做归约上推（[FACT:src/device/all_reduce.h:175-202]），其余线程做广播下推（[FACT:src/device/all_reduce.h:203-224]）。两组通过 `Proto::MaxGroupWidth` 偏移量区分各自的通信组（[FACT:src/device/all_reduce.h:189] 的 `0 * Proto::MaxGroupWidth` 和 [FACT:src/device/all_reduce.h:210] 的 `1 * Proto::MaxGroupWidth`）。
+然后 `tid < nthreadsSplit` 的线程做归约上推（[FACT:src/device/all_reduce.h:175-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L175-L202)），其余线程做广播下推（[FACT:src/device/all_reduce.h:203-224](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L203-L224)）。两组通过 `Proto::MaxGroupWidth` 偏移量区分各自的通信组（[FACT:src/device/all_reduce.h:189](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L189) 的 `0 * Proto::MaxGroupWidth` 和 [FACT:src/device/all_reduce.h:210](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L210) 的 `1 * Proto::MaxGroupWidth`）。
 
 ### 设计思考：为什么 Tree 的根节点要特殊处理
 
@@ -190,7 +190,7 @@ Simple 协议对半分；LL/LL128 协议按 7:3 分，因为「从 3 个源收�
 
 ### 生产踩坑：Tree 算法的「热点根」问题
 
-Tree 的根节点承担了所有归约流量，如果根节点所在 GPU 恰好是慢节点（比如 PCIe 带宽受限），整个 AllReduce 会被拖慢。NCCL 的应对是：**每个 channel 选不同的根**，把根节点的负载分散到多个 rank。这就是为什么 `runTreeSplit` 里根节点分支用 `FanSymmetric<NCCL_MAX_TREE_ARITY_TOP>`（[FACT:src/device/all_reduce.h:168]）——它要同时处理多个子节点的归约。生产环境如果发现 Tree AllReduce 性能不均，检查 channel 的根节点分布是否均匀。
+Tree 的根节点承担了所有归约流量，如果根节点所在 GPU 恰好是慢节点（比如 PCIe 带宽受限），整个 AllReduce 会被拖慢。NCCL 的应对是：**每个 channel 选不同的根**，把根节点的负载分散到多个 rank。这就是为什么 `runTreeSplit` 里根节点分支用 `FanSymmetric<NCCL_MAX_TREE_ARITY_TOP>`（[FACT:src/device/all_reduce.h:168](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L168)）——它要同时处理多个子节点的归约。生产环境如果发现 Tree AllReduce 性能不均，检查 channel 的根节点分布是否均匀。
 
 ## 10.3 AllGather 与 ReduceScatter：Ring 的「半程」变体
 
@@ -202,9 +202,9 @@ AllGather 和 ReduceScatter 本质上是 AllReduce 的两个阶段各自独立�
 
 ### AllGather 的 Ring 实现
 
-`all_gather.h` 的 `runRing`（[FACT:src/device/all_gather.h:14-88]）比 AllReduce 简单：没有归约，只有复制转发。
+`all_gather.h` 的 `runRing`（[FACT:src/device/all_gather.h:14-88](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L14-L88)）比 AllReduce 简单：没有归约，只有复制转发。
 
-**第 0 步：把自己的数据推给下一个 GPU**（[FACT:src/device/all_gather.h:51-60]）
+**第 0 步：把自己的数据推给下一个 GPU**（[FACT:src/device/all_gather.h:51-60](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L51-L60)）
 
 ```
 rankDest = ringRanks[0];
@@ -218,13 +218,13 @@ if ((inputBuf + dataOffset == outputBuf + offset) || isNetOffload) {
 
 这里有个 in-place 判断：如果 `inputBuf + dataOffset == outputBuf + offset`，说明输入输出是同一块内存（in-place AllGather），直接 `directSend`；否则要 `directCopySend`（先拷贝到输出再发）。
 
-**中间 nranks-2 步：纯转发**（[FACT:src/device/all_gather.h:62-67]）
+**中间 nranks-2 步：纯转发**（[FACT:src/device/all_gather.h:62-67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L62-L67)）
 
 ```
 prims.directRecvCopyDirectSend(offset, offset, nelem);
 ```
 
-**最后一步：收下最后一块**（[FACT:src/device/all_gather.h:69-74]）
+**最后一步：收下最后一块**（[FACT:src/device/all_gather.h:69-74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L69-L74)）
 
 ```
 prims.directRecv(offset, nelem);
@@ -232,7 +232,7 @@ prims.directRecv(offset, nelem);
 
 ### isNetOffload：单 warp 驱动网络 + 多 warp 并行拷贝
 
-[FACT:src/device/all_gather.h:28-36] 有个特殊分支：
+[FACT:src/device/all_gather.h:28-36](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L28-L36) 有个特殊分支：
 
 ```
 if (isNetOffload) {
@@ -243,15 +243,15 @@ if (isNetOffload) {
 }
 ```
 
-当 `isNetOffload=true`（单 RPN + 网络注册模式）时，只用 1 个 warp 驱动 Ring 通信，其余 warp 并行做「源数据拷贝到目标 buffer」（[FACT:src/device/all_gather.h:76-82]）。这是为了在非 in-place AllGather 时，把拷贝开销和通信开销重叠。
+当 `isNetOffload=true`（单 RPN + 网络注册模式）时，只用 1 个 warp 驱动 Ring 通信，其余 warp 并行做「源数据拷贝到目标 buffer」（[FACT:src/device/all_gather.h:76-82](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L76-L82)）。这是为了在非 in-place AllGather 时，把拷贝开销和通信开销重叠。
 
-最后有个 `barrier_sync(14, nthreads)`（[FACT:src/device/all_gather.h:87]），注释解释得很清楚：必须等所有 warp 完成，否则下一个 work 可能复用 outputBuf 导致竞争。用 barrier 14 是为了避开 prims 自己的 barrier 和 `__syncthreads()`。
+最后有个 `barrier_sync(14, nthreads)`（[FACT:src/device/all_gather.h:87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L87)），注释解释得很清楚：必须等所有 warp 完成，否则下一个 work 可能复用 outputBuf 导致竞争。用 barrier 14 是为了避开 prims 自己的 barrier 和 `__syncthreads()`。
 
 ### ReduceScatter 的 Ring 实现
 
-`reduce_scatter.h` 的 `runRing`（[FACT:src/device/reduce_scatter.h:14-56]）是 AllReduce 的 reduce-scatter 阶段单独抽出：
+`reduce_scatter.h` 的 `runRing`（[FACT:src/device/reduce_scatter.h:14-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L14-L56)）是 AllReduce 的 reduce-scatter 阶段单独抽出：
 
-**第 0 步：把自己的数据推给下一个 GPU**（[FACT:src/device/reduce_scatter.h:39-42]）
+**第 0 步：把自己的数据推给下一个 GPU**（[FACT:src/device/reduce_scatter.h:39-42](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L39-L42)）
 
 ```
 rankDest = ringRanks[nranks - 1];
@@ -259,13 +259,13 @@ offset = dataOffset + rankDest * count;
 prims.send(offset, nelem);
 ```
 
-**中间 nranks-2 步：边收边归约边转发**（[FACT:src/device/reduce_scatter.h:44-49]）
+**中间 nranks-2 步：边收边归约边转发**（[FACT:src/device/reduce_scatter.h:44-49](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L44-L49)）
 
 ```
 prims.recvReduceSend(offset, nelem);
 ```
 
-**最后一步：收下并归约，产生最终结果**（[FACT:src/device/reduce_scatter.h:61-64]）
+**最后一步：收下并归约，产生最终结果**（[FACT:src/device/reduce_scatter.h:61-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L61-L64)）
 
 ```
 prims.recvReduceCopy(offset, dataOffset, nelem, /*postOp=*/true);
@@ -292,7 +292,7 @@ flowchart LR
 
 ### 生产踩坑：in-place 判断的边界
 
-[FACT:src/device/all_gather.h:55] 的 in-place 判断 `inputBuf + dataOffset == outputBuf + offset` 依赖指针精确相等。如果用户传入的 sendbuff 和 recvbuff 有偏移但逻辑上是同一块内存，这个判断会失效，导致走 `directCopySend` 路径——虽然正确但多一次拷贝。生产环境建议 in-place AllGather 时确保 sendbuff 和 recvbuff 完全一致。
+[FACT:src/device/all_gather.h:55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L55) 的 in-place 判断 `inputBuf + dataOffset == outputBuf + offset` 依赖指针精确相等。如果用户传入的 sendbuff 和 recvbuff 有偏移但逻辑上是同一块内存，这个判断会失效，导致走 `directCopySend` 路径——虽然正确但多一次拷贝。生产环境建议 in-place AllGather 时确保 sendbuff 和 recvbuff 完全一致。
 
 ## 10.4 CollNet 与 NVLS：把归约卸载到硬件
 
@@ -304,7 +304,7 @@ Ring 和 Tree 都是「GPU 自己算归约」。CollNet 和 NVLS 换了个思路
 
 ### CollNet Direct 的线程分工
 
-`RunWorkColl<ncclFuncAllReduce, ..., NCCL_ALGO_COLLNET_DIRECT, ...>` 的 `run`（[FACT:src/device/all_reduce.h:249-386]）把线程分成四组：
+`RunWorkColl<ncclFuncAllReduce, ..., NCCL_ALGO_COLLNET_DIRECT, ...>` 的 `run`（[FACT:src/device/all_reduce.h:249-386](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L249-L386)）把线程分成四组：
 
 ```
 const int nThreadsScatter = WARP_SIZE + ((hasUp && hasDn) ? COLLNET_COPY_THREADS : ...);
@@ -313,11 +313,11 @@ const int nThreadsBcast = WARP_SIZE + ((hasUp && hasDn) ? COLLNET_COPY_THREADS :
 const int nThreadsReduce = work->nWarps * WARP_SIZE - nThreadsScatter - nThreadsGather - nThreadsBcast;
 ```
 
-四组线程分别负责：Scatter（把数据分散到各 rail）、Reduce（归约后发给网络）、Gather（从各 rail 收集）、Bcast（从网络收到后广播）。`COLLNET_COPY_THREADS = 96`（[FACT:src/device/all_reduce.h:250]）是固定的拷贝线程数。
+四组线程分别负责：Scatter（把数据分散到各 rail）、Reduce（归约后发给网络）、Gather（从各 rail 收集）、Bcast（从网络收到后广播）。`COLLNET_COPY_THREADS = 96`（[FACT:src/device/all_reduce.h:250](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L250)）是固定的拷贝线程数。
 
 ### netRegUsed：网络注册模式下的缓冲区布局
 
-[FACT:src/device/all_reduce.h:280-288] 有个关键分支：
+[FACT:src/device/all_reduce.h:280-288](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L280-L288) 有个关键分支：
 
 ```
 if (work->netRegUsed) {
@@ -335,7 +335,7 @@ if (work->netRegUsed) {
 
 ### NVLS 的 warp 分配
 
-`RunWorkColl<ncclFuncAllReduce, ..., NCCL_ALGO_NVLS, ...>` 的 `run`（[FACT:src/device/all_reduce.h:391-523]）用更精细的 warp 分配：
+`RunWorkColl<ncclFuncAllReduce, ..., NCCL_ALGO_NVLS, ...>` 的 `run`（[FACT:src/device/all_reduce.h:391-523](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L391-L523)）用更精细的 warp 分配：
 
 ```
 const int bcastWarps = hasOut ? (work->regUsed ? ((totalWarps - 2) >> 1) - 1 : 2) : 0;
@@ -367,7 +367,7 @@ sequenceDiagram
 
 ### 生产踩坑：CollNet 的 `direct->out == -1` 陷阱
 
-[FACT:src/device/reduce_scatter.h:521] 有一行：
+[FACT:src/device/reduce_scatter.h:521](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L521) 有一行：
 
 ```
 if (direct->out == -1) __trap();
@@ -379,7 +379,7 @@ if (direct->out == -1) __trap();
 
 ### Broadcast：从 root 扇出
 
-`broadcast.h` 的 `runRing`（[FACT:src/device/broadcast.h:14-64]）逻辑很直接：root 节点发数据，其他节点转发，最后一个节点只收。
+`broadcast.h` 的 `runRing`（[FACT:src/device/broadcast.h:14-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/broadcast.h#L14-L64)）逻辑很直接：root 节点发数据，其他节点转发，最后一个节点只收。
 
 ```
 if (rank == root) {
@@ -399,7 +399,7 @@ if (rank == root) {
 
 ### Reduce：向 root 汇聚
 
-`reduce.h` 的 `runRing`（[FACT:src/device/reduce.h:14-53]）是 Broadcast 的逆操作：
+`reduce.h` 的 `runRing`（[FACT:src/device/reduce.h:14-53](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce.h#L14-L53)）是 Broadcast 的逆操作：
 
 ```
 if (prevRank == root) {
@@ -423,20 +423,20 @@ Broadcast 的 root 节点要发送全部数据，如果 root 是慢节点，整�
 
 ## 10.6 算法选择矩阵：RunWorkColl 模板特化
 
-所有算法内核通过 `RunWorkColl` 模板特化注册（[FACT:src/device/all_reduce.h:228-788]）。每个特化对应「函数 × 算法 × 协议」的组合：
+所有算法内核通过 `RunWorkColl` 模板特化注册（[FACT:src/device/all_reduce.h:228-788](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L228-L788)）。每个特化对应「函数 × 算法 × 协议」的组合：
 
 | 函数 | 算法 | 协议 | 特化位置 |
 |------|------|------|----------|
-| AllReduce | RING | SIMPLE | [FACT:src/device/all_reduce.h:230-233] |
-| AllReduce | TREE | SIMPLE | [FACT:src/device/all_reduce.h:238-244] |
-| AllReduce | COLLNET_DIRECT | SIMPLE | [FACT:src/device/all_reduce.h:249-386] |
-| AllReduce | NVLS | SIMPLE | [FACT:src/device/all_reduce.h:391-523] |
-| AllReduce | NVLS_TREE | SIMPLE | [FACT:src/device/all_reduce.h:528-634] |
-| AllReduce | COLLNET_CHAIN | SIMPLE | [FACT:src/device/all_reduce.h:639-759] |
-| AllReduce | RING | LL | [FACT:src/device/all_reduce.h:764-766] |
-| AllReduce | TREE | LL | [FACT:src/device/all_reduce.h:771-773] |
-| AllReduce | RING | LL128 | [FACT:src/device/all_reduce.h:778-780] |
-| AllReduce | TREE | LL128 | [FACT:src/device/all_reduce.h:785-787] |
+| AllReduce | RING | SIMPLE | [FACT:src/device/all_reduce.h:230-233](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L230-L233) |
+| AllReduce | TREE | SIMPLE | [FACT:src/device/all_reduce.h:238-244](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L238-L244) |
+| AllReduce | COLLNET_DIRECT | SIMPLE | [FACT:src/device/all_reduce.h:249-386](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L249-L386) |
+| AllReduce | NVLS | SIMPLE | [FACT:src/device/all_reduce.h:391-523](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L391-L523) |
+| AllReduce | NVLS_TREE | SIMPLE | [FACT:src/device/all_reduce.h:528-634](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L528-L634) |
+| AllReduce | COLLNET_CHAIN | SIMPLE | [FACT:src/device/all_reduce.h:639-759](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L639-L759) |
+| AllReduce | RING | LL | [FACT:src/device/all_reduce.h:764-766](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L764-L766) |
+| AllReduce | TREE | LL | [FACT:src/device/all_reduce.h:771-773](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L771-L773) |
+| AllReduce | RING | LL128 | [FACT:src/device/all_reduce.h:778-780](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L778-L780) |
+| AllReduce | TREE | LL128 | [FACT:src/device/all_reduce.h:785-787](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L785-L787) |
 
 注意：**CollNet 和 NVLS 只支持 SIMPLE 协议**。因为这两种算法依赖硬件卸载，而 LL/LL128 的低延迟同步机制与硬件卸载不兼容——硬件归约的延迟远大于 LL 的 flag 轮询，用 LL 反而增加开销。
 
@@ -465,28 +465,28 @@ NCCL 的 tuning 模块（第 5 章）会根据消息大小、rank 数、拓扑�
 
 本章拆解了 `src/device` 下的六个算法内核文件：
 
-1. **Ring AllReduce**（[FACT:src/device/all_reduce.h:14-83]）：两阶段流水，reduce-scatter + all-gather，每阶段 n-1 步。
-2. **Tree AllReduce**（[FACT:src/device/all_reduce.h:86-225]）：树形归约，延迟 O(log n)，`runTreeSplit` 用线程拆分实现归约-广播流水。
-3. **AllGather**（[FACT:src/device/all_gather.h:14-88]）：Ring 单阶段，支持 in-place 和 netOffload。
-4. **ReduceScatter**（[FACT:src/device/reduce_scatter.h:14-56]）：Ring 单阶段，是 AllReduce 的 reduce-scatter 阶段。
-5. **Broadcast/Reduce**（[FACT:src/device/broadcast.h:14-64]、[FACT:src/device/reduce.h:14-53]）：最简单的 Ring 变体。
-6. **CollNet/NVLS**（[FACT:src/device/all_reduce.h:247-635]）：硬件卸载，只支持 SIMPLE 协议。
+1. **Ring AllReduce**（[FACT:src/device/all_reduce.h:14-83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L14-L83)）：两阶段流水，reduce-scatter + all-gather，每阶段 n-1 步。
+2. **Tree AllReduce**（[FACT:src/device/all_reduce.h:86-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L86-L225)）：树形归约，延迟 O(log n)，`runTreeSplit` 用线程拆分实现归约-广播流水。
+3. **AllGather**（[FACT:src/device/all_gather.h:14-88](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L14-L88)）：Ring 单阶段，支持 in-place 和 netOffload。
+4. **ReduceScatter**（[FACT:src/device/reduce_scatter.h:14-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce_scatter.h#L14-L56)）：Ring 单阶段，是 AllReduce 的 reduce-scatter 阶段。
+5. **Broadcast/Reduce**（[FACT:src/device/broadcast.h:14-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/broadcast.h#L14-L64)、[FACT:src/device/reduce.h:14-53](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/reduce.h#L14-L53)）：最简单的 Ring 变体。
+6. **CollNet/NVLS**（[FACT:src/device/all_reduce.h:247-635](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L247-L635)）：硬件卸载，只支持 SIMPLE 协议。
 
 ## 本章思考与自测
 
 <details><summary>Q1: 在 Ring AllReduce 的 reduce-scatter 阶段，第 0 步用 `directSend`，中间步用 `directRecvReduceDirectSend`，最后一步用 `directRecvReduceCopyDirectSend`。如果去掉最后一步的 `postOp=true`，在什么场景下会产生错误结果？</summary>
 
-**参考解析**：`postOp=true` 触发后置操作（如求平均时的除法）。以 `ncclAvg` 为例，归约是求和，postOp 是除以 nranks。如果去掉 `postOp`，最后一步只做归约不做除法，recvbuff 里存的是「和」而非「平均」。在 reduce-scatter 阶段，每个 rank 只保留一个 chunk 的最终结果，这个 chunk 恰好是 `ringIx+0`（[FACT:src/device/all_reduce.h:60]）。如果 postOp 缺失，这个 chunk 的和没有除以 nranks，后续 all-gather 阶段会把这个错误的「和」传播给所有 rank。注意：只有最后一步需要 postOp，因为只有这一步产生「完整归约」的结果；中间步的归约是部分和，不需要 postOp。生产环境如果发现 AllReduce 结果偏大 nranks 倍，检查 postOp 是否正确传递。
+**参考解析**：`postOp=true` 触发后置操作（如求平均时的除法）。以 `ncclAvg` 为例，归约是求和，postOp 是除以 nranks。如果去掉 `postOp`，最后一步只做归约不做除法，recvbuff 里存的是「和」而非「平均」。在 reduce-scatter 阶段，每个 rank 只保留一个 chunk 的最终结果，这个 chunk 恰好是 `ringIx+0`（[FACT:src/device/all_reduce.h:60](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L60)）。如果 postOp 缺失，这个 chunk 的和没有除以 nranks，后续 all-gather 阶段会把这个错误的「和」传播给所有 rank。注意：只有最后一步需要 postOp，因为只有这一步产生「完整归约」的结果；中间步的归约是部分和，不需要 postOp。生产环境如果发现 AllReduce 结果偏大 nranks 倍，检查 postOp 是否正确传递。
 
 </details>
 
-<details><summary>Q2: `runTreeSplit` 在 LL/LL128 协议下把线程按 7:3 拆分（[FACT:src/device/all_reduce.h:163]），而 Simple 协议下按 1:1 拆分（[FACT:src/device/all_reduce.h:157]）。如果强行把 LL 协议也改成 1:1，会发生什么？</summary>
+<details><summary>Q2: `runTreeSplit` 在 LL/LL128 协议下把线程按 7:3 拆分（[FACT:src/device/all_reduce.h:163](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L163)），而 Simple 协议下按 1:1 拆分（[FACT:src/device/all_reduce.h:157](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L157)）。如果强行把 LL 协议也改成 1:1，会发生什么？</summary>
 
-**参考解析**：LL/LL128 的归约组要从最多 3 个子节点收数据并做归约（[FACT:src/device/all_reduce.h:187] 的 `FanAsymmetric<NCCL_MAX_TREE_ARITY, 1>`），计算密集；广播组只做复制转发（[FACT:src/device/all_reduce.h:208] 的 `FanAsymmetric<1, NCCL_MAX_TREE_ARITY>`），计算轻。7:3 拆分让归约组有足够线程处理 3 路归约，广播组线程少但够用。如果改成 1:1，归约组线程不足，归约成为瓶颈；广播组线程过剩，浪费。更严重的是，LL 协议的 flag 轮询是忙等待，线程多了会增加 flag 竞争。生产环境如果发现 Tree AllReduce 在 LL 协议下性能异常，检查 `nthreadsSplit` 的计算是否被修改。
+**参考解析**：LL/LL128 的归约组要从最多 3 个子节点收数据并做归约（[FACT:src/device/all_reduce.h:187](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L187) 的 `FanAsymmetric<NCCL_MAX_TREE_ARITY, 1>`），计算密集；广播组只做复制转发（[FACT:src/device/all_reduce.h:208](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L208) 的 `FanAsymmetric<1, NCCL_MAX_TREE_ARITY>`），计算轻。7:3 拆分让归约组有足够线程处理 3 路归约，广播组线程少但够用。如果改成 1:1，归约组线程不足，归约成为瓶颈；广播组线程过剩，浪费。更严重的是，LL 协议的 flag 轮询是忙等待，线程多了会增加 flag 竞争。生产环境如果发现 Tree AllReduce 在 LL 协议下性能异常，检查 `nthreadsSplit` 的计算是否被修改。
 
 </details>
 
-<details><summary>Q3: AllGather 的 `isNetOffload` 模式下，只用 1 个 warp 驱动 Ring 通信（[FACT:src/device/all_gather.h:32]），其余 warp 并行拷贝（[FACT:src/device/all_gather.h:76-82]）。如果去掉最后的 `barrier_sync(14, nthreads)`（[FACT:src/device/all_gather.h:87]），在什么场景下会导致数据竞争？</summary>
+<details><summary>Q3: AllGather 的 `isNetOffload` 模式下，只用 1 个 warp 驱动 Ring 通信（[FACT:src/device/all_gather.h:32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L32)），其余 warp 并行拷贝（[FACT:src/device/all_gather.h:76-82](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L76-L82)）。如果去掉最后的 `barrier_sync(14, nthreads)`（[FACT:src/device/all_gather.h:87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_gather.h#L87)），在什么场景下会导致数据竞争？</summary>
 
 **参考解析**：`barrier_sync` 保证所有 warp（包括通信 warp 和拷贝 warp）都完成本 work 后才进入下一个 work。如果去掉，通信 warp 可能在拷贝 warp 还没写完 outputBuf 时就开始下一个 work 的通信，而下一个 work 可能复用同一块 outputBuf。具体场景：连续两次 AllGather，第一次的拷贝 warp 还在写 outputBuf 的尾部，第二次的通信 warp 已经开始往 outputBuf 写新数据，导致第一次的数据被覆盖。注释里说得很清楚：「otherwise, we can have contention if next work will use the outputBuf in this work」。用 barrier 14 而非默认 barrier，是为了避开 prims 内部的 barrier 和 `__syncthreads()`，防止死锁。生产环境如果发现 AllGather 结果偶发错误，检查 `isNetOffload` 路径的 barrier 是否被优化掉。
 

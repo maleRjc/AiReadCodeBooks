@@ -18,7 +18,7 @@
   ],
   "summary": "An in-depth architectural breakdown of vLLM, covering end-to-end request scheduling, PagedAttention memory virtualization, continuous batching, CUDA Graph acceleration, and speculative decoding.",
   "summaryZh": "本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。",
-  "webReaderUrl": "https://aireadcode.com/books/vllm.html",
+  "webReaderUrl": "https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01",
   "chapters": [
     {
       "index": 1,
@@ -132,5 +132,9 @@
       "pathEn": "en/14-architecture-evolution-v1-and-future.md",
       "pathZh": "zh/14-architecture-evolution-v1-and-future.md"
     }
-  ]
+  ],
+  "commit": "7ba3df63cbe2e3e7aca19074bed2958311f46400",
+  "branch": "main",
+  "version": "v0.7.3",
+  "defaultFile": "vllm/engine/llm_engine.py"
 }

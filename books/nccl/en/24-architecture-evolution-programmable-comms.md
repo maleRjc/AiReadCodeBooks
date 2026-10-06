@@ -17,7 +17,7 @@ RMA 就是 NCCL 给上层提供的「自助餐台」：Put（把数据写到对�
 
 RMA 的核心数据结构是 `ncclTaskRma`（任务描述）和 `ncclRmaArgs`（计划参数）。我们先看 `ncclRmaArgs` 的字段，它在 `scheduleRmaTasksToPlan` 中被初始化。
 
-[FACT:src/rma/rma.cc:166-171]
+[FACT:src/rma/rma.cc:166-171](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L166-L171)
 
 ```cpp
 plan->isRma = true;
@@ -43,7 +43,7 @@ plan->rmaArgs->nRmaTasksCe = 0;
 
 **第一步：找到第一个非空上下文队列。**
 
-[FACT:src/rma/rma.cc:148-158]
+[FACT:src/rma/rma.cc:148-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L148-L158)
 
 ```cpp
 int ctx = -1;
@@ -60,7 +60,7 @@ RMA 任务按 context 分队列，每个 context 是一个独立的 RMA 通道�
 
 **第二步：取出第一个任务，判断类型。**
 
-[FACT:src/rma/rma.cc:163-168]
+[FACT:src/rma/rma.cc:163-168](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L163-L168)
 
 ```cpp
 struct ncclTaskRma* firstTask = ncclIntruQueueDequeue(ctxQueue);
@@ -73,7 +73,7 @@ plan->rmaArgs->func = firstTask->func;
 
 **第三步：按 LSA 可达性拆分 peer。**
 
-[FACT:src/rma/rma.cc:187-204]
+[FACT:src/rma/rma.cc:187-204](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L187-L204)
 
 ```cpp
 for (int i = 0; i < firstTask->npeers; i++) {
@@ -97,7 +97,7 @@ for (int i = 0; i < firstTask->npeers; i++) {
 
 **第四步：为 CE 和 Proxy 各创建一个新任务。**
 
-[FACT:src/rma/rma.cc:206-246]
+[FACT:src/rma/rma.cc:206-246](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L206-L246)
 
 ```cpp
 if (npeersCe > 0) {
@@ -120,7 +120,7 @@ if (npeersProxy > 0) {
 
 **第五步：释放原任务。**
 
-[FACT:src/rma/rma.cc:249-251]
+[FACT:src/rma/rma.cc:249-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L249-L251)
 
 ```cpp
 planner->nTasksRma -= 1;
@@ -133,7 +133,7 @@ ncclMemoryPoolFree(&comm->memPool_ncclTaskRma, firstTask);
 
 RMA 的并行执行体现在 `ncclRmaWaitSignal` 中。
 
-[FACT:src/rma/rma.cc:43-74]
+[FACT:src/rma/rma.cc:43-74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L43-L74)
 
 ```cpp
 if (plan->rmaArgs->nRmaTasksProxy > 0 && plan->rmaArgs->nRmaTasksCe > 0) {
@@ -158,7 +158,7 @@ if (plan->rmaArgs->nRmaTasksProxy > 0 && plan->rmaArgs->nRmaTasksCe > 0) {
 
 **坑 2：WaitSignal 任务拆分后 peer 数组的生命周期。** CE 路径的 `peersCe` 用 `ncclMemoryStackAlloc` 分配，生命周期跟随 `comm->memScoped`；Proxy 路径的 `peersProxy` 用 `ncclCalloc` 分配，在任务执行完后需要手动 `free`。如果 Proxy 任务创建失败，`fail` 分支会释放这些数组。
 
-[FACT:src/rma/rma.cc:302-308]
+[FACT:src/rma/rma.cc:302-308](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L302-L308)
 
 ```cpp
 exit:
@@ -172,7 +172,7 @@ fail:
 
 **坑 3：Put/Signal 任务的跨 context 批量。** 在 Put/Signal 分支中，NCCL 会把所有 context 的 put/signal 任务拉进同一个 plan，但遇到 WaitSignal 就停止。
 
-[FACT:src/rma/rma.cc:279-295]
+[FACT:src/rma/rma.cc:279-295](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L279-L295)
 
 ```cpp
 for (int c = 0; c < comm->config.numRmaCtx; c++) {
@@ -202,7 +202,7 @@ for (int c = 0; c < comm->config.numRmaCtx; c++) {
 
 GIN 的核心状态是 `ncclGinState`，它管理多个后端（backend）和多个 DevComm。我们先看后端版本兼容表。
 
-[FACT:src/gin/gin_host.cc:27-33]
+[FACT:src/gin/gin_host.cc:27-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L27-L33)
 
 ```cpp
 const int proxyBackendMinVersions[] = {0, NCCL_VERSION(2, 30, 3), NCCL_VERSION(2, 30, 5), NCCL_VERSION(2, 32, 0)};
@@ -223,7 +223,7 @@ constexpr int efaGdaBackendMinVersions[] = {0, NCCL_VERSION(2, 31, 0), NCCL_VERS
 
 **第一步：检查 GIN 是否启用和支持。**
 
-[FACT:src/gin/gin_host.cc:96-107]
+[FACT:src/gin/gin_host.cc:96-107](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L96-L107)
 
 ```cpp
 if (ginState->connected) return ncclSuccess;
@@ -241,7 +241,7 @@ if (!ginState->supported) {
 
 **第二步：检查对称内存支持。**
 
-[FACT:src/gin/gin_host.cc:111-114]
+[FACT:src/gin/gin_host.cc:111-114](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L111-L114)
 
 ```cpp
 if (!comm->symmetricSupport) {
@@ -254,7 +254,7 @@ GIN 依赖对称内存——因为 GPU kernel 需要知道对端缓冲区的虚�
 
 **第三步：获取本地 GIN 设备列表。**
 
-[FACT:src/gin/gin_host.cc:116-122]
+[FACT:src/gin/gin_host.cc:116-122](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L116-L122)
 
 ```cpp
 int nLocalGinDevs;
@@ -270,7 +270,7 @@ if (nLocalGinDevs > NCCL_GIN_MAX_CONNECTIONS) {
 
 **第四步：计算 GIN 团队。**
 
-[FACT:src/gin/gin_host.cc:138-149]
+[FACT:src/gin/gin_host.cc:138-149](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L138-L149)
 
 ```cpp
 ginTeam = ncclTeamWorld(comm);
@@ -291,7 +291,7 @@ for (int r = 0; r < ginTeam.nRanks; r++) {
 
 **第五步：逐后端建立连接。**
 
-[FACT:src/gin/gin_host.cc:151-202]
+[FACT:src/gin/gin_host.cc:151-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L151-L202)
 
 ```cpp
 for (int backendIdx = 0; backendIdx < ginState->numActiveBackends; backendIdx++) {
@@ -314,7 +314,7 @@ for (int backendIdx = 0; backendIdx < ginState->numActiveBackends; backendIdx++)
 
 GIN 的进度线程是核心并发机制。
 
-[FACT:src/gin/gin_host.cc:56-87]
+[FACT:src/gin/gin_host.cc:56-87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L56-L87)
 
 ```cpp
 void* ncclGinProgress(struct ncclGinState* ginState, int threadIdx) {
@@ -356,7 +356,7 @@ void* ncclGinProgress(struct ncclGinState* ginState, int threadIdx) {
 3. **读写锁**：`devCommRwMutex` 是 `shared_timed_mutex`，进度线程持读锁遍历链表，主线程持写锁修改链表。
 4. **线程分工**：线程 t 负责连接 t, t+proxyNthreads, t+2*proxyNthreads, ...，通过 stride 循环实现负载均衡。
 
-[FACT:src/gin/gin_host.cc:43-47]
+[FACT:src/gin/gin_host.cc:43-47](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L43-L47)
 
 ```cpp
 static void ginProgressWriteLock(struct ncclGinState* ginState) {
@@ -375,7 +375,7 @@ static void ginProgressWriteUnlock(struct ncclGinState* ginState) {
 
 **坑 1：GIN 连接数不匹配导致 AllGather 死锁。** 每个 rank 的 `ginCommCount` 可能不同（取决于本地网卡数量），NCCL 通过 `bootstrapAllGather` 取所有 rank 的最小值。
 
-[FACT:src/gin/gin_host.cc:176-180]
+[FACT:src/gin/gin_host.cc:176-180](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L176-L180)
 
 ```cpp
 ginCommCountHandles[comm->rank] = backend->ginCommCount;
@@ -389,7 +389,7 @@ for (int r = 0; r < comm->nRanks; r++) {
 
 **坑 2：proxyNthreads 超过 ginCommCount 导致线程空转。** 如果用户设置了 `NCCL_GIN_PROXY_NTHREADS` 大于 `ginCommCount`，多余的线程会在 stride 循环中空转。
 
-[FACT:src/gin/gin_host.cc:181-183]
+[FACT:src/gin/gin_host.cc:181-183](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L181-L183)
 
 ```cpp
 // After cross-rank min, proxyNthreads may exceed ginCommCount if ranks disagree
@@ -401,7 +401,7 @@ for (int r = 0; r < comm->nRanks; r++) {
 
 **坑 3：DevComm 释放时的竞态。** `ncclGinDevCommFree` 先从链表摘除 DevComm，再销毁 context。
 
-[FACT:src/gin/gin_host.cc:464-475]
+[FACT:src/gin/gin_host.cc:464-475](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L464-L475)
 
 ```cpp
 ginProgressWriteLock(ginState);
@@ -432,7 +432,7 @@ for (int commIdx = 0; commIdx < backend->ginCommCount; commIdx++) {
 
 对称内存 kernel 的核心是 kernel mask——一个位图，标记哪些 kernel 在当前通信域中可用。
 
-[FACT:src/sym_kernels.cc:17-63]
+[FACT:src/sym_kernels.cc:17-63](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L17-L63)
 
 ```cpp
 constexpr uint32_t kernelMask_STMC =
@@ -462,7 +462,7 @@ constexpr uint32_t kernelMask_Tma = ...;
 
 **第一步：获取操作对应的基础 mask。**
 
-[FACT:src/sym_kernels.cc:304-306]
+[FACT:src/sym_kernels.cc:304-306](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L304-L306)
 
 ```cpp
 uint32_t kmask = kernelMask_coll(coll);
@@ -472,7 +472,7 @@ uint32_t kmask = kernelMask_coll(coll);
 
 **第二步：检查 STMC 和 LDMC 可用性。**
 
-[FACT:src/sym_kernels.cc:308-334]
+[FACT:src/sym_kernels.cc:308-334](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L308-L334)
 
 ```cpp
 bool hasSTMC = comm->symkState.hasLsaMultimem;
@@ -494,7 +494,7 @@ if (!hasLDMC) kmask &= ~kernelMask_LDMC;
 
 **第三步：检查消息大小限制。**
 
-[FACT:src/sym_kernels.cc:336-342]
+[FACT:src/sym_kernels.cc:336-342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L336-L342)
 
 ```cpp
 size_t nBytes = alignUp(nElts * ncclTypeSize(ty), NCCL_SYM_KERNEL_CELL_SIZE);
@@ -507,7 +507,7 @@ LL kernel 用 32 位整数跟踪元素计数，所以总线字节数超过 2GB �
 
 **第四步：检查 TMA 可用性。**
 
-[FACT:src/sym_kernels.cc:344-345]
+[FACT:src/sym_kernels.cc:344-345](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L344-L345)
 
 ```cpp
 if (!ncclSymkTmaAvailable(comm)) kmask &= ~kernelMask_Tma;
@@ -518,7 +518,7 @@ TMA 需要 SMEM 容量和计算能力 10.0+，且缓冲区 16 字节对齐。
 
 **第五步：检查 GIN 需求。**
 
-[FACT:src/sym_kernels.cc:347-350]
+[FACT:src/sym_kernels.cc:347-350](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L347-L350)
 
 ```cpp
 bool hasGin = ncclParamSymGinKernelsEnable() != 0;
@@ -533,7 +533,7 @@ kmask &= needGin ? kernelMask_Gin : ~kernelMask_Gin;
 
 对称内存 kernel 的初始化涉及 DevComm 创建和资源分配。
 
-[FACT:src/sym_kernels.cc:185-264]
+[FACT:src/sym_kernels.cc:185-264](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L185-L264)
 
 ```cpp
 ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
@@ -554,7 +554,7 @@ ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
 
 这里的关键是 `ncclDevrCommCreateInternal`，它创建一个内部 DevComm，包含 LSA 多播、GIN inbox/outbox、信号等资源。`reqs.ginConnectionType = NCCL_GIN_CONNECTION_RAIL` 指定 GIN 用 rail 连接模式。
 
-[FACT:src/sym_kernels.cc:257-261]
+[FACT:src/sym_kernels.cc:257-261](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L257-L261)
 
 ```cpp
 symk->kcomm.workStarted = comm->profiler.symWorkStarted;
@@ -568,7 +568,7 @@ symk->kcomm.workPhases = comm->profiler.symWorkPhases;
 
 **坑 1：TMA kernel 的 SMEM 需求。** TMA 需要每个 warp 约 8KB 的 SMEM scratch，16 个 warp 就是 128KB。
 
-[FACT:src/sym_kernels.cc:135-142]
+[FACT:src/sym_kernels.cc:135-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L135-L142)
 
 ```cpp
 bool ncclSymkTmaAvailable(struct ncclComm* comm) {
@@ -583,7 +583,7 @@ bool ncclSymkTmaAvailable(struct ncclComm* comm) {
 
 **坑 2：GIN chunk size 的边界。** ReduceScatter GIN kernel 的 chunk size 有上下限。
 
-[FACT:src/sym_kernels.cc:148-153]
+[FACT:src/sym_kernels.cc:148-153](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L148-L153)
 
 ```cpp
 static constexpr size_t ncclSymkRsGinDefaultChunkBytes = 128 << 10;
@@ -601,7 +601,7 @@ size_t ncclSymkRsGinChunkBytes() {
 
 **坑 3：对称内存注册类型不匹配。** `ncclGetSymRegType` 根据 sendWin 和 recvWin 的 `NCCL_WIN_COLL_SYMMETRIC` 标志判断注册类型。
 
-[FACT:src/sym_kernels.cc:395-412]
+[FACT:src/sym_kernels.cc:395-412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L395-L412)
 
 ```cpp
 if (!isSendSymmReg && !isRecvSymmReg) {
@@ -633,7 +633,7 @@ Team 抽象就像「分组」：世界团队是全班，LSA 团队是同桌，Ra
 
 Team 是一个简单的三元组：`nRanks`、`rank`、`stride`。
 
-[FACT:src/nccl_device/core.cc:13-19]
+[FACT:src/nccl_device/core.cc:13-19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L13-L19)
 
 ```cpp
 ncclTeam_t ncclTeamWorld(ncclComm_t comm) {
@@ -647,7 +647,7 @@ ncclTeam_t ncclTeamWorld(ncclComm_t comm) {
 
 世界团队的 stride 是 1，因为所有 rank 连续排列。
 
-[FACT:src/nccl_device/core.cc:70-79]
+[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
 
 ```cpp
 ncclTeam_t ncclTeamRail(ncclComm_t comm) {
@@ -664,7 +664,7 @@ Rail 团队的 stride 是 `lsaSize`，因为每个 rail 上的 rank 间隔一个
 
 版本化 DevComm 的核心是 `ncclDevCommCompat` 结构。
 
-[FACT:src/devcomm/devcomm_v23100.cc:10-17]
+[FACT:src/devcomm/devcomm_v23100.cc:10-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23100.cc#L10-L17)
 
 ```cpp
 struct ncclDevCommCompat ncclDevCommCompat_v23100 = {
@@ -685,7 +685,7 @@ struct ncclDevCommCompat ncclDevCommCompat_v23100 = {
 
 **第一步：初始化 DevR 状态。**
 
-[FACT:src/nccl_device/core.cc:70-79]
+[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
 
 ```cpp
 if (ncclSuccess != ncclDevrInitOnce(comm)) return ncclTeam_t{};
@@ -695,7 +695,7 @@ if (ncclSuccess != ncclDevrInitOnce(comm)) return ncclTeam_t{};
 
 **第二步：计算 Rail 团队参数。**
 
-[FACT:src/nccl_device/core.cc:70-79]
+[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
 
 ```cpp
 ncclTeam_t ans;
@@ -708,7 +708,7 @@ rank 5 在 Rail 团队中的 rank 是 1，团队有 2 个 rank，stride 是 4。
 
 **第三步：转换回世界 rank。**
 
-[FACT:src/nccl_device/core.cc:82-84]
+[FACT:src/nccl_device/core.cc:82-84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L82-L84)
 
 ```cpp
 int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
@@ -722,7 +722,7 @@ int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
 
 Team 抽象本身是无状态的，不需要并发控制。但 `ncclDevrInitOnce` 是懒加载的，第一次调用时会计算所有派生信息。
 
-[FACT:src/nccl_device/core.cc:22-33]
+[FACT:src/nccl_device/core.cc:22-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L22-L33)
 
 ```cpp
 ncclTeam_t ncclTeamLsa(ncclComm_t comm) {
@@ -741,7 +741,7 @@ ncclTeam_t ncclTeamLsa(ncclComm_t comm) {
 
 **坑 1：Team 转换的 stride 假设。** `ncclTeamRankToWorld` 假设团队内 rank 是等差数列。
 
-[FACT:src/nccl_device/core.cc:82-84]
+[FACT:src/nccl_device/core.cc:82-84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L82-L84)
 
 ```cpp
 int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
@@ -755,7 +755,7 @@ int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
 
 **坑 3：CFT 团队的层级模式。** `ncclTeamCft` 支持三种模式：FLAT、HIER_MULTIMEM、HIER_LSA。
 
-[FACT:src/nccl_device/core.cc:36-55]
+[FACT:src/nccl_device/core.cc:36-55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L36-L55)
 
 ```cpp
 if (mode == NCCL_CFT_TEAM_FLAT) return flatTeam;
@@ -810,7 +810,7 @@ return ncclTeamOuterFactor(flatTeam, innerSize);
 
 **参考解析**：
 
-LSA 可达性判断在 [FACT:src/rma/rma.cc:187-204]，它把 peer 分成 CE 和 Proxy 两组。如果去掉这个判断，所有 peer 都走 Proxy 路径，`nRmaTasksCe` 始终为 0。
+LSA 可达性判断在 [FACT:src/rma/rma.cc:187-204](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L187-L204)，它把 peer 分成 CE 和 Proxy 两组。如果去掉这个判断，所有 peer 都走 Proxy 路径，`nRmaTasksCe` 始终为 0。
 
 后果是：CE 路径完全不被使用，所有 WaitSignal 都通过 host proxy 线程轮询网络。对于 LSA 范围内的 peer（同机 NVLink 互联），本来可以用 GPU 拷贝引擎异步等待，现在变成 host 线程轮询，延迟从微秒级升到毫秒级。
 
@@ -825,7 +825,7 @@ LSA 可达性判断在 [FACT:src/rma/rma.cc:187-204]，它把 peer 分成 CE 和
 
 **参考解析**：
 
-`writePending` 检查在 [FACT:src/gin/gin_host.cc:63-66]，它让进度线程在主线程要写时主动 yield。如果去掉这个检查，进度线程会直接尝试拿读锁。
+`writePending` 检查在 [FACT:src/gin/gin_host.cc:63-66](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L63-L66)，它让进度线程在主线程要写时主动 yield。如果去掉这个检查，进度线程会直接尝试拿读锁。
 
 问题在于：`std::shared_timed_mutex` 的读锁是共享的，多个进度线程可以同时持有。如果主线程要拿写锁，必须等所有读锁释放。在高负载下，进度线程频繁拿读锁，主线程可能长时间拿不到写锁，导致 `ncclGinDevCommSetup` 或 `ncclGinDevCommFree` 阻塞。
 
@@ -840,7 +840,7 @@ LSA 可达性判断在 [FACT:src/rma/rma.cc:187-204]，它把 peer 分成 CE 和
 
 **参考解析**：
 
-`kmask = 0` 在 [FACT:src/sym_kernels.cc:342]，此时 `ncclSymkAvailable` 返回 false（[FACT:src/sym_kernels.cc:354-361]）。
+`kmask = 0` 在 [FACT:src/sym_kernels.cc:342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L342)，此时 `ncclSymkAvailable` 返回 false（[FACT:src/sym_kernels.cc:354-361](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L354-L361)）。
 
 回退路径是：NCCL 会使用传统的集合通信 kernel（非对称内存 kernel）。这些 kernel 通过注册缓冲区的方式访问对端内存，需要先解析地址，指令开销更大。
 

@@ -12,7 +12,7 @@
 
 NCCL 用一个全局数组登记所有 transport，顺序即优先级：
 
-[FACT:src/transport.cc:15-20]
+[FACT:src/transport.cc:15-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport.cc#L15-L20)
 
 ```c
 struct ncclTransport* ncclTransports[NTRANSPORTS] = {
@@ -25,7 +25,7 @@ struct ncclTransport* ncclTransports[NTRANSPORTS] = {
 
 数组顺序决定选择顺序：P2P 优先，其次 SHM，再次 NET，最后 CollNet。每种 transport 由 `ncclTransport` 结构体描述，它包含一个 `canConnect` 函数指针和两个 `ncclTransportComm`（send/recv 各一个）。以 P2P 为例：
 
-[FACT:src/transport/p2p.cc:1493-1498]
+[FACT:src/transport/p2p.cc:1493-1498](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L1493-L1498)
 
 ```c
 struct ncclTransport p2pTransport = {"P2P",
@@ -42,7 +42,7 @@ struct ncclTransport p2pTransport = {"P2P",
 
 当 NCCL 需要为某个 channel 的某个 peer 建立连接时，调用 `selectTransport`：
 
-[FACT:src/transport.cc:23-44]
+[FACT:src/transport.cc:23-44](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport.cc#L23-L44)
 
 ```c
 template <int type>
@@ -74,7 +74,7 @@ static ncclResult_t selectTransport(struct ncclComm* comm, struct ncclTopoGraph*
 
 `canConnect` 的判定逻辑体现了各 transport 的「领地边界」。以 P2P 为例：
 
-[FACT:src/transport/p2p.cc:129-157]
+[FACT:src/transport/p2p.cc:129-157](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L129-L157)
 
 ```c
 ncclResult_t p2pCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1,
@@ -105,7 +105,7 @@ ncclResult_t p2pCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph
 
 P2P 的判定链：先问拓扑「两个 rank 之间有没有 P2P 路径」；如果有中间跳（`intermediateRank != -1`）且启用了 CE memcpy，则放弃 P2P 让给 SHM/NET；如果拓扑建议走网络（`useNet`），也放弃；最后检查是否同主机。SHM 的判定更简单：
 
-[FACT:src/transport/shm.cc:61-83]
+[FACT:src/transport/shm.cc:61-83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/shm.cc#L61-L83)
 
 ```c
 static ncclResult_t shmCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph,
@@ -125,7 +125,7 @@ static ncclResult_t shmCanConnect(int* ret, struct ncclComm* comm, struct ncclTo
 
 SHM 要求同主机（`hostHash` 相同）且共享同一块 `/dev/shm`（`shmDev` 相同，用于容器间通信）。NET 则几乎总是返回 1，只在同主机时检查 intra-node net 是否被禁用：
 
-[FACT:src/transport/net.cc:160-168]
+[FACT:src/transport/net.cc:160-168](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L160-L168)
 
 ```c
 static ncclResult_t canConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1,
@@ -140,7 +140,7 @@ static ncclResult_t canConnect(int* ret, struct ncclComm* comm, struct ncclTopoG
 
 NET 是「兜底」——只要前面没人接，它就接。NVLS 的 `canConnect` 直接返回 0：
 
-[FACT:src/transport/nvls.cc:21-26]
+[FACT:src/transport/nvls.cc:21-26](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L21-L26)
 
 ```c
 ncclResult_t nvlsCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1,
@@ -186,7 +186,7 @@ P2P 是「邻居之间直接递东西」——GPU 0 直接读写 GPU 1 的显存
 
 P2P 内部有四种形态，由 `enum p2pType` 区分：
 
-[FACT:src/transport/p2p.cc:19-24]
+[FACT:src/transport/p2p.cc:19-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L19-L24)
 
 ```c
 enum p2pType {
@@ -204,7 +204,7 @@ enum p2pType {
 
 核心资源结构体：
 
-[FACT:src/transport/p2p.cc:79-94]
+[FACT:src/transport/p2p.cc:79-94](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L79-L94)
 
 ```c
 struct p2pResources {
@@ -229,7 +229,7 @@ struct p2pResources {
 
 连接信息结构体 `p2pConnectInfo` 通过 bootstrap 交换：
 
-[FACT:src/transport/p2p.cc:38-44]
+[FACT:src/transport/p2p.cc:38-44](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L38-L44)
 
 ```c
 struct p2pConnectInfo {
@@ -248,7 +248,7 @@ static_assert(sizeof(struct p2pConnectInfo) <= CONNECT_SIZE, "p2pConnectInfo is 
 
 当 `selectTransport` 选中 P2P 后，调用 `p2pSendSetup`：
 
-[FACT:src/transport/p2p.cc:393-471]
+[FACT:src/transport/p2p.cc:393-471](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L393-L471)
 
 ```c
 ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo,
@@ -272,7 +272,7 @@ ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, st
 
 接着根据 `intermediateRank` 和进程关系选择形态：
 
-[FACT:src/transport/p2p.cc:416-437]
+[FACT:src/transport/p2p.cc:416-437](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L416-L437)
 
 ```c
   if (intermediateRank == -1) {
@@ -299,7 +299,7 @@ ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, st
 
 `P2P_SAME_PID` 宏判断同主机同进程：
 
-[FACT:src/transport/p2p.cc:334-335]
+[FACT:src/transport/p2p.cc:334-335](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L334-L335)
 
 ```c
 #define P2P_SAME_PID(MYINFO, PEERINFO) \
@@ -310,7 +310,7 @@ ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, st
 
 随后通过代理线程分配可共享缓冲区：
 
-[FACT:src/transport/p2p.cc:457-468]
+[FACT:src/transport/p2p.cc:457-468](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L457-L468)
 
 ```c
   NCCLCHECK(ncclProxyConnect(comm, TRANSPORT_P2P, 1, info->rank, &send->proxyConn));
@@ -331,7 +331,7 @@ ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, st
 
 `p2pMap` 是核心映射函数：
 
-[FACT:src/transport/p2p.cc:349-390]
+[FACT:src/transport/p2p.cc:349-390](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L349-L390)
 
 ```c
 static ncclResult_t p2pMap(struct ncclComm* comm, struct ncclProxyConnector* proxyConn, struct ncclPeerInfo* myInfo,
@@ -368,7 +368,7 @@ static ncclResult_t p2pMap(struct ncclComm* comm, struct ncclProxyConnector* pro
 
 P2P 的同步靠 `ncclSendMem`/`ncclRecvMem` 里的 `head`/`tail` 指针。发送方写 `head` 告诉接收方「我写到哪了」，接收方写 `tail` 告诉发送方「我读到哪了」。这是典型的无锁生产者-消费者：
 
-[FACT:src/transport/p2p.cc:571-576]
+[FACT:src/transport/p2p.cc:571-576](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L571-L576)
 
 ```c
   } else {
@@ -385,7 +385,7 @@ P2P 的同步靠 `ncclSendMem`/`ncclRecvMem` 里的 `head`/`tail` 指针。发�
 
 **坑 1：P2P Read 与 memcpy 互斥。** 看 `p2pSendConnect`：
 
-[FACT:src/transport/p2p.cc:551-559]
+[FACT:src/transport/p2p.cc:551-559](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L551-L559)
 
 ```c
   for (int p = 0; p < NCCL_NUM_PROTOCOLS; p++) {
@@ -404,7 +404,7 @@ P2P 的同步靠 `ncclSendMem`/`ncclRecvMem` 里的 `head`/`tail` 指针。发�
 
 **坑 2：跨进程释放顺序。** `p2pSendFree` 根据 `sendMemSameProc` 决定释放方式：
 
-[FACT:src/transport/p2p.cc:624-651]
+[FACT:src/transport/p2p.cc:624-651](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/p2p.cc#L624-L651)
 
 ```c
 ncclResult_t p2pSendFree(struct ncclComm* comm, struct ncclConnector* send) {
@@ -431,7 +431,7 @@ SHM 是「两个进程共用一块白板」——发送方写，接收方读。�
 
 ### 数据结构与内存布局
 
-[FACT:src/transport/shm.cc:28-34]
+[FACT:src/transport/shm.cc:28-34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/shm.cc#L28-L34)
 
 ```c
 struct shmSendResources {
@@ -457,7 +457,7 @@ struct shmRecvResources {
 
 `shmSendSetup` 根据 locality 决定分配多大内存：
 
-[FACT:src/transport/shm.cc:88-119]
+[FACT:src/transport/shm.cc:88-119](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/shm.cc#L88-L119)
 
 ```c
 static ncclResult_t shmSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo,
@@ -492,7 +492,7 @@ static ncclResult_t shmSendSetup(struct ncclComm* comm, struct ncclTopoGraph* gr
 
 `shmSendConnect` 里根据 locality 决定 `buffs` 指向本地还是对端：
 
-[FACT:src/transport/shm.cc:153-176]
+[FACT:src/transport/shm.cc:153-176](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/shm.cc#L153-L176)
 
 ```c
 static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank,
@@ -525,7 +525,7 @@ static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* co
 
 **坑：容器间 `/dev/shm` 不共享。** `shmCanConnect` 检查 `info1->shmDev != info2->shmDev`：
 
-[FACT:src/transport/shm.cc:76-78]
+[FACT:src/transport/shm.cc:76-78](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/shm.cc#L76-L78)
 
 ```c
   TRACE(NCCL_INIT | NCCL_SHM, "peer1 shmDev %lx peer2 shmDev %lx", info1->shmDev, info2->shmDev);
@@ -542,7 +542,7 @@ NET 是「跨城快递」——数据打包交给网卡，网卡通过光纤送�
 
 ### 数据结构与内存布局
 
-[FACT:src/transport/net.cc:73-86]
+[FACT:src/transport/net.cc:73-86](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L73-L86)
 
 ```c
 struct connectMapMem {
@@ -574,7 +574,7 @@ struct connectMap {
 
 解码宏：
 
-[FACT:src/transport/net.cc:36-46]
+[FACT:src/transport/net.cc:36-46](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L36-L46)
 
 ```c
 #define NCCL_NET_MAP_OFFSET_BANK(mapStruct, offsetName) ((mapStruct)->offsets.offsetName >> 30)
@@ -596,7 +596,7 @@ struct connectMap {
 
 `sendProxyConnect` 是 NET 最复杂的函数，负责建立网卡连接、分配缓冲区、注册内存：
 
-[FACT:src/transport/net.cc:858-1041]
+[FACT:src/transport/net.cc:858-1041](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L858-L1041)
 
 ```c
 static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState,
@@ -621,7 +621,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 
 接着分配缓冲区并注册：
 
-[FACT:src/transport/net.cc:933-956]
+[FACT:src/transport/net.cc:933-956](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L933-L956)
 
 ```c
   if (resources->shared == 0) {
@@ -644,7 +644,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 
 `NCCL_NET_MAP_ADD_POINTER` 宏把缓冲区登记到 `connectMap`：
 
-[FACT:src/transport/net.cc:48-62]
+[FACT:src/transport/net.cc:48-62](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L48-L62)
 
 ```c
 #define NCCL_NET_MAP_ADD_POINTER(mapStruct, shared, dev, memSize, offsetName) \
@@ -668,7 +668,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 
 最后注册内存给网卡：
 
-[FACT:src/transport/net.cc:1004-1035]
+[FACT:src/transport/net.cc:1004-1035](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L1004-L1035)
 
 ```c
   for (int p = 0; p < NCCL_NUM_PROTOCOLS; p++) {
@@ -703,7 +703,7 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 
 `sendProxyProgress` 是 NET 的数据搬运引擎，采用「post → transmit → done」三段式：
 
-[FACT:src/transport/net.cc:1324-1491]
+[FACT:src/transport/net.cc:1324-1491](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L1324-L1491)
 
 ```c
 static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
@@ -751,7 +751,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
 
 **坑 1：LL128 协议的 flag 校验。** 当数据在 sysmem（非 GDR）时，代理线程必须逐行检查 LL128 flag：
 
-[FACT:src/transport/net.cc:1388-1403]
+[FACT:src/transport/net.cc:1388-1403](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L1388-L1403)
 
 ```c
           if (p == NCCL_PROTO_LL128) {
@@ -775,7 +775,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
 
 **坑 2：GDRCopy flush 的内存序。** 接收侧在 `recvProxyProgress` 里有一段精妙的内联汇编：
 
-[FACT:src/transport/net.cc:1664-1682]
+[FACT:src/transport/net.cc:1664-1682](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/net.cc#L1664-L1682)
 
 ```c
           if (totalSize > 0 && p == NCCL_PROTO_SIMPLE && needFlush) {
@@ -824,7 +824,7 @@ NVLS 是「广播电台」——一个 rank 把数据写到多播组，硬件自
 
 NVLS 的核心是「UC（单播）内存」和「MC（多播）内存」的绑定。`nvlsAllocBindUc` 分配 UC 内存并绑定到 MC 组：
 
-[FACT:src/transport/nvls.cc:225-277]
+[FACT:src/transport/nvls.cc:225-277](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L225-L277)
 
 ```c
 static ncclResult_t nvlsAllocBindUc(struct ncclComm* comm, const struct ncclMcPartition* partition, size_t size,
@@ -858,7 +858,7 @@ static ncclResult_t nvlsAllocBindUc(struct ncclComm* comm, const struct ncclMcPa
 
 ### 场景驱动 Walkthrough：ncclNvlsBufferSetup 的缓冲区布局
 
-[FACT:src/transport/nvls.cc:279-368]
+[FACT:src/transport/nvls.cc:279-368](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L279-L368)
 
 ```c
 ncclResult_t ncclNvlsBufferSetup(struct ncclComm* comm) {

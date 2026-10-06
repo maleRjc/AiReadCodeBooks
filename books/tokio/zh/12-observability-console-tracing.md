@@ -11,7 +11,7 @@
 
 预算的核心类型是 `coop::Budget`。虽然本章源码切片未直接给出 `coop.rs` 的完整定义，但从 `worker.rs` 的使用点可以反推出它的接口契约：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:695-795]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:695-795](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L695-L795)
 
 ```rust
 coop::budget(|| {
@@ -41,7 +41,7 @@ coop::budget(|| {
 
 预算不会凭空消耗，只有**资源操作**才会扣减它。所谓资源操作，是指那些可能被无限循环调用的、与外部世界交互的 API——channel 的 `send`/`recv`、I/O 的读写、`yield_now` 等。以 `mpsc::Sender::reserve` 为例，它是所有发送路径的公共入口：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:1272-1311]
+[FACT:tokio/src/sync/mpsc/bounded.rs:1272-1311](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1272-L1311)
 
 ```rust
 async fn reserve_inner(&self, n: usize) -> Result> {
@@ -63,7 +63,7 @@ async fn reserve_inner(&self, n: usize) -> Result> {
 
 `yield_now` 是预算机制最直白的体现，它不消耗预算，而是**主动触发让出**：
 
-[FACT:tokio/src/task/yield_now.rs:38-60]
+[FACT:tokio/src/task/yield_now.rs:38-60](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/yield_now.rs#L38-L60)
 
 ```rust
 pub async fn yield_now() {
@@ -95,7 +95,7 @@ pub async fn yield_now() {
 
 defer 队列定义在 worker 的 `Context` 中：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:247-257]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:247-257](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L247-L257)
 
 ```rust
 pub(crate) struct Context {
@@ -109,7 +109,7 @@ pub(crate) struct Context {
 
 `defer` 字段的注释直接点明它的用途：「mostly to handle yielded tasks」。在 worker 主循环中，当本地队列和窃取都无活可干时，会检查 defer 队列：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:613-621]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:613-621](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L613-L621)
 
 ```rust
 } else {
@@ -129,7 +129,7 @@ pub(crate) struct Context {
 
 预算作用域在 `run_task` 中建立。每个任务被轮询时，`coop::budget` 包裹整个轮询过程：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:691-704]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:691-704](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L691-L704)
 
 ```rust
 // Make the core available to the runtime context
@@ -147,7 +147,7 @@ coop::budget(|| {
 
 但这里有一个微妙的问题：LIFO slot 中的任务是在**同一个 `budget` 闭包内**被轮询的。看 `run_task` 的循环：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:709-750]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:709-750](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L709-L750)
 
 ```rust
 let mut lifo_polls = 0;
@@ -187,7 +187,7 @@ loop {
 
 LIFO slot 本身还有一个独立的限流器 `MAX_LIFO_POLLS_PER_TICK`：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:756-766]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:756-766](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L756-L766)
 
 ```rust
 // Disable the LIFO slot if we reach our limit
@@ -205,7 +205,7 @@ if lifo_polls >= MAX_LIFO_POLLS_PER_TICK {
 
 `MAX_LIFO_POLLS_PER_TICK` 的值是 3：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:263-263]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:263-263](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L263-L263)
 
 ```rust
 /// Value picked out of thin-air. Running the LIFO slot a handful of times
@@ -219,7 +219,7 @@ const MAX_LIFO_POLLS_PER_TICK: usize = 3;
 
 预算作用域在 `block_in_place` 中有一个重要的例外。`block_in_place` 会把 worker core 移交给另一个线程，当前线程进入阻塞状态。阻塞代码不受预算约束，所以必须**暂停**预算：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:406-417]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:406-417](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L406-L417)
 
 ```rust
 if had_entered {
@@ -238,7 +238,7 @@ if had_entered {
 
 `coop::stop()` 返回当前预算并把它设为 `None`（即「不在运行时内」），`Reset` 的 `Drop` 在阻塞结束后恢复：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:374-397]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:374-397](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L374-L397)
 
 ```rust
 impl Drop for Reset {
@@ -301,7 +301,7 @@ flowchart TD
 
 **预算耗尽与取消安全的交互。** 当预算耗尽导致 `reserve_inner` 返回 `Pending` 时，任务可能正处于 `select!` 的某个分支中。如果此时另一个分支就绪，`select!` 会取消当前分支——`reserve_inner` 的 `WakeReceiverOnDrop` guard 会在 drop 时检查「信号量已关闭且空闲」并唤醒接收端：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:1286-1299]
+[FACT:tokio/src/sync/mpsc/bounded.rs:1286-1299](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1286-L1299)
 
 ```rust
 struct WakeReceiverOnDrop {
@@ -326,7 +326,7 @@ impl Drop for WakeReceiverOnDrop {
 
 **预算与 `block_in_place` 的边界。** 前面看到 `block_in_place` 会 `coop::stop()` 暂停预算。但要注意：`coop::stop()` 只在 `had_entered` 为真时调用，也就是确实在运行时 worker 线程上时才暂停。如果 `block_in_place` 是在运行时外调用的，`f()` 直接执行，预算状态不变。这个分支判断在 `maybe_move_runtime` 中完成：
 
-[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:424-464]
+[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:424-464](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L424-L464)
 
 ```rust
 with_current(|maybe_cx| {
@@ -384,14 +384,14 @@ coop 机制用三层设计解决了非抢占调度器的公平性问题：
 
 Q1: 如果把 `run_task` 中 `coop::budget` 闭包内的 LIFO 循环改成每次轮询 LIFO 任务前都调用 `coop::budget` 重置预算，在 ping-pong 场景（任务 A 唤醒 B，B 唤醒 A）下会发生什么？为什么源码选择让 LIFO 任务共享父任务预算？
 
-**参考解析**：源码在 `run_task` 的注释中明确说明「Tasks from the LIFO slot inherit the "parent"'s limits」[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:679-682]。如果每个 LIFO 任务都重置预算，那么在 A→B→A→B 的 ping-pong 场景中，每次轮询都获得满额预算，两个任务可以无限互相调度，永远不会因为预算耗尽而让出。虽然 `MAX_LIFO_POLLS_PER_TICK = 3` 的限流会在 3 次后禁用 LIFO slot [FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:756-766]，但禁用 LIFO 后任务走普通队列，如果队列里只有 A 和 B，它们仍会交替被调度，只是不再享受 LIFO 优先级。共享预算则从资源操作总量上兜底：A 和 B 加起来最多消耗 128 次资源操作就必须让出，给其他任务和驱动留出机会。两道防线互补，缺一不可。
+**参考解析**：源码在 `run_task` 的注释中明确说明「Tasks from the LIFO slot inherit the "parent"'s limits」[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:679-682](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L679-L682)。如果每个 LIFO 任务都重置预算，那么在 A→B→A→B 的 ping-pong 场景中，每次轮询都获得满额预算，两个任务可以无限互相调度，永远不会因为预算耗尽而让出。虽然 `MAX_LIFO_POLLS_PER_TICK = 3` 的限流会在 3 次后禁用 LIFO slot [FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:756-766](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L756-L766)，但禁用 LIFO 后任务走普通队列，如果队列里只有 A 和 B，它们仍会交替被调度，只是不再享受 LIFO 优先级。共享预算则从资源操作总量上兜底：A 和 B 加起来最多消耗 128 次资源操作就必须让出，给其他任务和驱动留出机会。两道防线互补，缺一不可。
 
 Q2: `yield_now` 使用 `context::defer(cx.waker())` 而不是 `cx.waker().wake_by_ref()`。假设把 `defer` 改成直接 `wake`，在单 worker 多任务的场景下，一个任务在循环中反复调用 `yield_now` 会有什么后果？结合 worker 主循环的 `park_yield` 分支分析。
 
-**参考解析**：`yield_now` 的注释解释了原因：直接 wake 会把任务立刻推回运行队列，可能在 I/O/timer 驱动运行之前就被再次轮询 [FACT:tokio/src/task/yield_now.rs:49-54]。在单 worker 场景下，如果任务在循环中反复 `yield_now` 且每次直接 wake，worker 主循环的 `next_task` 会立刻取到这个任务并再次轮询，`park_yield` 分支（负责驱动 I/O 和 timer）[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:613-621] 永远不会被执行，因为 defer 队列为空且本地队列总有任务。结果就是 I/O 事件和 timer 永远得不到处理，整个运行时「假活」——任务在跑，但外部世界的事件无法推进。`defer` 队列保证了让出的任务必须等到驱动轮询之后才被唤醒，从而给驱动留出执行窗口。
+**参考解析**：`yield_now` 的注释解释了原因：直接 wake 会把任务立刻推回运行队列，可能在 I/O/timer 驱动运行之前就被再次轮询 [FACT:tokio/src/task/yield_now.rs:49-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/yield_now.rs#L49-L54)。在单 worker 场景下，如果任务在循环中反复 `yield_now` 且每次直接 wake，worker 主循环的 `next_task` 会立刻取到这个任务并再次轮询，`park_yield` 分支（负责驱动 I/O 和 timer）[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:613-621](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L613-L621) 永远不会被执行，因为 defer 队列为空且本地队列总有任务。结果就是 I/O 事件和 timer 永远得不到处理，整个运行时「假活」——任务在跑，但外部世界的事件无法推进。`defer` 队列保证了让出的任务必须等到驱动轮询之后才被唤醒，从而给驱动留出执行窗口。
 
 Q3: `block_in_place` 中 `coop::stop()` 把预算设为 `None`，`Reset::drop` 中 `coop::set(self.budget)` 恢复。如果在 `block_in_place` 的闭包 `f` 内部又调用了 `block_in_place`（嵌套），预算状态会怎样？`maybe_move_runtime` 的哪个分支处理了这种情况？
 
-**参考解析**：嵌套 `block_in_place` 由 `maybe_move_runtime` 中的 `(context::EnterRuntime::NotEntered, true)` 分支处理 [FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:454-458]。该分支直接 `return Ok(())`，不设置 `had_entered`，因此外层 `block_in_place` 的 `if had_entered` 判断为假，不会再次调用 `coop::stop()` 或创建新的 `Reset`。注释说明「This is a nested call to block_in_place (we already exited). All the necessary setup has already been done.」——外层已经暂停了预算并移交了 core，内层只需直接执行 `f()`。如果内层再次 `coop::stop()`，会把已经是 `None` 的预算再保存一次，`Reset::drop` 恢复时可能恢复成错误的值（`None` 而非外层的原始预算），导致预算永久丢失，任务后续所有资源操作都不受约束。
+**参考解析**：嵌套 `block_in_place` 由 `maybe_move_runtime` 中的 `(context::EnterRuntime::NotEntered, true)` 分支处理 [FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:454-458](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/multi_thread/worker.rs#L454-L458)。该分支直接 `return Ok(())`，不设置 `had_entered`，因此外层 `block_in_place` 的 `if had_entered` 判断为假，不会再次调用 `coop::stop()` 或创建新的 `Reset`。注释说明「This is a nested call to block_in_place (we already exited). All the necessary setup has already been done.」——外层已经暂停了预算并移交了 core，内层只需直接执行 `f()`。如果内层再次 `coop::stop()`，会把已经是 `None` 的预算再保存一次，`Reset::drop` 恢复时可能恢复成错误的值（`None` 而非外层的原始预算），导致预算永久丢失，任务后续所有资源操作都不受约束。
 
 coop 机制通过预算约束让任务在资源操作中主动让出，从而在非抢占模型下维持了调度公平。但预算耗尽触发的 Pending 必须与真正的等待在取消路径上表现一致，否则 select! 等组合子会破坏状态一致性。下一章将进入生产踩坑与边界条件：取消安全、panic 传播与关闭顺序，我们会看到更多这类「看似无关的机制在边界处耦合」的案例。

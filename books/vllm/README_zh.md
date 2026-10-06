@@ -4,7 +4,7 @@
 [![Stars](https://img.shields.io/badge/Stars-35.2k-yellow)](#)
 [![Chapters](https://img.shields.io/badge/章节数-14-emerald)](#)
 [![Language](https://img.shields.io/badge/技术栈-Python%2FC++%2FCUDA-purple)](#)
-[![在线交互阅读器](https://img.shields.io/badge/在线阅读器-aireadcode.com-cyan)](https://aireadcode.com/books/vllm.html)
+[![在线交互阅读器](https://img.shields.io/badge/在线双栏阅读-GitHub_Pages-cyan?logo=github)](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01)
 
 > 本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。
 
@@ -13,7 +13,7 @@
 ## 🌐 多语言导航
 - **[English Edition](README.md)**: View English chapter index and translations.
 - **中文原著 (当前)**: 完整 14~25 章精读目录见下方列表。
-- **[网页端双栏交互精读器](https://aireadcode.com/books/vllm.html)**: 支持实时代码切片联动与 `[FACT]` 行号溯源验证。
+- **[网页端双栏交互精读器](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01)**: 支持实时代码切片联动与 `[FACT]` 行号溯源验证。
 
 ---
 
@@ -40,7 +40,7 @@
 
 ## 🔍 阅读建议
 1. **GitHub 沉浸精读**：点击上述章节链接，直接在 GitHub Markdown 阅读完整讲解、源码切片与设计推断。
-2. **网页端真实源码联动**：访问 [aireadcode.com/books/vllm.html](https://aireadcode.com/books/vllm.html) 体验双栏联动与行号高亮。
+2. **网页端真实源码联动**：访问 [malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) 体验双栏联动与行号高亮。
 3. **本地代码一键成书**：下载 [AiReadCode 桌面客户端](https://aireadcode.com/#downloads)，一键将任意复杂代码仓库扫描成书。
 
 ## 📄 版权与协议

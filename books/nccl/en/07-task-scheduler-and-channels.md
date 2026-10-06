@@ -13,7 +13,7 @@
 
 先看 group 的全局状态定义。
 
-[FACT:src/group.cc:34-34]
+[FACT:src/group.cc:34-34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L34-L34)
 
 ```cpp
 thread_local int ncclGroupDepth = 0; // depth of ncclGroupStart nesting
@@ -41,7 +41,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 **第一步：`ncclGroupStart` 做了什么？**
 
-[FACT:src/include/group.h:63-66]
+[FACT:src/include/group.h:63-66](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/group.h#L63-L66)
 
 ```cpp
 inline ncclResult_t ncclGroupStartInternal() {
@@ -56,7 +56,7 @@ inline ncclResult_t ncclGroupStartInternal() {
 
 `ncclAllReduce` 内部会调用 `ncclGroupCommJoin(comm, ncclGroupTaskTypeCollective)`，把通信域加入 group 链表。
 
-[FACT:src/include/group.h:80-116]
+[FACT:src/include/group.h:80-116](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/group.h#L80-L116)
 
 ```cpp
 inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
@@ -110,11 +110,11 @@ inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
 
 **第三步：`ncclGroupEnd` 做了什么？**
 
-[FACT:src/group.cc:1039-1164]
+[FACT:src/group.cc:1039-1164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1039-L1164)
 
 `ncclGroupEndInternal` 是核心。逐段解析：
 
-[FACT:src/group.cc:1048-1061]
+[FACT:src/group.cc:1048-1061](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1048-L1061)
 
 ```cpp
 if (ncclGroupDepth == 0) {
@@ -128,7 +128,7 @@ if ((--ncclGroupDepth) > 0) goto exit;
 
 先检查深度，然后减一。如果减一后还大于 0，说明还在嵌套的内层 group 里，直接返回，不提交。只有减到 0 才继续。
 
-[FACT:src/group.cc:1063]
+[FACT:src/group.cc:1063](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1063)
 
 ```cpp
 if ((ret = ncclGroupError) != ncclSuccess) goto fail;
@@ -136,7 +136,7 @@ if ((ret = ncclGroupError) != ncclSuccess) goto fail;
 
 如果 group 内任何一次调用出过错，直接跳到 fail 清理。
 
-[FACT:src/group.cc:1084-1093]
+[FACT:src/group.cc:1084-1093](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1084-L1093)
 
 ```cpp
 NEW_NOTHROW_GOTO(groupJob, ncclGroupJob, ret, fail);
@@ -153,7 +153,7 @@ ncclIntruQueueTransfer(&groupJob->asyncJobs, &ncclAsyncJobs);
 
 创建一个 `ncclGroupJob`，把 thread_local 的 group 状态「转移」到 job 对象里。`ncclIntruQueueTransfer` 把 `ncclAsyncJobs` 队列整体转移到 `groupJob->asyncJobs`。这一步很关键：thread_local 状态是「临时」的，job 对象是「持久」的，可以被异步线程持有。
 
-[FACT:src/group.cc:1095-1147]
+[FACT:src/group.cc:1095-1147](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1095-L1147)
 
 ```cpp
 if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPreconnectHead != nullptr) {
@@ -193,7 +193,7 @@ if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPr
 
 **坑 1：阻塞和非阻塞通信域混用**。`ncclAsyncLaunch` 里有检查：
 
-[FACT:src/group.cc:55-64]
+[FACT:src/group.cc:55-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L55-L64)
 
 ```cpp
 /* check if there are blocking and nonblocking comms at the same time in group. */
@@ -212,7 +212,7 @@ if (comm->destroyFlag) {
 
 **坑 2：`ncclGroupError` 的传播**。如果 group 内某次调用失败，`ncclGroupError` 被设置，`ncclGroupEnd` 会跳到 fail 分支执行 `groupCleanup`。`groupCleanup` 会遍历所有 comm，释放 planner 里的 plan 内存、重置 planner、清理 rawTaskQueue。如果这一步没做干净，下次 `ncclGroupStart` 时 planner 里残留旧数据，会导致任务重复提交或内存泄漏。
 
-[FACT:src/group.cc:514-607]
+[FACT:src/group.cc:514-607](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L514-L607)
 
 ```cpp
 static void groupCleanup(struct ncclComm** groupCommHeadPtr,
@@ -269,7 +269,7 @@ static void groupCleanup(struct ncclComm** groupCommHeadPtr,
 
 `ncclPrepareTasks` 在 `groupLaunchLegacy` 里被调用：
 
-[FACT:src/group.cc:705-746]
+[FACT:src/group.cc:705-746](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L705-L746)
 
 ```cpp
 static ncclResult_t ncclPrepareTasksAndCollPreconnect(
@@ -309,7 +309,7 @@ static ncclResult_t ncclPrepareTasksAndCollPreconnect(
 
 关键点：`ncclPrepareTasks` 是**按 comm 逐个调用**的，但 preconnect 是**按 clique 批量执行**的。为什么？看 `groupLaunchLegacy` 里的注释：
 
-[FACT:src/group.cc:818-834]
+[FACT:src/group.cc:818-834](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L818-L834)
 
 ```cpp
 do {
@@ -334,7 +334,7 @@ do {
 
 `asyncJobLaunch` 是异步任务启动的核心：
 
-[FACT:src/group.cc:609-678]
+[FACT:src/group.cc:609-678](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L609-L678)
 
 ```cpp
 static ncclResult_t asyncJobLaunch(struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next>* asyncJobsMain,
@@ -461,7 +461,7 @@ flowchart TD
 
 `doLaunches` 的核心数据结构是 `ncclKernelPlan` 和 `comm->planner.unlaunchedPlansHead`。
 
-[FACT:src/group.cc:427-503]
+[FACT:src/group.cc:427-503](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L427-L503)
 
 ```cpp
 ncclResult_t doLaunches(struct ncclComm* head, int taskType) {
@@ -569,7 +569,7 @@ failure:
 
 **kernel 启动分支**
 
-[FACT:src/group.cc:477-483]
+[FACT:src/group.cc:477-483](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L477-L483)
 
 ```cpp
 if (plan->isCeColl) {
@@ -605,7 +605,7 @@ if (plan->isCeColl) {
 
 **坑 1：CUDA graph capture 混用**。
 
-[FACT:src/group.cc:448-455]
+[FACT:src/group.cc:448-455](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L448-L455)
 
 ```cpp
 if (capturingYes && capturingNo) {
@@ -632,7 +632,7 @@ if (capturingYes && capturingNo) {
 
 **阶段 1：P2P preconnect**
 
-[FACT:src/group.cc:756-774]
+[FACT:src/group.cc:756-774](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L756-L774)
 
 ```cpp
 if (!simInfo && groupCommPreconnectHeadMain != nullptr) {
@@ -655,7 +655,7 @@ NCCLCHECKGOTO(asyncJobLaunch(asyncJobsMain, groupAbortFlag), ret, fail);
 
 **阶段 2：对称内存注册**
 
-[FACT:src/group.cc:778-808]
+[FACT:src/group.cc:778-808](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L778-L808)
 
 ```cpp
 // only loop through sym alloc and register tasks
@@ -670,7 +670,7 @@ for (int type = ncclGroupTaskTypeSymRegister; type <= ncclGroupTaskTypeSymRegist
 
 **阶段 3：集合通信 preconnect**
 
-[FACT:src/group.cc:810-870]
+[FACT:src/group.cc:810-870](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L810-L870)
 
 ```cpp
 if (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr) {
@@ -684,7 +684,7 @@ if (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr) {
 
 **阶段 4：`doLaunches`**
 
-[FACT:src/group.cc:872-874]
+[FACT:src/group.cc:872-874](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L872-L874)
 
 ```cpp
 if ((!simInfo) && (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr)) {
@@ -696,7 +696,7 @@ if ((!simInfo) && (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr)) {
 
 **阶段 5：清理**
 
-[FACT:src/group.cc:876-903]
+[FACT:src/group.cc:876-903](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L876-L903)
 
 ```cpp
 while (!ncclIntruQueueEmpty(asyncJobsMain)) {
@@ -775,7 +775,7 @@ flowchart LR
 
 `groupLaunchEnqueueRearch` 是 NCCL 正在开发的新调度架构。它把任务准备、调度、启动分成更细的阶段，用异步 job 队列管理。目前调度器和启动器模块「尚未实现」，回退到 legacy 的 `doLaunches`。
 
-[FACT:src/group.cc:991-996]
+[FACT:src/group.cc:991-996](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L991-L996)
 
 ```cpp
 // Schedule and launch tasks. Scheduler and launcher module of the enqueue framework
@@ -794,7 +794,7 @@ if (!simInfo && groupCommHeadMain[ncclGroupTaskTypeRawTask] != nullptr) {
 
 新架构用 `ncclGroupJobLaunch` 替代 `asyncJobLaunch`，增加了更严格的状态检查：
 
-[FACT:src/group.cc:113-116]
+[FACT:src/group.cc:113-116](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L113-L116)
 
 ```cpp
 } else {
@@ -811,7 +811,7 @@ legacy 版本用 `WARN` 而不是 `assert`，新架构用 `assert`。这说明�
 
 `ncclParamEnqueueRearchEnable()` 控制走新架构还是 legacy：
 
-[FACT:src/group.cc:1031-1033]
+[FACT:src/group.cc:1031-1033](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1031-L1033)
 
 ```cpp
 static ncclResult_t groupLaunch(struct ncclAsyncJob* job_, ncclSimInfo_t* simInfo = NULL) {
@@ -829,7 +829,7 @@ static ncclResult_t groupLaunch(struct ncclAsyncJob* job_, ncclSimInfo_t* simInf
 
 非阻塞 group 的核心是 `ncclGroupJobComplete` 和 `ncclGroupJobAbort`：
 
-[FACT:src/group.cc:1166-1190]
+[FACT:src/group.cc:1166-1190](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1166-L1190)
 
 ```cpp
 ncclResult_t ncclGroupJobComplete(struct ncclGroupJob* groupJob) {
@@ -865,7 +865,7 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
 
 2. **引用计数**：`groupRefCount` 记录有多少个 comm 关联到这个 group job。每个 comm 在 `ncclGroupEndInternal` 里增加引用计数：
 
-[FACT:src/group.cc:1108-1111]
+[FACT:src/group.cc:1108-1111](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1108-L1111)
 
 ```cpp
 if (job->comm->groupJob == NULL) {

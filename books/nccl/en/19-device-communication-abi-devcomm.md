@@ -11,7 +11,7 @@
 
 ### Data Structures & Memory Layout
 
-以 `ncclDevComm_v23000` 为例，它的完整定义在 [FACT:src/devcomm/devcomm_v23000.cc:25-62]：
+以 `ncclDevComm_v23000` 为例，它的完整定义在 [FACT:src/devcomm/devcomm_v23000.cc:25-62](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L25-L62)：
 
 ```c
 struct ncclDevComm_v23000 {
@@ -31,13 +31,13 @@ struct ncclDevComm_v23000 {
 };
 ```
 
-[FACT:src/devcomm/devcomm_v23000.cc:64-93] 用一连串 `static_assert` 把每个字段的偏移钉死。这不是装饰——它是 ABI 兼容性的编译期契约。如果某个字段的偏移因为编译器对齐策略变化而移动，编译就会失败，而不是在运行时产生难以调试的内存错位。
+[FACT:src/devcomm/devcomm_v23000.cc:64-93](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L64-L93) 用一连串 `static_assert` 把每个字段的偏移钉死。这不是装饰——它是 ABI 兼容性的编译期契约。如果某个字段的偏移因为编译器对齐策略变化而移动，编译就会失败，而不是在运行时产生难以调试的内存错位。
 
 几个关键字段的设计动机：
 
 **`nRanks_rcp32` 和 `lsaSize_rcp32`**：这是 `nRanks` 和 `lsaSize` 的倒数，用 32 位定点数表示。[INFERENCE] kernel 里做 rank 到 buffer 偏移的除法运算时，GPU 的整数除法很慢，用乘以倒数再移位的方式可以显著加速。这是典型的「用空间换时间」——多存 4 字节，省掉每次除法的几十个时钟周期。
 
-**`resourceWindow_inlined`**：这是一个内联的窗口描述符，类型为 `ncclResourceWindow_vidmem_v23000_t`。注意 [FACT:src/devcomm/devcomm_v23000.cc:11-18] 中它的定义：
+**`resourceWindow_inlined`**：这是一个内联的窗口描述符，类型为 `ncclResourceWindow_vidmem_v23000_t`。注意 [FACT:src/devcomm/devcomm_v23000.cc:11-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L11-L18) 中它的定义：
 
 ```c
 typedef struct ncclResourceWindow_vidmem_v23000 {
@@ -50,13 +50,13 @@ typedef struct ncclResourceWindow_vidmem_v23000 {
 } ncclResourceWindow_vidmem_v23000_t;
 ```
 
-这里的 `reserved1`、`reserved2`、`reserved3` 是**填充字段**，用来占位。为什么需要填充？因为 `ncclDevComm_v23000` 的布局必须与某个「基准版本」保持偏移一致，即使某些字段在当前版本中不再使用，也要保留占位以保证后续字段的偏移不变。[FACT:src/devcomm/devcomm_v23000.cc:11-18] 的注释明确说明：2.30u1 把 `reserved3` 从 40 字节缩小到 32 字节，腾出 8 字节给 `hybridWorldGinBarrier`。这是一次**布局重排**——通过缩小填充区，在不改变整体大小的前提下塞入新字段。
+这里的 `reserved1`、`reserved2`、`reserved3` 是**填充字段**，用来占位。为什么需要填充？因为 `ncclDevComm_v23000` 的布局必须与某个「基准版本」保持偏移一致，即使某些字段在当前版本中不再使用，也要保留占位以保证后续字段的偏移不变。[FACT:src/devcomm/devcomm_v23000.cc:11-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L11-L18) 的注释明确说明：2.30u1 把 `reserved3` 从 40 字节缩小到 32 字节，腾出 8 字节给 `hybridWorldGinBarrier`。这是一次**布局重排**——通过缩小填充区，在不改变整体大小的前提下塞入新字段。
 
-[FACT:src/devcomm/devcomm_v23000.cc:11-18] 的 `static_assert` 进一步验证：`lsaFlatBase`、`stride4G`、`mcOffset4K` 三个字段的偏移必须与「当前版本」的 `ncclWindow_vidmem` 一致，且整个结构体大小为 64 字节。这意味着 `resourceWindow_inlined` 在 v23000 和当前版本之间是**二进制兼容**的——可以直接 memcpy。
+[FACT:src/devcomm/devcomm_v23000.cc:11-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L11-L18) 的 `static_assert` 进一步验证：`lsaFlatBase`、`stride4G`、`mcOffset4K` 三个字段的偏移必须与「当前版本」的 `ncclWindow_vidmem` 一致，且整个结构体大小为 64 字节。这意味着 `resourceWindow_inlined` 在 v23000 和当前版本之间是**二进制兼容**的——可以直接 memcpy。
 
 ### 版本化结构体的家族
 
-对比 `ncclDevComm_v22902` [FACT:src/devcomm/devcomm_v22902.cc:38-62] 和 `ncclDevComm_v22907` [FACT:src/devcomm/devcomm_v22907.cc:13-41]，可以看到字段的演化：
+对比 `ncclDevComm_v22902` [FACT:src/devcomm/devcomm_v22902.cc:38-62](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L38-L62) 和 `ncclDevComm_v22907` [FACT:src/devcomm/devcomm_v22907.cc:13-41](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L13-L41)，可以看到字段的演化：
 
 | 字段 | v22902 | v22907 | v23000 |
 |------|--------|--------|--------|
@@ -79,7 +79,7 @@ typedef struct ncclResourceWindow_vidmem_v23000 {
 
 ### 核心结构：ncclDevCommCompat
 
-每个 `devcomm_vXXXXX.cc` 文件末尾都定义了一个 `ncclDevCommCompat` 结构体。以 v23000 为例 [FACT:src/devcomm/devcomm_v23000.cc:192-199]：
+每个 `devcomm_vXXXXX.cc` 文件末尾都定义了一个 `ncclDevCommCompat` 结构体。以 v23000 为例 [FACT:src/devcomm/devcomm_v23000.cc:192-199](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L192-L199)：
 
 ```c
 struct ncclDevCommCompat ncclDevCommCompat_v23000 = {
@@ -96,7 +96,7 @@ struct ncclDevCommCompat ncclDevCommCompat_v23000 = {
 
 1. **`minVersion` / `maxVersion`**：这个插件负责的版本区间。v23000 覆盖 2.30.0 到 2.30.7。
 2. **`commPropertiesFilter`**：可选的过滤器，用于调整 `ncclCommProperties` 中暴露给旧版本的能力标志。v23000 设为 `nullptr`，表示不需要过滤。
-3. **`devCommRequirementsFilter`**：检查应用程序请求的设备侧资源是否与旧版本兼容。v23000 的实现 [FACT:src/devcomm/devcomm_v23000.cc:95-98] 只是把 `ginType` 从 `comm->sharedRes` 复制到 `reqs`。
+3. **`devCommRequirementsFilter`**：检查应用程序请求的设备侧资源是否与旧版本兼容。v23000 的实现 [FACT:src/devcomm/devcomm_v23000.cc:95-98](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L95-L98) 只是把 `ginType` 从 `comm->sharedRes` 复制到 `reqs`。
 4. **`devCommCopyNewToOld`**：把当前版本的 `ncclDevComm` 拷贝到旧版本布局。
 5. **`devCommCopyOldToNew`**：把旧版本布局拷贝回当前版本。
 
@@ -111,7 +111,7 @@ struct ncclDevCommCompat ncclDevCommCompat_v23000 = {
 | `devcomm_v23000.cc` | 2.30.0 | 2.30.7 | 增加 magic/version 校验 |
 | `devcomm_v23100.cc` | 2.31.0 | 当前版本 | 所有过滤器为 nullptr，表示完全兼容 |
 
-[FACT:src/devcomm/devcomm_v23100.cc:10-17] 的 v23100 插件所有回调都是 `nullptr`，这意味着从 2.31.0 开始，`ncclDevComm` 的布局已经稳定，不需要任何转换。
+[FACT:src/devcomm/devcomm_v23100.cc:10-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23100.cc#L10-L17) 的 v23100 插件所有回调都是 `nullptr`，这意味着从 2.31.0 开始，`ncclDevComm` 的布局已经稳定，不需要任何转换。
 
 [INFERENCE] 注意 v22902 和 v22907 之间的版本区间有「空隙」（2.29.4 和 2.29.6 没有对应的插件）。这可能是因为这些版本没有发布，或者它们的布局与相邻版本完全一致，可以复用。
 
@@ -150,7 +150,7 @@ flowchart TD
 
 ### NewToOld 转换：从当前版本到旧版本
 
-以 `ncclDevCommCopyNewToOld_v23000` 为例 [FACT:src/devcomm/devcomm_v23000.cc:114-152]：
+以 `ncclDevCommCopyNewToOld_v23000` 为例 [FACT:src/devcomm/devcomm_v23000.cc:114-152](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L114-L152)：
 
 ```c
 static ncclResult_t ncclDevCommCopyNewToOld_v23000(ncclComm_t comm, void* oldDevComm,
@@ -171,15 +171,15 @@ static ncclResult_t ncclDevCommCopyNewToOld_v23000(ncclComm_t comm, void* oldDev
 
 关键步骤：
 
-1. **`memset` 清零** [FACT:src/devcomm/devcomm_v23000.cc:118]：这是安全防护——旧结构体中可能有新版本不存在的字段，清零可以防止未初始化内存泄露到设备侧。
+1. **`memset` 清零** [FACT:src/devcomm/devcomm_v23000.cc:118](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L118)：这是安全防护——旧结构体中可能有新版本不存在的字段，清零可以防止未初始化内存泄露到设备侧。
 2. **直接字段拷贝**：`rank`、`nRanks`、`lsaRank` 等直接赋值。
-3. **内联窗口转换**：调用 `ncclDevCommCopyResourceWindowNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:100-105]，逐字段拷贝 `lsaFlatBase`、`stride4G`、`mcOffset4K`。
-4. **语义转换**：`ginConnectionsRailed = (newDevComm->ginConnectionStride > 1)` [FACT:src/devcomm/devcomm_v23000.cc:142]。新版本用 `ginConnectionStride`（一个整数步长）表示是否 railed，旧版本用布尔值。当步长大于 1 时，说明连接是 railed 的。
-5. **数组拷贝**：`memcpy` 拷贝 `ginNetDeviceTypes` 和 `ginHandles` 数组 [FACT:src/devcomm/devcomm_v23000.cc:135-136]。
+3. **内联窗口转换**：调用 `ncclDevCommCopyResourceWindowNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:100-105](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L100-L105)，逐字段拷贝 `lsaFlatBase`、`stride4G`、`mcOffset4K`。
+4. **语义转换**：`ginConnectionsRailed = (newDevComm->ginConnectionStride > 1)` [FACT:src/devcomm/devcomm_v23000.cc:142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L142)。新版本用 `ginConnectionStride`（一个整数步长）表示是否 railed，旧版本用布尔值。当步长大于 1 时，说明连接是 railed 的。
+5. **数组拷贝**：`memcpy` 拷贝 `ginNetDeviceTypes` 和 `ginHandles` 数组 [FACT:src/devcomm/devcomm_v23000.cc:135-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L135-L136)。
 
 ### OldToNew 转换：从旧版本到当前版本
 
-反向转换在 [FACT:src/devcomm/devcomm_v23000.cc:154-190]：
+反向转换在 [FACT:src/devcomm/devcomm_v23000.cc:154-190](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L154-L190)：
 
 ```c
 static ncclResult_t ncclDevCommCopyOldToNew_v23000(ncclComm_t comm, struct ncclDevComm* newDevComm,
@@ -194,24 +194,24 @@ static ncclResult_t ncclDevCommCopyOldToNew_v23000(ncclComm_t comm, struct ncclD
 }
 ```
 
-注意 [FACT:src/devcomm/devcomm_v23000.cc:180-181] 的语义转换：如果旧版本中 `ginConnectionsRailed` 为真，则新版本的 `ginConnectionStride` 设为 `lsaSize`；否则设为 1。这里用 `lsaSize` 作为步长，[INFERENCE] 是因为 railed 模式下每个 LSA 组内的 rank 共享一个 GIN 连接，步长等于 LSA 组的大小。
+注意 [FACT:src/devcomm/devcomm_v23000.cc:180-181](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L180-L181) 的语义转换：如果旧版本中 `ginConnectionsRailed` 为真，则新版本的 `ginConnectionStride` 设为 `lsaSize`；否则设为 1。这里用 `lsaSize` 作为步长，[INFERENCE] 是因为 railed 模式下每个 LSA 组内的 rank 共享一个 GIN 连接，步长等于 LSA 组的大小。
 
 ### v22902 的特殊处理
 
-`ncclDevCommCopyOldToNew_v22902` [FACT:src/devcomm/devcomm_v22902.cc:149-167] 有一个重要注释：
+`ncclDevCommCopyOldToNew_v22902` [FACT:src/devcomm/devcomm_v22902.cc:149-167](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L149-L167) 有一个重要注释：
 
 ```c
 // Note: this callback will be used with v22907 as well because, prior to 2.30.0, ncclDevComm was unversioned,
 // so v22902 and v22907 variants are indistinguishable.
 ```
 
-[INFERENCE] 这意味着在 2.30.0 之前，`ncclDevComm` 没有 `magic`/`version` 字段，所以库无法区分一个旧结构体到底是 v22902 还是 v22907。因此，v22907 的 `devCommCopyOldToNew` 被设为 `nullptr` [FACT:src/devcomm/devcomm_v22907.cc:128]，实际使用的是 v22902 的版本。由于两者都不支持 GIN 向后兼容，GIN 相关字段的差异不影响正确性。
+[INFERENCE] 这意味着在 2.30.0 之前，`ncclDevComm` 没有 `magic`/`version` 字段，所以库无法区分一个旧结构体到底是 v22902 还是 v22907。因此，v22907 的 `devCommCopyOldToNew` 被设为 `nullptr` [FACT:src/devcomm/devcomm_v22907.cc:128](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L128)，实际使用的是 v22902 的版本。由于两者都不支持 GIN 向后兼容，GIN 相关字段的差异不影响正确性。
 
 ### 资源窗口的版本化
 
-`ncclWindow_vidmem_v22902` 的定义在 `devcomm_v22902.h` 中（本章未提供该文件内容），但从 [FACT:src/devcomm/devcomm_v22902.cc:141] 和 [FACT:src/devcomm/devcomm_v22902.cc:164] 可以看到，v22902 使用 `ncclDevCommCopyResourceWindow_v22902` 进行窗口转换。这个函数在 `devcomm_v22902.h` 中声明，具体实现未在本章源码中展示。
+`ncclWindow_vidmem_v22902` 的定义在 `devcomm_v22902.h` 中（本章未提供该文件内容），但从 [FACT:src/devcomm/devcomm_v22902.cc:141](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L141) 和 [FACT:src/devcomm/devcomm_v22902.cc:164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L164) 可以看到，v22902 使用 `ncclDevCommCopyResourceWindow_v22902` 进行窗口转换。这个函数在 `devcomm_v22902.h` 中声明，具体实现未在本章源码中展示。
 
-[FACT:src/devcomm/devcomm_v23000.cc:11-18] 的 `static_assert` 验证了 v23000 的窗口布局与当前版本一致，所以 v23000 的转换函数可以直接逐字段拷贝。
+[FACT:src/devcomm/devcomm_v23000.cc:11-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L11-L18) 的 `static_assert` 验证了 v23000 的窗口布局与当前版本一致，所以 v23000 的转换函数可以直接逐字段拷贝。
 
 ---
 
@@ -223,7 +223,7 @@ static ncclResult_t ncclDevCommCopyOldToNew_v23000(ncclComm_t comm, struct ncclD
 
 ### commPropertiesFilter：能力标志过滤
 
-`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77]：
+`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L69-L77)：
 
 ```c
 static ncclResult_t ncclCommPropertiesFilter_v22907(ncclComm_t comm, struct ncclCommProperties* props) {
@@ -242,7 +242,7 @@ static ncclResult_t ncclCommPropertiesFilter_v22907(ncclComm_t comm, struct nccl
 2. **`ginType` 置为 NONE**：明确告诉应用程序「这个版本不支持 GIN」。
 3. **`railedGinType` 置为 NONE**：同上。
 
-`ncclCommPropertiesFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:86-96] 类似，但多了一个细节：
+`ncclCommPropertiesFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:86-96](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L86-L96) 类似，但多了一个细节：
 
 ```c
 // v22902 ncclCommProperties is _almost_ compatible with newer ones, with the exception of ginType, which in that
@@ -250,7 +250,7 @@ static ncclResult_t ncclCommPropertiesFilter_v22907(ncclComm_t comm, struct nccl
 ((struct ncclCommProperties_v22902*)props)->ginType = NCCL_GIN_TYPE_NONE_v22902;
 ```
 
-[FACT:src/devcomm/devcomm_v22902.cc:13-17] 定义了 v22902 的 GIN 类型枚举：
+[FACT:src/devcomm/devcomm_v22902.cc:13-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L13-L17) 定义了 v22902 的 GIN 类型枚举：
 
 ```c
 typedef enum : uint8_t {
@@ -260,11 +260,11 @@ typedef enum : uint8_t {
 } ncclGinType_t_v22902;
 ```
 
-注意这是 `uint8_t` 类型，而新版本中 `ginType` 是 `int`。所以 v22902 的过滤器需要把 `props` 强制转换为 `ncclCommProperties_v22902*`，然后写入 `uint8_t` 类型的 `ginType`。[FACT:src/devcomm/devcomm_v22902.cc:35-36] 的 `static_assert` 验证了 `ginType` 在偏移 34，结构体大小为 40 字节。
+注意这是 `uint8_t` 类型，而新版本中 `ginType` 是 `int`。所以 v22902 的过滤器需要把 `props` 强制转换为 `ncclCommProperties_v22902*`，然后写入 `uint8_t` 类型的 `ginType`。[FACT:src/devcomm/devcomm_v22902.cc:35-36](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L35-L36) 的 `static_assert` 验证了 `ginType` 在偏移 34，结构体大小为 40 字节。
 
 ### devCommRequirementsFilter：资源请求检查
 
-`ncclDevCommRequirementsFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:79-98] 检查应用程序是否请求了 GIN 资源：
+`ncclDevCommRequirementsFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:79-98](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L79-L98) 检查应用程序是否请求了 GIN 资源：
 
 ```c
 static ncclResult_t ncclDevCommRequirementsFilter_v22907(ncclComm_t comm, ncclDevCommRequirements_t* reqs) {
@@ -290,7 +290,7 @@ static ncclResult_t ncclDevCommRequirementsFilter_v22907(ncclComm_t comm, ncclDe
 
 如果确实请求了 GIN 资源，且 `ginConnectionType` 不是 `NONE` 或 `ginForceEnable` 为真，则返回 `ncclInvalidUsage` 并打印警告，提示应用程序需要重新编译。
 
-`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126] 更复杂，除了 GIN 检查外，还处理了 `barrierCount` 的语义变化：
+`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L98-L126) 更复杂，除了 GIN 检查外，还处理了 `barrierCount` 的语义变化：
 
 ```c
 // Prior to 2.29.4, a non-zero barrierCount did not imply GIN, but it does since.
@@ -340,7 +340,7 @@ sequenceDiagram
 
 **场景**：应用程序用 NCCL 2.29.2 编译，但运行时链接了 2.31.0 的库。应用程序在 kernel 中调用了 GIN 相关的设备侧 API（如 `ncclGinPut`）。
 
-**会发生什么**：`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126] 检测到 `ginForceEnable` 或 `ginSignalCount > 0`，返回 `ncclInvalidUsage`，并打印警告：
+**会发生什么**：`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L98-L126) 检测到 `ginForceEnable` 或 `ginSignalCount > 0`，返回 `ncclInvalidUsage`，并打印警告：
 
 ```
 The application was compiled with too old version of NCCL. It was compiled with NCCL version 2.29.2, but is
@@ -356,7 +356,7 @@ preferably with the same NCCL version that it will be running with.
 
 **场景**：应用程序用 2.29.7 编译，通信域包含跨节点 rank（`ncclTeamLsa(comm).nRanks != comm->nRanks`）。
 
-**会发生什么**：`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77] 把 `props->deviceApiSupport` 设为 `false`。应用程序如果检查了这个标志，会知道设备 API 不可用；但如果不检查，直接调用设备侧 API，会得到未定义行为。
+**会发生什么**：`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L69-L77) 把 `props->deviceApiSupport` 设为 `false`。应用程序如果检查了这个标志，会知道设备 API 不可用；但如果不检查，直接调用设备侧 API，会得到未定义行为。
 
 **根因**：2.29.7 的 GIN 不支持跨节点。LSA（Local SHARP Aggregation）组内的 rank 才能使用设备侧 API。
 
@@ -364,13 +364,13 @@ preferably with the same NCCL version that it will be running with.
 
 ### 陷阱三：memset 清零与未初始化字段泄露
 
-**场景**：`ncclDevCommCopyNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:118] 在拷贝前执行 `memset(old, '\0', sizeof(*old))`。
+**场景**：`ncclDevCommCopyNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:118](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L118) 在拷贝前执行 `memset(old, '\0', sizeof(*old))`。
 
 **为什么需要**：旧结构体中可能有新版本不存在的字段（如 v22902 中的 `ginSignalBase`、`ginCounterBase`）。如果不清零，这些字段会保留栈上的垃圾值，可能被 kernel 误读为有效数据。
 
 **踩坑点**：如果开发者手动实现版本转换而忘记清零，可能导致 kernel 读到随机值，表现为间歇性错误——难以复现和调试。
 
-**正确做法**：始终在转换前清零整个目标结构体。NCCL 的所有 `CopyNewToOld` 实现都遵循这个模式 [FACT:src/devcomm/devcomm_v22902.cc:132] [FACT:src/devcomm/devcomm_v22907.cc:104] [FACT:src/devcomm/devcomm_v23000.cc:118]。
+**正确做法**：始终在转换前清零整个目标结构体。NCCL 的所有 `CopyNewToOld` 实现都遵循这个模式 [FACT:src/devcomm/devcomm_v22902.cc:132](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L132) [FACT:src/devcomm/devcomm_v22907.cc:104](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L104) [FACT:src/devcomm/devcomm_v23000.cc:118](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L118)。
 
 ### 陷阱四：版本区间空隙导致的匹配失败
 
@@ -408,7 +408,7 @@ preferably with the same NCCL version that it will be running with.
 
 **为什么 v22907 的 `devCommCopyOldToNew` 设为 nullptr？**
 
-[FACT:src/devcomm/devcomm_v22902.cc:153-155] 的注释解释了原因：2.30.0 之前 `ncclDevComm` 没有版本字段，所以 v22902 和 v22907 的旧布局无法区分。由于两者都不支持 GIN 向后兼容，GIN 字段的差异不影响正确性，所以复用 v22902 的转换函数。
+[FACT:src/devcomm/devcomm_v22902.cc:153-155](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L153-L155) 的注释解释了原因：2.30.0 之前 `ncclDevComm` 没有版本字段，所以 v22902 和 v22907 的旧布局无法区分。由于两者都不支持 GIN 向后兼容，GIN 字段的差异不影响正确性，所以复用 v22902 的转换函数。
 
 **为什么 `nRanks_rcp32` 用定点数而不是浮点数？**
 
@@ -439,14 +439,14 @@ preferably with the same NCCL version that it will be running with.
 
 **参考解析**：
 
-`ncclDevComm_v22902` 的结构体大小为 200 字节 [FACT:src/devcomm/devcomm_v22902.cc:84]，而 `ncclDevComm_v23000` 为 240 字节 [FACT:src/devcomm/devcomm_v23000.cc:95-98]。v22902 中有 `ginSignalBase`（偏移 176）、`ginCounterBase`（偏移 184）、`ginContextBase`（偏移 204）等字段，这些字段在 v23000 中不存在或语义不同。
+`ncclDevComm_v22902` 的结构体大小为 200 字节 [FACT:src/devcomm/devcomm_v22902.cc:84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L84)，而 `ncclDevComm_v23000` 为 240 字节 [FACT:src/devcomm/devcomm_v23000.cc:95-98](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L95-L98)。v22902 中有 `ginSignalBase`（偏移 176）、`ginCounterBase`（偏移 184）、`ginContextBase`（偏移 204）等字段，这些字段在 v23000 中不存在或语义不同。
 
 如果去掉 `memset`，当从 v23000 转换到 v22902 时，`old` 结构体中 v23000 不存在的字段（如 `ginSignalBase`、`ginCounterBase`）会保留栈上的垃圾值。如果 kernel 恰好读取了这些字段（例如旧 kernel 的 GIN 代码路径），会得到随机值，导致：
 - 信号基地址错误，GIN 操作写入错误的内存位置。
 - 计数器基地址错误，导致计数器溢出或下溢。
 - 在极端情况下，可能触发非法内存访问，导致 kernel 崩溃。
 
-`memset` 清零确保所有未显式赋值的字段都是 0，这是一个安全的默认值。NCCL 的所有 `CopyNewToOld` 实现都包含这个步骤 [FACT:src/devcomm/devcomm_v22902.cc:132] [FACT:src/devcomm/devcomm_v22907.cc:104] [FACT:src/devcomm/devcomm_v23000.cc:118]。
+`memset` 清零确保所有未显式赋值的字段都是 0，这是一个安全的默认值。NCCL 的所有 `CopyNewToOld` 实现都包含这个步骤 [FACT:src/devcomm/devcomm_v22902.cc:132](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L132) [FACT:src/devcomm/devcomm_v22907.cc:104](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22907.cc#L104) [FACT:src/devcomm/devcomm_v23000.cc:118](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23000.cc#L118)。
 
 </details>
 
@@ -481,7 +481,7 @@ preferably with the same NCCL version that it will be running with.
 
 **参考解析**：
 
-[FACT:src/devcomm/devcomm_v22902.cc:117-121] 的注释说明：「Prior to 2.29.4, a non-zero barrierCount did not imply GIN, but it does since.」
+[FACT:src/devcomm/devcomm_v22902.cc:117-121](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v22902.cc#L117-L121) 的注释说明：「Prior to 2.29.4, a non-zero barrierCount did not imply GIN, but it does since.」
 
 在 2.29.4 之前，`barrierCount` 只表示 LSA barrier 的数量，不隐含 GIN 需求。从 2.29.4 开始，`barrierCount` 隐含 GIN 需求（即请求 barrier 就意味着需要 GIN 资源）。
 

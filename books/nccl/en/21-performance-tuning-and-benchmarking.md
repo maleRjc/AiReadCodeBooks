@@ -9,7 +9,7 @@
 
 NCCL 官方在 `docs/perf` 下发布参考性能数据，它的定位非常明确——不是产品级保证，而是对齐预期的参照点。
 
-[FACT:docs/perf/README.md:3-14]
+[FACT:docs/perf/README.md:3-14](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/perf/README.md#L3-L14)
 ```
 NCCL publishes reference performance data to:
 
@@ -31,7 +31,7 @@ systems.
 
 第二，**官方只发布峰值带宽，不发布延迟**。
 
-[FACT:docs/perf/README.md:24-24]
+[FACT:docs/perf/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/perf/README.md#L24-L24)
 ```
 We publish peak bandwidth for a selection of commonly used platforms. We do not
 currently publish latency because it is typically more sensitive to factors
@@ -40,7 +40,7 @@ outside NCCL's control.
 
 [INFERENCE] 为什么延迟不发布？因为延迟对系统状态极度敏感——CPU 频率、PCIe 链路状态、网卡固件版本、甚至 BIOS 的电源策略都会影响它。带宽在大消息下趋于饱和，相对稳定；延迟在小消息下由无数个微小环节叠加而成，任何一环抖动都会放大。所以调优时，**大消息看带宽，小消息看延迟**，这是两条不同的排查路径。
 
-[FACT:docs/perf/README.md:24-24]
+[FACT:docs/perf/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/perf/README.md#L24-L24)
 ```
 If your workload differs significantly from the published results, open an
 issue in the [NCCL repository](https://github.com/NVIDIA/nccl/issues) or contact
@@ -63,7 +63,7 @@ NVIDIA Support. We will try our best to help.
 
 代价模型的核心是 `modelMap` 数组，每个元素对应一种「算法/协议/对称内核」组合。
 
-[FACT:src/tuning/cost_model.cc:230-277]
+[FACT:src/tuning/cost_model.cc:230-277](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L230-L277)
 ```
 static struct ncclTuningModelEntry_t modelMap[] = {
     /*
@@ -84,7 +84,7 @@ Enable order: Broadcast, Reduce, AllGather, ReduceScatter, AllReduce
 
 模型的具体参数存在 `ncclTunerConstants_t` 里，包含各拓扑下的基础延迟和带宽。
 
-[FACT:src/tuning/cost_model.cc:142-152]
+[FACT:src/tuning/cost_model.cc:142-152](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L142-L152)
 ```
 static const ncclTunerConstants_t ncclTunerConstantsDefaults = {
     // baseLatencies
@@ -103,7 +103,7 @@ static const ncclTunerConstants_t ncclTunerConstantsDefaults = {
 
 硬件延迟则按拓扑类型（NVLink / PCI / NET）分别给出。
 
-[FACT:src/tuning/cost_model.cc:153-184]
+[FACT:src/tuning/cost_model.cc:153-184](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L153-L184)
 ```
     // hwLatencies
   {
@@ -132,7 +132,7 @@ static const ncclTunerConstants_t ncclTunerConstantsDefaults = {
 
 带宽参数按 GPU 架构分代给出。
 
-[FACT:src/tuning/cost_model.cc:183-183]
+[FACT:src/tuning/cost_model.cc:183-183](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L183-L183)
 ```
     // llMaxBws
   {
@@ -149,7 +149,7 @@ static const ncclTunerConstants_t ncclTunerConstantsDefaults = {
 
 每个通信域（communicator）持有一份 `ncclTuningContext_t`，保存这个 comm 的调优状态。
 
-[FACT:src/include/tuning.h:81-95]
+[FACT:src/include/tuning.h:81-95](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/tuning.h#L81-L95)
 ```
 struct ncclTuningContext_t {
   // Persistant tuning parameters tied to a communicator.
@@ -179,7 +179,7 @@ struct ncclTuningContext_t {
 
 假设你调用 `ncclAllReduce`，消息大小 1MB，8 卡单机 NVLink。NCCL 内部会构造一个 `ncclTuningInput_t`，然后调用 `ncclTuningCompute`。
 
-[FACT:src/tuning/tuning.cc:180-202]
+[FACT:src/tuning/tuning.cc:180-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L180-L202)
 ```
 ncclResult_t ncclTuningCompute(struct ncclTuningInput_t* const input, struct ncclTuningResult_t* const result) {
   ncclResult_t ret = ncclSuccess;
@@ -200,7 +200,7 @@ ncclResult_t ncclTuningCompute(struct ncclTuningInput_t* const input, struct ncc
 
 第二步：多 rank 时调用 `ncclTuningComputeAllTunings`，遍历所有候选组合。
 
-[FACT:src/tuning/tuning.cc:128-149]
+[FACT:src/tuning/tuning.cc:128-149](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L128-L149)
 ```
 ncclResult_t ncclTuningComputeAllTunings(struct ncclTuningInput_t* const input,
                                          struct ncclTuningResultList_t* const tunings) {
@@ -223,7 +223,7 @@ ncclResult_t ncclTuningComputeAllTunings(struct ncclTuningInput_t* const input,
 
 这里有个精妙的设计：`tuningMask` 是一个 64 位掩码，每一位对应一个候选组合。`NCCL_TUNING_MASK_GENERAL_KERNELS`、`NCCL_TUNING_MASK_SYM_KERNELS`、`NCCL_TUNING_MASK_CE` 分别圈定不同类别的候选。
 
-[FACT:src/include/tuning.h:17-25]
+[FACT:src/include/tuning.h:17-25](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/tuning.h#L17-L25)
 ```
 #define NCCL_TUNING_SYM_KERNEL_ID_OFFSET (NCCL_NUM_ALGORITHMS * NCCL_NUM_PROTOCOLS)
 #define NCCL_TUNING_CE_METHOD_ID_OFFSET (NCCL_TUNING_SYM_KERNEL_ID_OFFSET + ncclSymkKernelId_Count)
@@ -240,7 +240,7 @@ ncclResult_t ncclTuningComputeAllTunings(struct ncclTuningInput_t* const input,
 
 第三步：对每个候选调用 `ncclTuningComputeTuning`，它转调 `ncclTuningCostModelSimModel`。
 
-[FACT:src/tuning/cost_model.cc:470-497]
+[FACT:src/tuning/cost_model.cc:470-497](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L470-L497)
 ```
 ncclResult_t ncclTuningCostModelSimModel(int id, struct ncclTuningInput_t* const input,
                                          struct ncclTuningResult_t* const result) {
@@ -276,7 +276,7 @@ not_valid:
 
 第四步：从所有有效候选中选耗时最小的。
 
-[FACT:src/tuning/tuning.cc:155-173]
+[FACT:src/tuning/tuning.cc:155-173](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L155-L173)
 ```
 static ncclResult_t ncclTuningSelectBestTuning(struct ncclTuningResultList_t* tunings,
                                                struct ncclTuningResult_t* const bestTuning) {
@@ -338,7 +338,7 @@ flowchart TD
 
 `parseList` 支持的语法比大多数人想象的复杂。
 
-[FACT:src/tuning/cost_model.cc:14-32]
+[FACT:src/tuning/cost_model.cc:14-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L14-L32)
 ```
 // Parse a map of prefixes to a list of elements. The first prefix is
 // optional and, if not present, the list of elements will be applied
@@ -369,7 +369,7 @@ flowchart TD
 
 `^` 前缀是关键——它表示「unset」，即从默认全启用中排除某个选项。
 
-[FACT:src/tuning/cost_model.cc:59-67]
+[FACT:src/tuning/cost_model.cc:59-67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L59-L67)
 ```
     int unset, set;
     if (elemList[0] == '^') {
@@ -384,7 +384,7 @@ flowchart TD
 
 解析到 `^` 时，`unset=1`、`set=0`。随后对匹配的 prefix，先把整个列表填成 `unset`（全排除），再把列出的元素设为 `set`。
 
-[FACT:src/tuning/cost_model.cc:69-96]
+[FACT:src/tuning/cost_model.cc:69-96](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L69-L96)
 ```
     bool foundPrefix = false;
     for (int p = 0; p < nprefixes; p++) {
@@ -419,7 +419,7 @@ flowchart TD
 
 `ncclTuningCostModelInit` 里有一段关键逻辑，处理用户强制与环境变量、平台能力的交互。
 
-[FACT:src/tuning/cost_model.cc:363-384]
+[FACT:src/tuning/cost_model.cc:363-384](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L363-L384)
 ```
     for (int f = 0; f < NCCL_NUM_FUNCTIONS; f++) {
       // Disable LL128 when 1) it is not supported on the platform, and 2) user did not explicitly request it.
@@ -452,7 +452,7 @@ flowchart TD
 
 所有 `NCCL_PARAM` 宏最终都走 `ncclLoadParam`。
 
-[FACT:src/misc/param.cc:78-108]
+[FACT:src/misc/param.cc:78-108](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L78-L108)
 ```
 int64_t ncclLoadParam(char const* env, int64_t deftVal, int64_t uninitialized, int64_t* cache, int8_t* noCache) {
   static std::mutex mutex;
@@ -501,7 +501,7 @@ int64_t ncclLoadParam(char const* env, int64_t deftVal, int64_t uninitialized, i
 
 环境变量不一定要从 shell 设置，NCCL 支持从配置文件读取。
 
-[FACT:src/misc/param.cc:52-67]
+[FACT:src/misc/param.cc:52-67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L52-L67)
 ```
 static void initEnvFunc() {
   char confFilePath[1024];
@@ -523,7 +523,7 @@ static void initEnvFunc() {
 
 加载顺序：`NCCL_CONF_FILE` 指定的文件（如果设置了）→ `~/.nccl.conf` → `/etc/nccl.conf`。后加载的会覆盖先加载的（因为 `setEnvFile` 调用 `ncclOsSetEnv`）。
 
-[FACT:src/misc/param.cc:69-72]
+[FACT:src/misc/param.cc:69-72](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L69-L72)
 ```
 void initEnv() {
   static std::once_flag once;
@@ -541,7 +541,7 @@ void initEnv() {
 
 `ncclTuningCompute` 在选出最佳算法/协议后，会调用 `ncclTuningGetChannels` 计算通道数。
 
-[FACT:src/tuning/tuning.cc:233-235]
+[FACT:src/tuning/tuning.cc:233-235](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L233-L235)
 ```
   if (bestTuning.algo != NCCL_ALGO_UNDEF && bestTuning.proto != NCCL_PROTO_UNDEF) {
     NCCLCHECKGOTO(ncclTuningGetChannels(input, &bestTuning), ret, exit);
@@ -550,7 +550,7 @@ void initEnv() {
 
 通道数的计算逻辑不在本章源码材料中，但可以从 `ncclTuningResult_t` 的字段看出它的作用。
 
-[FACT:src/include/tuning.h:42-55]
+[FACT:src/include/tuning.h:42-55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/tuning.h#L42-L55)
 ```
 struct ncclTuningResult_t {
   int id;
@@ -574,7 +574,7 @@ struct ncclTuningResult_t {
 
 有一段特殊逻辑处理 `NCCL_CTA_POLICY_EFFICIENCY` 策略。
 
-[FACT:src/tuning/tuning.cc:236-257]
+[FACT:src/tuning/tuning.cc:236-257](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L236-L257)
 ```
   // NCCL_CTA_POLICY_EFFICIENCY requires user (non-symmetric) buffer registration (currently unsupported with MNNVL).
   // Run after GetChannels so bestTuning.nChannels is valid. Skip when a tuner plugin owns selection
@@ -616,7 +616,7 @@ struct ncclTuningResult_t {
 
 对称内核（symmetric kernel）是较新的特性，当它不可用时需要回退到通用内核。
 
-[FACT:src/tuning/tuning.cc:258-298]
+[FACT:src/tuning/tuning.cc:258-298](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L258-L298)
 ```
   if ((bestTuning.symKernelId != ncclSymkKernelId_Count ||
        (input->tuningMask & NCCL_TUNING_MASK_SYM_KERNELS && bestTuning.symKernelId == ncclSymkKernelId_Count)) &&
@@ -666,7 +666,7 @@ struct ncclTuningResult_t {
 
 如果所有候选都被排除，NCCL 会报错并给出诊断信息。
 
-[FACT:src/tuning/tuning.cc:308-329]
+[FACT:src/tuning/tuning.cc:308-329](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L308-L329)
 ```
   if ((bestTuning.algo == NCCL_ALGO_UNDEF || bestTuning.proto == NCCL_PROTO_UNDEF) &&
       bestTuning.symKernelId == ncclSymkKernelId_Count && bestTuning.ceMethodId == ncclCeMethodId_Count) {
@@ -700,7 +700,7 @@ struct ncclTuningResult_t {
 
 `parseList` 遇到无法识别的 token 会返回 `ncclInvalidUsage`，但如果你写的是 `NCCL_ALGO=RING`（大写），`strcasecmp` 会正确匹配。真正危险的是拼写错误，比如 `NCCL_ALGO=rnig`。
 
-[FACT:src/tuning/cost_model.cc:87-91]
+[FACT:src/tuning/cost_model.cc:87-91](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L87-L91)
 ```
         if (e == nelems) {
           WARN("Unrecognized element token \"%s\" when parsing \"%s\"", elem, str);
@@ -715,7 +715,7 @@ struct ncclTuningResult_t {
 
 如果你设置 `NCCL_ALGO=tree` 但没设置 `NCCL_PROTO`，NCCL 会在 Tree 算法下选择最优协议。但如果你同时设置 `NCCL_ALGO=tree` 和 `NCCL_PROTO=LL`，而 Tree/LL 组合在某些函数上被禁用（比如 Tree 只在 AllReduce 启用），就会触发「无可用组合」错误。
 
-[FACT:src/tuning/cost_model.cc:379-383]
+[FACT:src/tuning/cost_model.cc:379-383](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L379-L383)
 ```
       if (((algo != NCCL_ALGO_UNDEF && algoEnable[f * NCCL_NUM_ALGORITHMS + algo] != 0) &&
            (proto != NCCL_PROTO_UNDEF && protoEnable[f * NCCL_NUM_PROTOCOLS + proto] != 0)) ||
@@ -730,7 +730,7 @@ struct ncclTuningResult_t {
 
 LL128 不是所有平台都支持。`isLL128Enabled` 检查了计算能力、驱动版本、连接类型。
 
-[FACT:src/tuning/cost_model.cc:119-139]
+[FACT:src/tuning/cost_model.cc:119-139](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L119-L139)
 ```
 static int isLL128Enabled(int minCompCap, int maxCompCap, int interType, int intraType, int nRanks, int func, int algo,
                           int minDriverVersion) {
@@ -767,7 +767,7 @@ static int isLL128Enabled(int minCompCap, int maxCompCap, int interType, int int
 
 通道数越多，需要的缓冲区越大。在显存紧张的场景下，过多的通道可能导致 OOM。
 
-[FACT:src/tuning/tuning.cc:246-253]
+[FACT:src/tuning/tuning.cc:246-253](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L246-L253)
 ```
         int recChannels;
         NCCLCHECKGOTO(ncclNvlsRegResourcesQuery(input->comm, input->func, &recChannels), ret, exit);
@@ -825,7 +825,7 @@ flowchart TD
 
 **参考解析**：
 
-单 rank 短路在 [FACT:src/tuning/tuning.cc:191-200]：
+单 rank 短路在 [FACT:src/tuning/tuning.cc:191-200](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L191-L200)：
 
 ```cpp
   // Set tuning to Ring/Simple for single rank case
@@ -847,17 +847,17 @@ flowchart TD
 
 1. **性能浪费**：单 rank 没有通信，所有算法的耗时估算都是纯开销，选哪个都一样。遍历所有候选是纯粹的浪费。
 2. **可能选不出结果**：某些算法在单 rank 下可能被模型判定为无效（比如 Ring 需要至少 2 个 rank 才能形成环），导致 `tunings` 列表为空，`ncclTuningSelectBestTuning` 返回 `FLT_MAX` 的初始值，最终 `bestTuning.algo` 仍是 `NCCL_ALGO_UNDEF`。
-3. **触发错误路径**：如果 `bestTuning.algo == NCCL_ALGO_UNDEF`，会进入 [FACT:src/tuning/tuning.cc:308-329] 的错误处理，打印 "No algorithm/protocol available" 警告，并返回 `ncclInternalError`。
+3. **触发错误路径**：如果 `bestTuning.algo == NCCL_ALGO_UNDEF`，会进入 [FACT:src/tuning/tuning.cc:308-329](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/tuning.cc#L308-L329) 的错误处理，打印 "No algorithm/protocol available" 警告，并返回 `ncclInternalError`。
 
 所以这个短路不只是优化，更是正确性保证——单 rank 场景必须有一个确定的默认值。
 
 </details>
 
-<details><summary>Q2: `parseList` 中 `forced[p] = 1` 这行代码（[FACT:src/tuning/cost_model.cc:83]）的作用是什么？如果去掉它，`NCCL_ALGO=ring` 的行为会有什么变化？</summary>
+<details><summary>Q2: `parseList` 中 `forced[p] = 1` 这行代码（[FACT:src/tuning/cost_model.cc:83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L83)）的作用是什么？如果去掉它，`NCCL_ALGO=ring` 的行为会有什么变化？</summary>
 
 **参考解析**：
 
-`forced[p] = 1` 在 [FACT:src/tuning/cost_model.cc:80-85]：
+`forced[p] = 1` 在 [FACT:src/tuning/cost_model.cc:80-85](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/tuning/cost_model.cc#L80-L85)：
 
 ```cpp
         for (e = 0; e < nelems; e++) {

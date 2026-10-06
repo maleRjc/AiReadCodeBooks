@@ -12,7 +12,7 @@
 
 先看 `main.ts` 的全部内容：
 
-[FACT:packages-private/vite-debug/main.ts:4-4]
+[FACT:packages-private/vite-debug/main.ts:4-4](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/main.ts#L4-L4)
 
 ```ts
 import { createApp } from 'vue'
@@ -36,7 +36,7 @@ app.mount('#app')
 
 现在看 `App.vue`，它是这个沙盒的「实验载体」：
 
-[FACT:packages-private/vite-debug/App.vue:4-8]
+[FACT:packages-private/vite-debug/App.vue:4-8](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/App.vue#L4-L8)
 
 ```vue
 
@@ -108,7 +108,7 @@ flowchart LR
 
 先看 `vite.config.ts`：
 
-[FACT:packages-private/vite-debug/vite.config.ts:4-6]
+[FACT:packages-private/vite-debug/vite.config.ts:4-6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/vite.config.ts#L4-L6)
 
 ```ts
 import { defineConfig } from 'vite'
@@ -121,7 +121,7 @@ export default defineConfig({
 
 这里**没有显式的 `resolve.alias` 配置**。那么 `'vue'` 是如何被解析到本地源码的？答案在 `package.json` 中：
 
-[FACT:packages-private/vite-debug/package.json:1-15]
+[FACT:packages-private/vite-debug/package.json:1-15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L1-L15)
 
 ```json
 {
@@ -210,7 +210,7 @@ flowchart TD
 
 **第二层：`private: true`**
 
-[FACT:packages-private/vite-debug/package.json:3]
+[FACT:packages-private/vite-debug/package.json:3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L3)
 
 ```json
 "private": true,
@@ -266,17 +266,17 @@ Vue core 仓库中已经有一个功能完整的 `SFC Playground`（第 7 章讨
 
 Q1: 如果将 `package.json` 中的 `"vue": "workspace:*"` 改为 `"vue": "^3.4.0"`，在 `vite-debug` 中修改 `packages/reactivity/src/ref.ts` 后，浏览器中的行为会发生什么变化？为什么？
 
-**参考解析**：改为 `"^3.4.0"` 后，pnpm 会从 npm registry 下载 Vue 3.4.x 的发布版本，而非链接到本地 `packages/vue` [FACT:packages-private/vite-debug/package.json:13]。此时 `import { createApp } from 'vue'` 解析到的是 `node_modules/.pnpm/vue@3.4.x/node_modules/vue/dist/vue.runtime.esm-bundler.js`，即预构建产物。修改 `packages/reactivity/src/ref.ts` 不会触发任何 HMR，因为 Vite 的模块图中根本不包含这个文件。浏览器中运行的仍然是 npm 版本的 `ref` 实现。这个实验反向验证了 `workspace:*` 是源码级调试的必要条件。
+**参考解析**：改为 `"^3.4.0"` 后，pnpm 会从 npm registry 下载 Vue 3.4.x 的发布版本，而非链接到本地 `packages/vue` [FACT:packages-private/vite-debug/package.json:13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L13)。此时 `import { createApp } from 'vue'` 解析到的是 `node_modules/.pnpm/vue@3.4.x/node_modules/vue/dist/vue.runtime.esm-bundler.js`，即预构建产物。修改 `packages/reactivity/src/ref.ts` 不会触发任何 HMR，因为 Vite 的模块图中根本不包含这个文件。浏览器中运行的仍然是 npm 版本的 `ref` 实现。这个实验反向验证了 `workspace:*` 是源码级调试的必要条件。
 
 Q2: `App.vue` 中 `<style>` 块没有加 `scoped`，如果在这个沙盒中同时挂载两个组件实例，样式会发生什么？这与 `vite-debug` 的调试目标有何关系？
 
-**参考解析**：没有 `scoped` 时，`button { color: red }` 是全局样式 [FACT:packages-private/vite-debug/App.vue:4-8]，会作用于页面中所有 `<button>` 元素。如果挂载两个组件实例，两个实例的按钮都会变红。这与调试目标的关系在于：`vite-debug` 的定位是「最小复现」，而非「样式隔离验证」。省略 `scoped` 减少了编译期注入 `data-v-xxx` 属性的变量，使得调试器中的 DOM 结构更干净。如果你需要调试 `scoped` 样式的编译逻辑，应该显式添加 `scoped` 并观察 `@vitejs/plugin-vue` 生成的属性注入代码。
+**参考解析**：没有 `scoped` 时，`button { color: red }` 是全局样式 [FACT:packages-private/vite-debug/App.vue:4-8](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/App.vue#L4-L8)，会作用于页面中所有 `<button>` 元素。如果挂载两个组件实例，两个实例的按钮都会变红。这与调试目标的关系在于：`vite-debug` 的定位是「最小复现」，而非「样式隔离验证」。省略 `scoped` 减少了编译期注入 `data-v-xxx` 属性的变量，使得调试器中的 DOM 结构更干净。如果你需要调试 `scoped` 样式的编译逻辑，应该显式添加 `scoped` 并观察 `@vitejs/plugin-vue` 生成的属性注入代码。
 
 Q3: 假设你在 `packages/runtime-core/src/renderer.ts` 的 `patch` 函数中加了一行 `console.log`，但浏览器控制台没有输出。请列出至少三种可能的原因，并说明如何逐一排查。
 
 **参考解析**：
 
-原因一：**源码入口未生效**。`'vue'` 解析到了 `dist` 产物而非 `src`。排查：在 DevTools Network 面板查看 `vue` 模块的加载路径，如果是 `dist/` 开头，说明条件导出未命中 `development` 条件 [FACT:packages-private/vite-debug/package.json:13]。
+原因一：**源码入口未生效**。`'vue'` 解析到了 `dist` 产物而非 `src`。排查：在 DevTools Network 面板查看 `vue` 模块的加载路径，如果是 `dist/` 开头，说明条件导出未命中 `development` 条件 [FACT:packages-private/vite-debug/package.json:13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L13)。
 
 原因二：**HMR 未传播**。Vite 的模块图没有将 `packages/runtime-core/src/renderer.ts` 的变更传播到 `vite-debug`。排查：查看 Vite 终端是否有 `hmr update` 日志；如果没有，重启 dev server。
 

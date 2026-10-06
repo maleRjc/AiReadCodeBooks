@@ -21,23 +21,23 @@
 
 `stride` 是最容易被忽略但最关键的字段。World 团队里 `stride = 1`，因为所有 rank 连续排列；但 Rail 团队里 `stride = lsaSize`，因为同一个 rail 上的 rank 在 world 中每隔 `lsaSize` 个才出现一次。
 
-[FACT:src/nccl_device/core.cc:13-19] 展示了 World 团队的构造：直接取 `comm->nRanks` 和 `comm->rank`，`stride` 固定为 1。这是唯一不需要 `ncclDevrInitOnce` 的团队，因为它的信息全在 host 侧 `comm` 里。
+[FACT:src/nccl_device/core.cc:13-19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L13-L19) 展示了 World 团队的构造：直接取 `comm->nRanks` 和 `comm->rank`，`stride` 固定为 1。这是唯一不需要 `ncclDevrInitOnce` 的团队，因为它的信息全在 host 侧 `comm` 里。
 
-[FACT:src/nccl_device/core.cc:22-33] 是 LSA 团队。注意 L26 的 `ncclDevrInitOnce(comm)`——这是设备侧资源初始化的幂等入口。L23-25 的注释非常关键：**这里故意忽略错误**，因为如果初始化失败，返回的 team 是「垃圾值」，但下一个真正需要资源的 API 调用会再次触发 `ncclDevrInitOnce` 并报告错误。这是一种「延迟报错」策略，避免在团队查询这种轻量操作上抛出重错误。
+[FACT:src/nccl_device/core.cc:22-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L22-L33) 是 LSA 团队。注意 L26 的 `ncclDevrInitOnce(comm)`——这是设备侧资源初始化的幂等入口。L23-25 的注释非常关键：**这里故意忽略错误**，因为如果初始化失败，返回的 team 是「垃圾值」，但下一个真正需要资源的 API 调用会再次触发 `ncclDevrInitOnce` 并报告错误。这是一种「延迟报错」策略，避免在团队查询这种轻量操作上抛出重错误。
 
 ### 场景驱动 Walkthrough：从 World 到 Rail 的坐标变换
 
 假设一个 8 卡机器，`lsaSize = 4`（每 4 卡一个 LSA 域），`nRanks = 8`。我们来看 `ncclTeamRail` 如何构造：
 
-[FACT:src/nccl_device/core.cc:70-79] 中，`nRanks = 8 / 4 = 2`，`rank = comm->rank / 4`，`stride = 4`。如果当前 rank 是 5，那么它在 Rail 团队里的 `rank = 5 / 4 = 1`，`stride = 4`，意味着 Rail 团队的成员是 world 中的 rank 1 和 rank 5。
+[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79) 中，`nRanks = 8 / 4 = 2`，`rank = comm->rank / 4`，`stride = 4`。如果当前 rank 是 5，那么它在 Rail 团队里的 `rank = 5 / 4 = 1`，`stride = 4`，意味着 Rail 团队的成员是 world 中的 rank 1 和 rank 5。
 
 再看 `ncclTeamRankToWorld` 的换算公式：
 
-[FACT:src/nccl_device/core.cc:82-84] 的 `comm->rank + (rank - team.rank) * team.stride` 是一个**相对偏移**计算：先算出目标 rank 相对于当前 rank 在团队内的偏移 `(rank - team.rank)`，再乘以步长 `stride`，加上当前 rank 的 world 编号。这个公式对所有团队通用，因为 `stride` 已经编码了团队的排列规律。
+[FACT:src/nccl_device/core.cc:82-84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L82-L84) 的 `comm->rank + (rank - team.rank) * team.stride` 是一个**相对偏移**计算：先算出目标 rank 相对于当前 rank 在团队内的偏移 `(rank - team.rank)`，再乘以步长 `stride`，加上当前 rank 的 world 编号。这个公式对所有团队通用，因为 `stride` 已经编码了团队的排列规律。
 
 `ncclTeamRankToLsa` 则不同：
 
-[FACT:src/nccl_device/core.cc:87-92] 用的是 `comm->devrState.lsaSelf + (rank - team.rank) * team.stride`。注意这里用的是 `lsaSelf` 而不是 `comm->rank`——因为 LSA 编号是设备侧资源初始化后才知道的，可能与 world rank 不同。
+[FACT:src/nccl_device/core.cc:87-92](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L87-L92) 用的是 `comm->devrState.lsaSelf + (rank - team.rank) * team.stride`。注意这里用的是 `lsaSelf` 而不是 `comm->rank`——因为 LSA 编号是设备侧资源初始化后才知道的，可能与 world rank 不同。
 
 ```mermaid
 flowchart TD
@@ -55,7 +55,7 @@ flowchart TD
 
 **为什么 `ncclTeamWorld` 不调用 `ncclDevrInitOnce`？** 因为 World 团队的信息完全来自 host 侧 `comm`，不需要任何设备侧资源。如果强行调用，会让一个纯 host 查询操作依赖设备侧初始化，增加不必要的失败点。
 
-**踩坑点**：`ncclTeamRankToLsa` 在初始化失败时返回 `-1`（[FACT:src/nccl_device/core.cc:87-92]），而 `ncclTeamRankToWorld` 永远不会失败。调用方如果混用这两个函数且不检查返回值，可能在 LSA 初始化失败时拿到 `-1` 当作合法 rank 使用，导致越界访问。生产代码中应当把 `ncclTeamRankToLsa` 的返回值当作可能失败的操作处理。
+**踩坑点**：`ncclTeamRankToLsa` 在初始化失败时返回 `-1`（[FACT:src/nccl_device/core.cc:87-92](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L87-L92)），而 `ncclTeamRankToWorld` 永远不会失败。调用方如果混用这两个函数且不检查返回值，可能在 LSA 初始化失败时拿到 `-1` 当作合法 rank 使用，导致越界访问。生产代码中应当把 `ncclTeamRankToLsa` 的返回值当作可能失败的操作处理。
 
 ---
 
@@ -77,7 +77,7 @@ flowchart TD
 
 先看 LSA Barrier 的大小公式：
 
-[FACT:src/nccl_device/lsa_barrier.cc:14-22] 的 `(3 * nBarriers + nBarriers * team.nRanks) * sizeof(uint32_t)` 可以拆解为两部分：
+[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22) 的 `(3 * nBarriers + nBarriers * team.nRanks) * sizeof(uint32_t)` 可以拆解为两部分：
 - `3 * nBarriers`：每个 barrier 需要 3 个 `uint32_t` 的控制字段（[INFERENCE] 通常是「到达计数」「轮次」「状态标志」）。
 - `nBarriers * team.nRanks`：每个 barrier 需要为团队内每个成员预留一个 `uint32_t` 的到达槽位。
 
@@ -85,18 +85,18 @@ flowchart TD
 
 GIN Barrier 则完全不同：
 
-[FACT:src/nccl_device/gin_barrier.cc:14-20] 不分配缓冲区，而是设置 `ginSignalCount = nBarriers * team.nRanks`，并把 `outGinSignalStart` 指向句柄里的 `signal0`。这是因为 GIN barrier 走的是网络信号路径，不需要共享内存缓冲区，而是需要网卡能识别的信号槽位。
+[FACT:src/nccl_device/gin_barrier.cc:14-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/gin_barrier.cc#L14-L20) 不分配缓冲区，而是设置 `ginSignalCount = nBarriers * team.nRanks`，并把 `outGinSignalStart` 指向句柄里的 `signal0`。这是因为 GIN barrier 走的是网络信号路径，不需要共享内存缓冲区，而是需要网卡能识别的信号槽位。
 
 ### 场景驱动 Walkthrough：一次 LSA Barrier 的完整预订
 
 假设用户要在一个 4 卡 LSA 团队上创建 2 个 barrier：
 
 1. **调用** `ncclLsaBarrierCreateRequirement(team, 2, &handle, &req)`。
-2. **清零**：`memset(outReq, 0, sizeof(*outReq))`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]）——保证未设置的字段是确定值，避免调用方读到栈上的垃圾。
-3. **记录 barrier 数量**：`outHandle->nBarriers = 2`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]）。
-4. **计算缓冲区大小**：`(3*2 + 2*4) * 4 = (6 + 8) * 4 = 56` 字节（[FACT:src/nccl_device/lsa_barrier.cc:14-22]）。
-5. **设置对齐**：`alignof(uint32_t) = 4`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]）。
-6. **回填句柄指针**：`outReq->outBufferHandle = &outHandle->bufHandle`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]）——让 NCCL 在真正分配缓冲区后，把地址写回句柄。
+2. **清零**：`memset(outReq, 0, sizeof(*outReq))`（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)）——保证未设置的字段是确定值，避免调用方读到栈上的垃圾。
+3. **记录 barrier 数量**：`outHandle->nBarriers = 2`（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)）。
+4. **计算缓冲区大小**：`(3*2 + 2*4) * 4 = (6 + 8) * 4 = 56` 字节（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)）。
+5. **设置对齐**：`alignof(uint32_t) = 4`（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)）。
+6. **回填句柄指针**：`outReq->outBufferHandle = &outHandle->bufHandle`（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)）——让 NCCL 在真正分配缓冲区后，把地址写回句柄。
 
 ```mermaid
 flowchart LR
@@ -122,7 +122,7 @@ flowchart LR
 
 **踩坑点**：`outReq->outBufferHandle = &outHandle->bufHandle` 把句柄内部字段的地址交给了 NCCL。这意味着 `outHandle` 必须在 NCCL 完成缓冲区分配之前保持有效（不能被栈回收或移动）。如果用户把 `outHandle` 放在一个会被提前释放的作用域里，NCCL 回填时就会写入野指针。
 
-**CFT Barrier 的粒度差异**：[FACT:src/nccl_device/cft_barrier.cc:13-21] 用 `NCCL_CFT_BARRIER_GRAN` 和 `NCCL_CFT_BARRIER_ALIGN` 替代了 LSA 的 `sizeof(uint32_t)` 和 `alignof(uint32_t)`。这说明 CFT（[INFERENCE] 可能是 Cross-Fabric Team 或类似的跨域团队）的 barrier 需要更大的对齐粒度，可能因为要跨多播内存区域，硬件对地址对齐有更严格的要求。
+**CFT Barrier 的粒度差异**：[FACT:src/nccl_device/cft_barrier.cc:13-21](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/cft_barrier.cc#L13-L21) 用 `NCCL_CFT_BARRIER_GRAN` 和 `NCCL_CFT_BARRIER_ALIGN` 替代了 LSA 的 `sizeof(uint32_t)` 和 `alignof(uint32_t)`。这说明 CFT（[INFERENCE] 可能是 Cross-Fabric Team 或类似的跨域团队）的 barrier 需要更大的对齐粒度，可能因为要跨多播内存区域，硬件对地址对齐有更严格的要求。
 
 ---
 
@@ -151,11 +151,11 @@ flowchart LR
 
 注意 GIN Barrier 是唯一需要 `comm` 参数的：
 
-[FACT:src/nccl_device/gin_barrier.cc:14-20] 的函数签名包含 `ncclComm_t comm`，而 LSA 和 CFT 的签名只有 `ncclTeam_t team`。这是因为 GIN 信号需要绑定到具体的网络连接，而网络连接信息在 `comm` 里。
+[FACT:src/nccl_device/gin_barrier.cc:14-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/gin_barrier.cc#L14-L20) 的函数签名包含 `ncclComm_t comm`，而 LSA 和 CFT 的签名只有 `ncclTeam_t team`。这是因为 GIN 信号需要绑定到具体的网络连接，而网络连接信息在 `comm` 里。
 
 ### 场景驱动 Walkthrough：GIN Barrier 的信号分配
 
-[FACT:src/nccl_device/gin_barrier.cc:14-20] 的逻辑比 LSA 更简单，但语义更微妙：
+[FACT:src/nccl_device/gin_barrier.cc:14-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/gin_barrier.cc#L14-L20) 的逻辑比 LSA 更简单，但语义更微妙：
 
 1. **清零**：`memset(outReq, 0, sizeof(*outReq))`（L16）。
 2. **设置信号数**：`outReq->ginSignalCount = nBarriers * team.nRanks`（L17）——每个 barrier 需要为团队内每个成员分配一个信号槽。
@@ -214,7 +214,7 @@ sequenceDiagram
 | NCCL 分配后 | 已设置 | 指向实际缓冲区 | 已设置 |
 | Device 侧使用 | 只读 | 只读 | 只读 |
 
-[FACT:src/nccl_device/lsa_barrier.cc:14-22] 设置 `nBarriers`，[FACT:src/nccl_device/lsa_barrier.cc:14-22] 回填 `bufHandle` 的地址。这两个操作之间，NCCL 内部会完成缓冲区的实际分配。
+[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22) 设置 `nBarriers`，[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22) 回填 `bufHandle` 的地址。这两个操作之间，NCCL 内部会完成缓冲区的实际分配。
 
 ### 场景驱动 Walkthrough：一次完整的 barrier 使用
 
@@ -238,7 +238,7 @@ flowchart TD
     err --> i["用户需检查返回值<br/>不可使用无效句柄"]
 ```
 
-这张决策图展示了从声明到使用的完整路径，以及分配失败时的错误分支。注意 `ncclLsaBarrierCreateRequirement` 本身永远返回 `ncclSuccess`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]），真正的失败发生在后续的资源分配阶段。
+这张决策图展示了从声明到使用的完整路径，以及分配失败时的错误分支。注意 `ncclLsaBarrierCreateRequirement` 本身永远返回 `ncclSuccess`（[FACT:src/nccl_device/lsa_barrier.cc:14-22](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/lsa_barrier.cc#L14-L22)），真正的失败发生在后续的资源分配阶段。
 
 ### 并发控制与硬件交互
 
@@ -258,7 +258,7 @@ flowchart TD
 
 **坑 3：GIN barrier 的信号耗尽**。GIN 信号是网卡资源，数量有限。如果多个 DevComm 同时申请大量 GIN 信号，可能耗尽网卡槽位。生产代码应当在 DevComm 创建失败时检查是否是 GIN 信号不足，并考虑减少 `nBarriers` 或改用 LSA barrier。
 
-**坑 4：初始化失败的延迟暴露**。`ncclTeamLsa` 等函数在 `ncclDevrInitOnce` 失败时返回空团队（[FACT:src/nccl_device/core.cc:22-33]），不报错。如果用户代码不检查后续 API 的返回值，可能在空团队上继续操作，导致难以定位的错误。建议在第一次使用设备侧 API 时显式检查团队的有效性（如 `team.nRanks > 0`）。
+**坑 4：初始化失败的延迟暴露**。`ncclTeamLsa` 等函数在 `ncclDevrInitOnce` 失败时返回空团队（[FACT:src/nccl_device/core.cc:22-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L22-L33)），不报错。如果用户代码不检查后续 API 的返回值，可能在空团队上继续操作，导致难以定位的错误。建议在第一次使用设备侧 API 时显式检查团队的有效性（如 `team.nRanks > 0`）。
 
 ---
 

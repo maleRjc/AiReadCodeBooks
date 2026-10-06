@@ -1,6 +1,6 @@
 # 第 7 章：核心响应式子系统：@vue/reactivity 的双向绑定与调度
 
-上一章我们用 20 余个 `.test-d.ts` 文件把「类型即 API 契约」钉死在 CI 里。但类型契约只回答「API 表面长什么样」，它无法回答「这段 SFC 编译出来到底长什么样」「SSR 模式下渲染结果是否一致」。要回答后两个问题，Vue 团队需要一个能在浏览器里跑完整编译管线的沙箱——这就是 `packages-private/sfc-playground`。它和 `packages/` 下的公开包有本质区别：`package.json` 里 `"private": true` 且 `"version": "0.0.0"` [FACT:packages-private/sfc-playground/package.json:2-4]，意味着它永不发布到 npm，只是官方调试工具。它的依赖里 `vue` 指向 `workspace:*` [FACT:packages-private/sfc-playground/package.json:19]，也就是本地源码构建产物，而非 npm 上的稳定版——这让 Playground 天然成为「当前 commit 的活体演示」。本章聚焦三个问题：入口如何初始化、Header 如何驱动状态切换、构建期常量如何注入。
+上一章我们用 20 余个 `.test-d.ts` 文件把「类型即 API 契约」钉死在 CI 里。但类型契约只回答「API 表面长什么样」，它无法回答「这段 SFC 编译出来到底长什么样」「SSR 模式下渲染结果是否一致」。要回答后两个问题，Vue 团队需要一个能在浏览器里跑完整编译管线的沙箱——这就是 `packages-private/sfc-playground`。它和 `packages/` 下的公开包有本质区别：`package.json` 里 `"private": true` 且 `"version": "0.0.0"` [FACT:packages-private/sfc-playground/package.json:2-4](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/package.json#L2-L4)，意味着它永不发布到 npm，只是官方调试工具。它的依赖里 `vue` 指向 `workspace:*` [FACT:packages-private/sfc-playground/package.json:19](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/package.json#L19)，也就是本地源码构建产物，而非 npm 上的稳定版——这让 Playground 天然成为「当前 commit 的活体演示」。本章聚焦三个问题：入口如何初始化、Header 如何驱动状态切换、构建期常量如何注入。
 
 # 一、入口的极简主义：main.ts 与 ReplStore 的初始化契约
 
@@ -12,7 +12,7 @@
 
 `main.ts` 的核心不是 `createApp`，而是对 `window` 的污染式写入：
 
-[FACT:packages-private/sfc-playground/src/main.ts:4-7]
+[FACT:packages-private/sfc-playground/src/main.ts:4-7](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/main.ts#L4-L7)
 
 ```ts
 // @ts-expect-error Custom window property
@@ -35,10 +35,10 @@ window.VUE_DEVTOOLS_CONFIG = {
 
 1. 浏览器加载 `index.html`，其中包含 `<div id="app">`（本材料未提供，但 `mount('#app')` 反推可知）。
 
-2. 模块图解析：`main.ts` 顶部 `import App from './App.vue'` [FACT:packages-private/sfc-playground/src/main.ts:2] 触发 `@vitejs/plugin-vue` 的 SFC 编译。
+2. 模块图解析：`main.ts` 顶部 `import App from './App.vue'` [FACT:packages-private/sfc-playground/src/main.ts:2](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/main.ts#L2) 触发 `@vitejs/plugin-vue` 的 SFC 编译。
 
 > **〔设计推断与架构权衡〕**
-> 3. **关键顺序**：`window.VUE_DEVTOOLS_CONFIG` 必须在 `createApp(App).mount('#app')` [FACT:packages-private/sfc-playground/src/main.ts:9] 之前写入。因为 DevTools 的 hook 是在 `createApp` 内部注册的，晚于 mount 写入配置将无法影响首次选中。
+> 3. **关键顺序**：`window.VUE_DEVTOOLS_CONFIG` 必须在 `createApp(App).mount('#app')` [FACT:packages-private/sfc-playground/src/main.ts:9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/main.ts#L9) 之前写入。因为 DevTools 的 hook 是在 `createApp` 内部注册的，晚于 mount 写入配置将无法影响首次选中。
 
 4. `mount('#app')` 触发 `App.vue` 的 setup，进而创建 `ReplStore`（在 `App.vue` 中，本材料未含）。
 
@@ -74,7 +74,7 @@ flowchart TD
 
 Header 的 props 定义是理解其职责的钥匙：
 
-[FACT:packages-private/sfc-playground/src/Header.vue:13-19]
+[FACT:packages-private/sfc-playground/src/Header.vue:13-19](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L13-L19)
 
 ```ts
 const props = defineProps()
@@ -85,7 +85,7 @@ const props = defineProps()
 - **`store: ReplStore`**：唯一的状态容器引用，来自 `@vue/repl`。Header 通过它读取 `store.loading`、`store.vueVersion`、`store.typescriptVersion`，并直接写入 `store.vueVersion`。
 - **四个布尔/字面量 props**：`prod`、`ssr`、`autoSave`、`theme`。它们是**受控状态**，Header 只读不写，变更必须 `emit`。
 
-对应的 emit 列表 [FACT:packages-private/sfc-playground/src/Header.vue:20-28]：
+对应的 emit 列表 [FACT:packages-private/sfc-playground/src/Header.vue:20-28](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L20-L28)：
 
 ```ts
 const emit = defineEmits([
@@ -97,7 +97,7 @@ const emit = defineEmits([
 ])
 ```
 
-注意 `toggle-theme` 虽然由 `toggleDark()` 内部 `emit`，但 `toggle-ssr`/`toggle-prod`/`toggle-autosave` 是模板里直接 `$emit` 的 [FACT:packages-private/sfc-playground/src/Header.vue:102-118]。这种混用是 Vue 3 `<script setup>` 的常见风格：**需要副作用时用函数 emit，纯转发时用模板 `$emit`**。
+注意 `toggle-theme` 虽然由 `toggleDark()` 内部 `emit`，但 `toggle-ssr`/`toggle-prod`/`toggle-autosave` 是模板里直接 `$emit` 的 [FACT:packages-private/sfc-playground/src/Header.vue:102-118](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L102-L118)。这种混用是 Vue 3 `<script setup>` 的常见风格：**需要副作用时用函数 emit，纯转发时用模板 `$emit`**。
 
 ## Step-by-Step：版本显示与切换
 
@@ -105,7 +105,7 @@ const emit = defineEmits([
 
 **步骤 1：computed 派生显示文本**
 
-[FACT:packages-private/sfc-playground/src/Header.vue:30-37]
+[FACT:packages-private/sfc-playground/src/Header.vue:30-37](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L30-L37)
 
 ```ts
 const vueVersion = computed(() => {
@@ -120,7 +120,7 @@ const vueVersion = computed(() => {
 
 **步骤 2：VersionSelect 双向绑定**
 
-[FACT:packages-private/sfc-playground/src/Header.vue:88-88]
+[FACT:packages-private/sfc-playground/src/Header.vue:88-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L88-L88)
 
 ```html
 
@@ -128,7 +128,7 @@ const vueVersion = computed(() => {
 
 注意这里**没有用 `v-model`**，而是显式拆成 `:model-value` + `@update:model-value`。原因在于 `vueVersion` 是 computed（只读），不能直接双向绑定；必须通过 `setVueVersion` 这个 setter 函数写入 `store.vueVersion`：
 
-[FACT:packages-private/sfc-playground/src/Header.vue:39-41]
+[FACT:packages-private/sfc-playground/src/Header.vue:39-41](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L39-L41)
 
 ```ts
 async function setVueVersion(v: string) {
@@ -145,7 +145,7 @@ function resetVueVersion() {
 
 **步骤 3：TypeScript 版本的对比**
 
-[FACT:packages-private/sfc-playground/src/Header.vue:76-80]
+[FACT:packages-private/sfc-playground/src/Header.vue:76-80](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L76-L80)
 
 ```html
 
@@ -155,7 +155,7 @@ TypeScript 版本用了 `v-model`，因为 `store.typescriptVersion` 是可写�
 
 ## 主题切换：副作用与 emit 的组合
 
-[FACT:packages-private/sfc-playground/src/Header.vue:58-66]
+[FACT:packages-private/sfc-playground/src/Header.vue:58-66](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L58-L66)
 
 ```ts
 function toggleDark() {
@@ -169,14 +169,14 @@ function toggleDark() {
 }
 ```
 
-这个函数做了三件事：操作 DOM class、持久化到 localStorage、emit 通知父组件。**注意它没有直接改 `props.theme`**——因为 props 只读，父组件收到 `toggle-theme` 后才会更新 `theme`，进而驱动模板里的 `:title` 文案 [FACT:packages-private/sfc-playground/src/Header.vue:123]。
+这个函数做了三件事：操作 DOM class、持久化到 localStorage、emit 通知父组件。**注意它没有直接改 `props.theme`**——因为 props 只读，父组件收到 `toggle-theme` 后才会更新 `theme`，进而驱动模板里的 `:title` 文案 [FACT:packages-private/sfc-playground/src/Header.vue:123](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L123)。
 
 > **〔设计推断与架构权衡〕**
 > 这里有一个微妙的设计：**DOM class 操作与 Vue 响应式状态是两条独立路径**。`document.documentElement.classList.toggle('dark')` 直接改 DOM，而 `theme` prop 通过 Vue 更新。如果两者不同步（例如父组件拒绝更新），UI 会出现「class 已切换但 title 文案未变」的不一致。 实际中父组件总是接受 emit，所以问题不显现。
 
 ## 隐藏逻辑：copyLink 的 metaKey 分支
 
-[FACT:packages-private/sfc-playground/src/Header.vue:47-56]
+[FACT:packages-private/sfc-playground/src/Header.vue:47-56](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L47-L56)
 
 ```ts
 async function copyLink(e: MouseEvent) {
@@ -191,7 +191,7 @@ async function copyLink(e: MouseEvent) {
 }
 ```
 
-这是一个**开发者后门**：在 `play.vuejs.org` 上按住 Cmd 点击分享按钮，会跳转到 `localhost:5173`（本地 dev server），并把当前 URL hash 带过去。hash 里编码了完整的 REPL 状态（源码、版本、选项），因此本地调试能复现线上问题。注释 `// hidden logic for going to local debug from play.vuejs.org` [FACT:packages-private/sfc-playground/src/Header.vue:47-56] 明确标注了这是有意隐藏的功能。
+这是一个**开发者后门**：在 `play.vuejs.org` 上按住 Cmd 点击分享按钮，会跳转到 `localhost:5173`（本地 dev server），并把当前 URL hash 带过去。hash 里编码了完整的 REPL 状态（源码、版本、选项），因此本地调试能复现线上问题。注释 `// hidden logic for going to local debug from play.vuejs.org` [FACT:packages-private/sfc-playground/src/Header.vue:47-56](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L47-L56) 明确标注了这是有意隐藏的功能。
 
 > **〔设计推断与架构权衡〕**
 > `resetVueVersion()` 在跳转前被调用，把 `store.vueVersion` 置为 `null`，确保本地调试用的是当前 commit 而非线上选定的版本。
@@ -211,12 +211,12 @@ flowchart TD
 ## 设计思考与踩坑
 
 > **〔设计推断与架构权衡〕**
-> **踩坑 1：`navigator.clipboard` 的权限与安全上下文**。`copyLink` 没有 try/catch [FACT:packages-private/sfc-playground/src/Header.vue:47-56]。在非 HTTPS 或用户拒绝剪贴板权限时，`writeText` 会 reject，导致未捕获的 Promise rejection。Playground 部署在 HTTPS 上，风险被接受，但这是典型的「生产环境陷阱」。
+> **踩坑 1：`navigator.clipboard` 的权限与安全上下文**。`copyLink` 没有 try/catch [FACT:packages-private/sfc-playground/src/Header.vue:47-56](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L47-L56)。在非 HTTPS 或用户拒绝剪贴板权限时，`writeText` 会 reject，导致未捕获的 Promise rejection。Playground 部署在 HTTPS 上，风险被接受，但这是典型的「生产环境陷阱」。
 
 > **〔设计推断与架构权衡〕**
 > **踩坑 2：`toggleDark` 的 localStorage key 硬编码**。`'vue-sfc-playground-prefer-dark'` 是字符串字面量，没有常量抽取。如果未来要改 key，需要全局搜索。
 
-**踩坑 3：`currentCommit` 与 `vueVersion` 的比较**。模板里 `:class="{ active: vueVersion === \`@${currentCommit}\` }"` [FACT:packages-private/sfc-playground/src/Header.vue:88-88] 用字符串拼接比较。如果 `__COMMIT__` 注入失败（变成 `undefined`），这里会变成 `'@undefined'`，永远不匹配。构建期常量注入的可靠性直接决定了 UI 正确性——这正是下一节的主题。
+**踩坑 3：`currentCommit` 与 `vueVersion` 的比较**。模板里 `:class="{ active: vueVersion === \`@${currentCommit}\` }"` [FACT:packages-private/sfc-playground/src/Header.vue:88-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L88-L88) 用字符串拼接比较。如果 `__COMMIT__` 注入失败（变成 `undefined`），这里会变成 `'@undefined'`，永远不匹配。构建期常量注入的可靠性直接决定了 UI 正确性——这正是下一节的主题。
 
 ---
 
@@ -228,7 +228,7 @@ flowchart TD
 
 ## 数据结构与构建期常量
 
-[FACT:packages-private/sfc-playground/vite.config.ts:7-9]
+[FACT:packages-private/sfc-playground/vite.config.ts:7-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L7-L9)
 
 ```ts
 const commit = spawnSync('git', ['rev-parse', '--short=7', 'HEAD'])
@@ -238,7 +238,7 @@ const commit = spawnSync('git', ['rev-parse', '--short=7', 'HEAD'])
 
 `spawnSync` 同步执行 git 命令，`--short=7` 取 7 位短哈希。同步执行是刻意的：**配置文件在模块加载期就需要 `commit` 的值**，异步会打乱 Vite 的配置解析时序。
 
-[FACT:packages-private/sfc-playground/vite.config.ts:23-26]
+[FACT:packages-private/sfc-playground/vite.config.ts:23-26](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L23-L26)
 
 ```ts
 define: {
@@ -254,7 +254,7 @@ define: {
 
 ## Step-by-Step：copyVuePlugin 的产物搬运
 
-[FACT:packages-private/sfc-playground/vite.config.ts:32-63]
+[FACT:packages-private/sfc-playground/vite.config.ts:32-63](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L32-L63)
 
 ```ts
 function copyVuePlugin(): Plugin {
@@ -329,10 +329,10 @@ flowchart LR
 > **踩坑 1：`spawnSync` 的失败处理**。如果当前目录不是 git 仓库（例如从 tarball 解压），`spawnSync` 会返回非零退出码，`stdout` 为空，`commit` 变成空字符串。此时 `__COMMIT__` 被替换成 `""`，Header 里 `@${currentCommit}` 变成 `'@'`。没有显式错误处理。
 
 > **〔设计推断与架构权衡〕**
-> **踩坑 2：`optimizeDeps.exclude: ['@vue/repl']`** [FACT:packages-private/sfc-playground/vite.config.ts:27-29]。Vite 默认会预打包依赖以加速冷启动，但 `@vue/repl` 被排除。原因是 `@vue/repl` 内部使用了动态 import 与 worker，预打包会破坏这些机制。 这是 Vite 生态里常见的「预打包与动态加载冲突」问题。
+> **踩坑 2：`optimizeDeps.exclude: ['@vue/repl']`** [FACT:packages-private/sfc-playground/vite.config.ts:27-29](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L27-L29)。Vite 默认会预打包依赖以加速冷启动，但 `@vue/repl` 被排除。原因是 `@vue/repl` 内部使用了动态 import 与 worker，预打包会破坏这些机制。 这是 Vite 生态里常见的「预打包与动态加载冲突」问题。
 
 > **〔设计推断与架构权衡〕**
-> **踩坑 3：`script.fs` 配置** [FACT:packages-private/sfc-playground/vite.config.ts:13-19]。`@vitejs/plugin-vue` 的 `script.fs` 选项允许 SFC 的 `<script>` 块通过 `fs` 读取文件。这里传入 `fs.existsSync` 与 `fs.readFileSync`，是为了支持 SFC 里的 `import` 语句解析（例如 `import x from './foo'` 需要检查文件是否存在）。**这是 Playground 能在浏览器里模拟完整模块解析的关键**——它把 Node 的 fs 能力注入到编译器的解析阶段。
+> **踩坑 3：`script.fs` 配置** [FACT:packages-private/sfc-playground/vite.config.ts:13-19](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L13-L19)。`@vitejs/plugin-vue` 的 `script.fs` 选项允许 SFC 的 `<script>` 块通过 `fs` 读取文件。这里传入 `fs.existsSync` 与 `fs.readFileSync`，是为了支持 SFC 里的 `import` 语句解析（例如 `import x from './foo'` 需要检查文件是否存在）。**这是 Playground 能在浏览器里模拟完整模块解析的关键**——它把 Node 的 fs 能力注入到编译器的解析阶段。
 
 ---
 
@@ -370,15 +370,15 @@ flowchart LR
 
 Q1: 如果把 `main.ts` 中 `window.VUE_DEVTOOLS_CONFIG` 的赋值移到 `createApp(App).mount('#app')` 之后，会发生什么？为什么？
 
-**参考解析**：`window.VUE_DEVTOOLS_CONFIG` 是 Vue DevTools 在 `createApp` 内部注册 hook 时读取的配置 [FACT:packages-private/sfc-playground/src/main.ts:4-9]。`createApp` 会立即注册 `__VUE_DEVTOOLS_GLOBAL_HOOK__`，此时 DevTools 会读取 `defaultSelectedAppId` 来决定默认选中哪个 app。如果赋值晚于 `mount`，DevTools 已经完成了首次 app 选择，配置将不会生效，用户需要手动在 DevTools 里切换到 `repl` app。更隐蔽的是：由于 `@vue/repl` 内部也会创建 app，晚赋值可能导致 DevTools 默认选中 Playground 自身而非用户 REPL，调试用户代码时需要手动切换。这体现了「全局副作用注入顺序」在调试工具中的重要性。
+**参考解析**：`window.VUE_DEVTOOLS_CONFIG` 是 Vue DevTools 在 `createApp` 内部注册 hook 时读取的配置 [FACT:packages-private/sfc-playground/src/main.ts:4-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/main.ts#L4-L9)。`createApp` 会立即注册 `__VUE_DEVTOOLS_GLOBAL_HOOK__`，此时 DevTools 会读取 `defaultSelectedAppId` 来决定默认选中哪个 app。如果赋值晚于 `mount`，DevTools 已经完成了首次 app 选择，配置将不会生效，用户需要手动在 DevTools 里切换到 `repl` app。更隐蔽的是：由于 `@vue/repl` 内部也会创建 app，晚赋值可能导致 DevTools 默认选中 Playground 自身而非用户 REPL，调试用户代码时需要手动切换。这体现了「全局副作用注入顺序」在调试工具中的重要性。
 
 Q2: `Header.vue` 的 `toggleDark()` 同时操作了 DOM class、localStorage 和 emit，但没有直接修改 `props.theme`。如果父组件收到 `toggle-theme` 事件后拒绝更新 `theme` prop，会出现什么 UI 不一致？如何从源码层面定位？
 
-**参考解析**：`toggleDark()` 在 [FACT:packages-private/sfc-playground/src/Header.vue:58-66] 直接调用 `document.documentElement.classList.toggle('dark')`，这会立即改变 DOM 上的 `dark` class，触发 CSS 变量切换（见 [FACT:packages-private/sfc-playground/src/Header.vue:186-186] 的 `.dark nav` 规则）。但模板里的 `:title` 文案 [FACT:packages-private/sfc-playground/src/Header.vue:123] 依赖 `props.theme`，如果父组件不更新，title 会停留在旧值。定位方法：在浏览器 DevTools 里检查 `<html>` 的 class 与按钮的 title 属性是否矛盾。根因是「DOM 副作用」与「Vue 响应式状态」走了两条独立路径，没有单一数据源。
+**参考解析**：`toggleDark()` 在 [FACT:packages-private/sfc-playground/src/Header.vue:58-66](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L58-L66) 直接调用 `document.documentElement.classList.toggle('dark')`，这会立即改变 DOM 上的 `dark` class，触发 CSS 变量切换（见 [FACT:packages-private/sfc-playground/src/Header.vue:186-186](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L186-L186) 的 `.dark nav` 规则）。但模板里的 `:title` 文案 [FACT:packages-private/sfc-playground/src/Header.vue:123](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/src/Header.vue#L123) 依赖 `props.theme`，如果父组件不更新，title 会停留在旧值。定位方法：在浏览器 DevTools 里检查 `<html>` 的 class 与按钮的 title 属性是否矛盾。根因是「DOM 副作用」与「Vue 响应式状态」走了两条独立路径，没有单一数据源。
 
 Q3: `copyVuePlugin` 在 `generateBundle` 里对每个文件做 `fs.existsSync` 检查，缺失时抛出带修复指令的错误。如果去掉这个检查，直接 `fs.readFileSync`，在 CI 环境（未先构建 vue）下会发生什么？错误信息会如何误导开发者？
 
-**参考解析**：去掉检查后，`fs.readFileSync` 会抛出 `ENOENT: no such file or directory, open '.../packages/vue/dist/vue.esm-browser.js'` [FACT:packages-private/sfc-playground/vite.config.ts:32-63]。这个错误只告诉开发者「文件不存在」，但不会告诉开发者「需要先运行 `nr build vue -f esm-browser`」。在 CI 环境下，开发者可能误以为是路径配置错误、权限问题或 git 子模块未初始化，浪费大量时间排查。原代码的 `throw new Error(\`${basename} not built. Run "nr build vue -f esm-browser" first.\`)` 把「症状」与「修复动作」绑定在一起，是开发者体验设计的关键细节。这也解释了为什么 Playground 的构建脚本必须与 Vue 核心构建脚本有明确的依赖顺序。
+**参考解析**：去掉检查后，`fs.readFileSync` 会抛出 `ENOENT: no such file or directory, open '.../packages/vue/dist/vue.esm-browser.js'` [FACT:packages-private/sfc-playground/vite.config.ts:32-63](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/sfc-playground/vite.config.ts#L32-L63)。这个错误只告诉开发者「文件不存在」，但不会告诉开发者「需要先运行 `nr build vue -f esm-browser`」。在 CI 环境下，开发者可能误以为是路径配置错误、权限问题或 git 子模块未初始化，浪费大量时间排查。原代码的 `throw new Error(\`${basename} not built. Run "nr build vue -f esm-browser" first.\`)` 把「症状」与「修复动作」绑定在一起，是开发者体验设计的关键细节。这也解释了为什么 Playground 的构建脚本必须与 Vue 核心构建脚本有明确的依赖顺序。
 
 ---
 

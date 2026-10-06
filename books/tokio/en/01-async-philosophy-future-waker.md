@@ -23,7 +23,7 @@ cfg_not_trace! {
 }
 ```
 
-[FACT:tokio/src/future/mod.rs:24-28]
+[FACT:tokio/src/future/mod.rs:24-28](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/future/mod.rs#L24-L28)
 
 这段代码揭示了一个重要事实：在未启用 `tracing` 特性时，Tokio 内部的 `Future` 就是 `std::future::Future` 的别名，没有任何包装。只有在启用 `tracing` 时，才会用 `InstrumentedFuture` 替换：
 
@@ -35,7 +35,7 @@ cfg_trace! {
 }
 ```
 
-[FACT:tokio/src/future/mod.rs:18-22]
+[FACT:tokio/src/future/mod.rs:18-22](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/future/mod.rs#L18-L22)
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这种「默认零开销、按需插桩」的设计是 Tokio 的一贯哲学：核心路径不引入任何额外抽象层，可观测性作为可选特性叠加。`InstrumentedFuture` 的存在说明 Tokio 团队认为 tracing 的插桩成本不应由所有用户承担。
@@ -118,7 +118,7 @@ Tokio 的文档明确承认虚假唤醒的存在：
 
 > Normally, tasks are scheduled only if they have been woken by calling `wake` on their waker. However, this is not guaranteed, and Tokio may schedule tasks that have not been woken under some circumstances.
 
-[FACT:tokio/src/runtime/mod.rs:306-309]
+[FACT:tokio/src/runtime/mod.rs:306-309](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L306-L309)
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这意味着 `poll` 的实现必须能够容忍「没有被唤醒就被再次 poll」的情况。一个正确的 Future 在返回 Pending 后，即使没有任何事件发生，再次被 poll 时也应该返回 Pending 而不是 panic 或产生错误结果。这个约束看似宽松，实际上对状态机的设计提出了要求：不能假设「两次 poll 之间一定有事件发生」。
@@ -151,7 +151,7 @@ impl AutoBox {
 }
 ```
 
-[FACT:tokio/src/runtime/mod.rs:649-673]
+[FACT:tokio/src/runtime/mod.rs:649-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L649-L673)
 
 这段代码解决了一个非常具体的问题：如果 Future 太大（超过 16KB，debug 模式下 2KB），直接内联到 Task 结构中会导致栈溢出或内存浪费。`AutoBox` 通过编译期常量 `SHOULD_BOX` 来决定是否将 Future 装箱。
 
@@ -164,17 +164,17 @@ Tokio 的调度器文档中定义了一个形式化的公平性保证：
 
 > If the total number of tasks does not grow without bound, and no task is blocking the thread, then it is guaranteed that tasks are scheduled fairly.
 
-[FACT:tokio/src/runtime/mod.rs:279-281]
+[FACT:tokio/src/runtime/mod.rs:279-281](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L279-L281)
 
 这个保证的实现依赖于两个关键参数。对于 current-thread 运行时：
 
 > The runtime will prefer to choose the next task to schedule from the local queue, and will only pick a task from the global queue if the local queue is empty, or if it has picked a task from the local queue 31 times in a row.
 
-[FACT:tokio/src/runtime/mod.rs:328-333]
+[FACT:tokio/src/runtime/mod.rs:328-333](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L328-L333)
 
 > The runtime will check for new IO or timer events whenever there are no tasks ready to be scheduled, or when it has scheduled 61 tasks in a row.
 
-[FACT:tokio/src/runtime/mod.rs:335-337]
+[FACT:tokio/src/runtime/mod.rs:335-337](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L335-L337)
 
 这两个数字（31 和 61）不是随意选择的。31 是 2 的 5 次方减 1，可以用位运算快速判断；61 则是为了确保 I/O 事件不会被无限延迟——即使任务队列永远非空，每 61 次调度后也必须检查一次 I/O。
 
@@ -187,7 +187,7 @@ Tokio 的调度器文档中定义了一个形式化的公平性保证：
 
 > The multi thread runtime uses the lifo slot optimization: Whenever a task wakes up another task, the other task is added to the worker thread's lifo slot instead of being added to a queue.
 
-[FACT:tokio/src/runtime/mod.rs:373-377]
+[FACT:tokio/src/runtime/mod.rs:373-377](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L373-L377)
 
 这个优化的直觉是：当一个任务唤醒另一个任务时，被唤醒的任务很可能与当前任务有数据依赖（比如生产者-消费者模式）。把它放在 LIFO 槽中，当前任务完成后立即执行它，可以利用 CPU 缓存的热数据。
 
@@ -195,7 +195,7 @@ Tokio 的调度器文档中定义了一个形式化的公平性保证：
 
 > if a worker thread uses the lifo slot three times in a row, it is temporarily disabled until the worker thread has scheduled a task that didn't come from the lifo slot.
 
-[FACT:tokio/src/runtime/mod.rs:380-382]
+[FACT:tokio/src/runtime/mod.rs:380-382](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L380-L382)
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这个「三次连续使用后禁用」的规则是为了防止两个任务互相唤醒形成活锁。如果任务 A 唤醒任务 B，B 又唤醒 A，没有这个限制的话，LIFO 槽会被这两个任务永久占用，其他任务永远得不到调度。三次的限制给了其他任务一个插入的机会。
@@ -206,7 +206,7 @@ Tokio 的调度器文档中定义了一个形式化的公平性保证：
 
 > Be aware that calls to `JoinHandle::abort` just schedule the task for cancellation, and will return before the cancellation has completed.
 
-[FACT:tokio/src/task/mod.rs:146-148]
+[FACT:tokio/src/task/mod.rs:146-148](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/mod.rs#L146-L148)
 
 这意味着 `abort` 不是同步的。它只是设置一个标志位，任务会在下一个 `.await` 点检查这个标志并自行终止。如果任务正在执行一段没有 `.await` 的 CPU 密集代码，`abort` 不会立即生效。
 
@@ -214,7 +214,7 @@ Tokio 的调度器文档中定义了一个形式化的公平性保证：
 
 > Note that aborting a task does not guarantee that it fails with a cancelled error, since it may complete normally first.
 
-[FACT:tokio/src/task/mod.rs:134-138]
+[FACT:tokio/src/task/mod.rs:134-138](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/mod.rs#L134-L138)
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这个语义的设计动机是：取消是一个「尽力而为」的操作。Tokio 不强制杀死任务（Rust 没有安全的强制终止机制），而是协作式地请求任务自行退出。这与 `spawn_blocking` 任务不可取消的设计是一致的——阻塞任务没有 `.await` 点，无法检查取消标志。
@@ -238,7 +238,7 @@ Tokio 的任务是协作式的：任务只有在 `.await` 点才会让出执行�
 
 > code that spends a long time without reaching an `.await` will prevent other tasks from running.
 
-[FACT:tokio/src/lib.rs:178-179]
+[FACT:tokio/src/lib.rs:178-179](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/lib.rs#L178-L179)
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这是协作式调度的根本代价。操作系统可以在任意指令边界抢占线程，但 Tokio 只能在 `.await` 点切换任务。如果一个任务执行了一个 10 秒的 CPU 密集循环且中间没有 `.await`，那么同一个 worker 线程上的其他所有任务都会被阻塞 10 秒。Tokio 的应对策略是提供 `spawn_blocking` 和 `block_in_place`，把这类工作转移到专用线程池。但这是用户的责任，运行时无法自动检测。
@@ -267,14 +267,14 @@ Tokio 的公平性保证有两个前提条件：任务总数有上界，且没�
 
 Q1: 如果将 `AutoBox::SHOULD_BOX` 的判断从编译期常量改为运行时 `if size_of::<T>() > THRESHOLD`，会对编译产物产生什么影响？为什么 Tokio 的注释特别强调这一点？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-667] 的注释，如果用运行时 `if`，编译器会为每个 `T` 同时实例化两条分支的代码——一条处理 `T` 直接内联的情况，一条处理 `Pin<Box<T>>` 的情况。这意味着每个 spawn 的 Future 类型都会生成两份任务驱动代码（task harness），导致二进制体积翻倍。而用关联常量 `SHOULD_BOX`，由于它在 `T` 确定后就是编译期常量，单态化收集器会剪掉不可达的分支，只为实际使用的路径生成代码。这是一个「用类型系统替代运行时判断」的典型优化，代价是 `AutoBox` 必须是一个泛型结构体而非普通函数。
+**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-667](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L657-L667) 的注释，如果用运行时 `if`，编译器会为每个 `T` 同时实例化两条分支的代码——一条处理 `T` 直接内联的情况，一条处理 `Pin<Box<T>>` 的情况。这意味着每个 spawn 的 Future 类型都会生成两份任务驱动代码（task harness），导致二进制体积翻倍。而用关联常量 `SHOULD_BOX`，由于它在 `T` 确定后就是编译期常量，单态化收集器会剪掉不可达的分支，只为实际使用的路径生成代码。这是一个「用类型系统替代运行时判断」的典型优化，代价是 `AutoBox` 必须是一个泛型结构体而非普通函数。
 
 Q2: 假设一个任务在 `poll` 中返回了 `Pending`，但忘记注册 Waker。在 current-thread 运行时和 multi-thread 运行时下，这个任务分别会发生什么？Tokio 有没有机制检测这种情况？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:306-309]，Tokio 允许虚假唤醒，这意味着任务可能在没有被唤醒的情况下被重新调度。但这不意味着忘记注册 Waker 是安全的。在 current-thread 运行时下，如果本地队列和全局队列都为空，运行时会进入 `park` 状态等待 I/O 或定时器事件。忘记注册 Waker 的任务永远不会被重新入队，导致永久挂起。在 multi-thread 运行时下，情况类似，但如果有其他任务持续唤醒，该任务可能因为虚假唤醒而被偶然重新调度——但这不可依赖。Tokio 没有运行时检测机制来发现「返回 Pending 但未注册 Waker」的情况，因为这需要在每次 poll 后检查 Waker 是否被使用，开销太大。这是 Future 实现者的责任。
+**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:306-309](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L306-L309)，Tokio 允许虚假唤醒，这意味着任务可能在没有被唤醒的情况下被重新调度。但这不意味着忘记注册 Waker 是安全的。在 current-thread 运行时下，如果本地队列和全局队列都为空，运行时会进入 `park` 状态等待 I/O 或定时器事件。忘记注册 Waker 的任务永远不会被重新入队，导致永久挂起。在 multi-thread 运行时下，情况类似，但如果有其他任务持续唤醒，该任务可能因为虚假唤醒而被偶然重新调度——但这不可依赖。Tokio 没有运行时检测机制来发现「返回 Pending 但未注册 Waker」的情况，因为这需要在每次 poll 后检查 Waker 是否被使用，开销太大。这是 Future 实现者的责任。
 
 Q3: LIFO 槽的「三次连续使用后禁用」规则是为了防止什么具体场景？如果去掉这个限制，在什么样的任务依赖模式下会导致其他任务饿死？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:380-382]，LIFO 槽在连续使用三次后会被临时禁用，直到调度了一个非 LIFO 来源的任务。这个规则防止的场景是：两个任务互相唤醒形成紧密循环。例如任务 A 处理完一批数据后唤醒任务 B，任务 B 处理完后立即唤醒任务 A。如果没有三次限制，A 和 B 会永远占据 LIFO 槽，worker 线程会在这两个任务之间无限切换，本地队列和全局队列中的其他任务永远得不到执行机会。三次的限制确保了每处理三轮「互相唤醒」后，至少有一个其他任务被调度，打破了活锁。这个数字的选择是经验性的：太小会降低 LIFO 优化的收益，太大会增加其他任务的延迟。
+**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:380-382](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L380-L382)，LIFO 槽在连续使用三次后会被临时禁用，直到调度了一个非 LIFO 来源的任务。这个规则防止的场景是：两个任务互相唤醒形成紧密循环。例如任务 A 处理完一批数据后唤醒任务 B，任务 B 处理完后立即唤醒任务 A。如果没有三次限制，A 和 B 会永远占据 LIFO 槽，worker 线程会在这两个任务之间无限切换，本地队列和全局队列中的其他任务永远得不到执行机会。三次的限制确保了每处理三轮「互相唤醒」后，至少有一个其他任务被调度，打破了活锁。这个数字的选择是经验性的：太小会降低 LIFO 优化的收益，太大会增加其他任务的延迟。
 
 至此，Future、Waker 与 Executor 三者的职责边界与协作机制已经清晰：Future 定义计算，Waker 负责唤醒，Executor 驱动执行。但单个组件无法独立工作，它们必须被组装进一个统一的运行时环境。下一章，我们将追踪 Runtime::new 与 Builder::build 的完整装配链路，看调度器、I/O 驱动、时间驱动和阻塞线程池如何被注入同一个 Runtime 实例，并揭示 current_thread 与 multi_thread 两种形态在装配阶段的根本差异。

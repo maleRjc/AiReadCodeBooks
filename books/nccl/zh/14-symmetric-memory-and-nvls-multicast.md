@@ -16,7 +16,7 @@
 
 对称内存的注册类型由 `ncclSymRegType_t` 描述，`ncclGetSymRegType` 根据 send/recv 窗口是否带 `NCCL_WIN_COLL_SYMMETRIC` 标志，把注册状态分成四类。
 
-[FACT:src/sym_kernels.cc:395-412]
+[FACT:src/sym_kernels.cc:395-412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L395-L412)
 
 ```c
 ncclResult_t ncclGetSymRegType(struct ncclDevrWindow* sendWin, struct ncclDevrWindow* recvWin,
@@ -43,7 +43,7 @@ ncclResult_t ncclGetSymRegType(struct ncclDevrWindow* sendWin, struct ncclDevrWi
 
 对称内存的初始化入口是 `ncclSymkInitOnce`，它做了一件关键的事：判断当前通信域是否支持 LSA 多播（`hasLsaMultimem`）。
 
-[FACT:src/sym_kernels.cc:185-196]
+[FACT:src/sym_kernels.cc:185-196](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L185-L196)
 
 ```c
 ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
@@ -66,7 +66,7 @@ ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
 
 假设我们发起一次 AllReduce，消息大小 4KB，8 个 rank 在同一 NVLink 域内。`ncclSymkMask` 会决定哪些 kernel 可用。
 
-[FACT:src/sym_kernels.cc:304-352]
+[FACT:src/sym_kernels.cc:304-352](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L304-L352)
 
 ```c
 uint32_t ncclSymkMask(struct ncclComm* comm, ncclFunc_t coll, int /*ncclDevRedOp_t*/ red, ncclDataType_t ty,
@@ -92,7 +92,7 @@ uint32_t ncclSymkMask(struct ncclComm* comm, ncclFunc_t coll, int /*ncclDevRedOp
 
 接着是大小限制：
 
-[FACT:src/sym_kernels.cc:336-342]
+[FACT:src/sym_kernels.cc:336-342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L336-L342)
 
 ```c
   size_t nBytes = alignUp(nElts * ncclTypeSize(ty), NCCL_SYM_KERNEL_CELL_SIZE);
@@ -108,7 +108,7 @@ uint32_t ncclSymkMask(struct ncclComm* comm, ncclFunc_t coll, int /*ncclDevRedOp
 
 最后是 TMA 和 GIN 的可用性检查：
 
-[FACT:src/sym_kernels.cc:344-350]
+[FACT:src/sym_kernels.cc:344-350](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L344-L350)
 
 ```c
   if (!ncclSymkTmaAvailable(comm)) kmask &= ~kernelMask_Tma;
@@ -127,7 +127,7 @@ TMA 需要 SMEM 容量达标（`ncclSymkTmaAvailable` 检查 `maxSharedMemOptin`
 
 对称内存的地址解析最终落到设备侧。`ncclSymkMakeDevWork` 把 host 侧的任务描述翻译成设备侧可读的工作项。
 
-[FACT:src/sym_kernels.cc:380-393]
+[FACT:src/sym_kernels.cc:380-393](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L380-L393)
 
 ```c
 ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* task, struct ncclSymkDevWork* outDevWork) {
@@ -150,7 +150,7 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 
 `ncclSymkInitOnce` 里还初始化了 GIN 相关的资源需求，包括 inbox、outbox、accumulation buffer 和 rail signal。
 
-[FACT:src/sym_kernels.cc:208-251]
+[FACT:src/sym_kernels.cc:208-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L208-L251)
 
 ```c
     struct ncclDevResourceRequirements ginInboxRailReq = {};
@@ -236,7 +236,7 @@ NVLS 换了个思路：NVSwitch 芯片内置了**多播（multicast）和归约�
 
 NVLS 的核心是**多播组（MC group）**。`ncclMcGroup` 结构体描述了一个多播组的全部状态。
 
-[FACT:src/transport/multicast.cc:72-77]
+[FACT:src/transport/multicast.cc:72-77](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L72-L77)
 
 ```c
 struct ncclMcGroup {
@@ -251,7 +251,7 @@ struct ncclMcGroup {
 
 多播组被切分成多个**分区（partition）**，每个分区是一个不可变的切片。`ncclMcPartition` 描述一个分区。
 
-[FACT:src/transport/multicast.cc:162-170]
+[FACT:src/transport/multicast.cc:162-170](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L162-L170)
 
 ```c
   // A partition is self-sufficient for binds: it carries the group's handle, device and
@@ -271,7 +271,7 @@ struct ncclMcGroup {
 
 假设 8 个 rank 要建立一个 NVLS 域。`ncclMcGroupBuildPartitions` 负责创建多播组并切分分区。
 
-[FACT:src/transport/multicast.cc:79-121]
+[FACT:src/transport/multicast.cc:79-121](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L79-L121)
 
 ```c
 ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct ncclMcRequest* requests, int nRequests,
@@ -305,7 +305,7 @@ ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct nccl
 
 接下来是跨 rank 的创建与导入：
 
-[FACT:src/transport/multicast.cc:125-146]
+[FACT:src/transport/multicast.cc:125-146](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L125-L146)
 
 ```c
   if (comm->localRank == 0) {
@@ -336,7 +336,7 @@ localRank 0 创建多播对象，然后通过 bootstrap 广播 shareable handle�
 
 最后是映射和访问权限设置：
 
-[FACT:src/transport/multicast.cc:148-155]
+[FACT:src/transport/multicast.cc:148-155](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L148-L155)
 
 ```c
   // Reserve and map the whole MC VA once; each consumer slice is a view into it.
@@ -355,7 +355,7 @@ localRank 0 创建多播对象，然后通过 bootstrap 广播 shareable handle�
 
 绑定是 NVLS 最关键的操作。`ncclMcPartitionBindMem` 把一个 UC（单播）内存句柄绑定到多播组的某个偏移。
 
-[FACT:src/transport/multicast.cc:200-225]
+[FACT:src/transport/multicast.cc:200-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L200-L225)
 
 ```c
 ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, size_t offsetInPartition,
@@ -388,7 +388,7 @@ ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, siz
 
 还有一个"尝试绑定"的变体，用于用户缓冲区注册：
 
-[FACT:src/transport/multicast.cc:237-268]
+[FACT:src/transport/multicast.cc:237-268](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L237-L268)
 
 ```c
 ncclResult_t ncclMcPartitionTryBindAddr(const struct ncclMcPartition* partition, size_t offsetInPartition,
@@ -433,7 +433,7 @@ ncclResult_t ncclMcPartitionTryBindAddr(const struct ncclMcPartition* partition,
 
 **坑 3：多播组创建失败后的资源泄漏。** `ncclMcGroupBuildPartitions` 的 fail 路径用了 `CUCALL`（best-effort）而不是 `CUCHECK`：
 
-[FACT:src/transport/multicast.cc:179-184]
+[FACT:src/transport/multicast.cc:179-184](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L179-L184)
 
 ```c
 fail:
@@ -487,7 +487,7 @@ sequenceDiagram
 
 `ncclSymkDevWork` 是设备侧的工作描述符，它携带了对称内存的关键信息。
 
-[FACT:src/sym_kernels.cc:380-393]
+[FACT:src/sym_kernels.cc:380-393](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L380-L393)
 
 ```c
 ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* task, struct ncclSymkDevWork* outDevWork) {
@@ -510,7 +510,7 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 
 `ncclSymkInitOnce` 里还设置了 LSA barrier 和 LLA2A（Low-Latency All-to-All）资源。
 
-[FACT:src/sym_kernels.cc:197-206]
+[FACT:src/sym_kernels.cc:197-206](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L197-L206)
 
 ```c
     reqs.lsaBarrierCount = ncclSymkMaxBlocks;
@@ -538,7 +538,7 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 
 等等，这里有个细节：`kernelMask_STMC` 包含 `AllReduce_AGxLLMC_R` 吗？看源码：
 
-[FACT:src/sym_kernels.cc:17-21]
+[FACT:src/sym_kernels.cc:17-21](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L17-L21)
 
 ```c
 constexpr uint32_t kernelMask_STMC =
@@ -556,7 +556,7 @@ constexpr uint32_t kernelMask_STMC =
 
 NVLS 的同步机制依赖 **credit（信用）**。`ncclNvlsSetup` 里初始化了 credit 分区。
 
-[FACT:src/transport/nvls.cc:407-447]
+[FACT:src/transport/nvls.cc:407-447](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L407-L447)
 
 ```c
     int nChannels = comm->nvlsChannels;
@@ -606,7 +606,7 @@ NVLS 的同步机制依赖 **credit（信用）**。`ncclNvlsSetup` 里初始化
 
 credit 的初始化在后面的循环里：
 
-[FACT:src/transport/nvls.cc:456-491]
+[FACT:src/transport/nvls.cc:456-491](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L456-L491)
 
 ```c
     for (int h = 0; h < nHeads; h++) {
@@ -638,7 +638,7 @@ credit 的初始化在后面的循环里：
 
 **坑 1：credit 分区的 head/tail 竞争。** 多个 channel 共享同一个多播组，但每个 channel 有独立的 credit 区域。如果 channel 数配置不当（比如 `nvlsCTAs` 设得太大），credit 区域会膨胀，占用宝贵的多播地址空间。`ncclNvlsChannels` 会根据 GPU 架构和节点数自动调整 channel 数：
 
-[FACT:src/transport/nvls.cc:100-133]
+[FACT:src/transport/nvls.cc:100-133](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L100-L133)
 
 ```c
   if (comm->config.nvlsCTAs != NCCL_CONFIG_UNDEF_INT) {
@@ -668,7 +668,7 @@ credit 的初始化在后面的循环里：
 
 注意 `comm->nNodes` 在这个阶段还没初始化，所以代码用 `peerInfo[i].hostHash` 手动判断是否多节点。这是初始化顺序的经典陷阱——你不能依赖还没算出来的字段。
 
-**坑 2：MNNVL 不支持 NVLS buffer 注册。** [FACT:src/transport/nvls.cc:516-517]
+**坑 2：MNNVL 不支持 NVLS buffer 注册。** [FACT:src/transport/nvls.cc:516-517](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L516-L517)
 
 ```c
   // MNNVL does not support NVLS buffer registration
@@ -679,7 +679,7 @@ MNNVL（Multi-Node NVLink）环境下，用户缓冲区注册被跳过。如果�
 
 **坑 3：共享资源的引用计数。** `ncclNvlsSetup` 支持父子通信域共享 NVLS 资源：
 
-[FACT:src/transport/nvls.cc:380-392]
+[FACT:src/transport/nvls.cc:380-392](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L380-L392)
 
 ```c
   if (nvlsShare) {
@@ -761,7 +761,7 @@ flowchart LR
 
 <details><summary>Q1: 如果把 `ncclMcPartitionBindMem` 里的边界检查 `if (offsetInPartition + bindSize > partition->size)` 去掉，在什么场景下会触发内存越界？为什么这个检查不能用"UC 和 MC 粒度相同"来替代？</summary>
 
-**参考解析**：看 [FACT:src/transport/multicast.cc:200-208]：
+**参考解析**：看 [FACT:src/transport/multicast.cc:200-208](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L200-L208)：
 
 ```c
 ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, size_t offsetInPartition,

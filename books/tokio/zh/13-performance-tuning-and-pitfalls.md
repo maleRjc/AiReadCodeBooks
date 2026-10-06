@@ -10,7 +10,7 @@ Tokio 任务 panic 不会让整个进程崩溃（除非 panic=abort），而是�
 
 ## 数据结构与状态
 
-`JoinHandle<T>` 的 `Future::Output` 是 `super::Result<T>`，即 `Result<T, JoinError>` [FACT:tokio/src/runtime/task/join.rs:325]。`JoinError` 有两种形态：panic 和 cancelled。文档示例展示了 panic 场景：
+`JoinHandle<T>` 的 `Future::Output` 是 `super::Result<T>`，即 `Result<T, JoinError>` [FACT:tokio/src/runtime/task/join.rs:325](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/task/join.rs#L325)。`JoinError` 有两种形态：panic 和 cancelled。文档示例展示了 panic 场景：
 
 ```rust
 let join_handle = tokio::spawn(async { panic!("boom"); });
@@ -18,7 +18,7 @@ let err = join_handle.await.unwrap_err();
 assert!(err.is_panic());
 ```
 
-[FACT:tokio/src/runtime/task/join.rs:121-127]
+[FACT:tokio/src/runtime/task/join.rs:121-127](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/task/join.rs#L121-L127)
 
 panic 被捕获的机制在 `RawTask` 的 poll 路径里：任务 poll 时用 `catch_unwind` 包裹，panic 发生后把 payload 存进任务的输出槽位，标记状态为 complete，然后唤醒 join waker。`JoinHandle::poll` 通过 `try_read_output` 读到的是 `Err(JoinError::panic(payload))`。
 
@@ -51,7 +51,7 @@ impl UnwindSafe for JoinHandle {}
 impl RefUnwindSafe for JoinHandle {}
 ```
 
-[FACT:tokio/src/runtime/task/join.rs:176-181]
+[FACT:tokio/src/runtime/task/join.rs:176-181](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/task/join.rs#L176-L181)
 
 这是无条件实现，不要求 `T: UnwindSafe`。原因：`JoinHandle` 本身不持有 `T`，`T` 在堆上的任务分配里，panic 时已经被 `catch_unwind` 隔离。所以即使 `T` 不是 `UnwindSafe`，`JoinHandle` 也是安全的。
 
@@ -79,7 +79,7 @@ pub struct Runtime {
 }
 ```
 
-[FACT:tokio/src/runtime/runtime.rs:97-106]
+[FACT:tokio/src/runtime/runtime.rs:97-106](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L97-L106)
 
 `Drop` 实现：
 
@@ -99,7 +99,7 @@ impl Drop for Runtime {
 }
 ```
 
-[FACT:tokio/src/runtime/runtime.rs:506-521]
+[FACT:tokio/src/runtime/runtime.rs:506-521](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L506-L521)
 
 注意：`Drop` 只处理 `scheduler`，**没有显式处理 `blocking_pool`**。`blocking_pool` 的关闭发生在它自己的 `Drop` 里，在 `Runtime::drop` 返回后由字段 drop 顺序触发。字段 drop 顺序是声明顺序：`scheduler` → `handle` → `blocking_pool`。所以阻塞池是最后关闭的。
 
@@ -112,7 +112,7 @@ pub fn shutdown_timeout(mut self, duration: Duration) {
 }
 ```
 
-[FACT:tokio/src/runtime/runtime.rs:457-461]
+[FACT:tokio/src/runtime/runtime.rs:457-461](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L457-L461)
 
 先 `handle.inner.shutdown()` 通知调度器和 I/O 驱动停止，再 `blocking_pool.shutdown(Some(duration))` 等待阻塞任务，最多等 `duration`。
 
@@ -130,7 +130,7 @@ pub(super) struct Receiver {
 }
 ```
 
-[FACT:tokio/src/runtime/blocking/shutdown.rs:13-19]
+[FACT:tokio/src/runtime/blocking/shutdown.rs:13-19](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L13-L19)
 
 每个阻塞 worker 持有一个 `Sender` 克隆（内部是 `Arc<oneshot::Sender>`）。当所有 worker 退出、所有 `Sender` 被 drop 后，`Receiver` 收到通知。`wait` 方法：
 
@@ -165,7 +165,7 @@ pub(crate) fn wait(&mut self, timeout: Option) -> bool {
 }
 ```
 
-[FACT:tokio/src/runtime/blocking/shutdown.rs:37-70]
+[FACT:tokio/src/runtime/blocking/shutdown.rs:37-70](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L37-L70)
 
 逐步解析：
 
@@ -199,13 +199,13 @@ flowchart TD
 
 ## 设计思考与踩坑
 
-**坑 1：在 async 上下文里 drop Runtime 会 panic。** 错误信息很明确：「Cannot drop a runtime in a context where blocking is not allowed」[FACT:tokio/src/runtime/blocking/shutdown.rs:51-54]。解决方案是用 `shutdown_background()`，它等价于 `shutdown_timeout(Duration::from_nanos(0))` [FACT:tokio/src/runtime/runtime.rs:494-496]，不等待阻塞任务。
+**坑 1：在 async 上下文里 drop Runtime 会 panic。** 错误信息很明确：「Cannot drop a runtime in a context where blocking is not allowed」[FACT:tokio/src/runtime/blocking/shutdown.rs:51-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L51-L54)。解决方案是用 `shutdown_background()`，它等价于 `shutdown_timeout(Duration::from_nanos(0))` [FACT:tokio/src/runtime/runtime.rs:494-496](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L494-L496)，不等待阻塞任务。
 
-**坑 2：`shutdown_background` 会泄漏阻塞任务。** 文档明确警告「this may result in a resource leak (in that any blocking tasks are still running until they return)」[FACT:tokio/src/runtime/runtime.rs:470-472]。阻塞任务会继续跑直到自然返回，但 Runtime 已经 drop，它们持有的资源可能已经失效。
+**坑 2：`shutdown_background` 会泄漏阻塞任务。** 文档明确警告「this may result in a resource leak (in that any blocking tasks are still running until they return)」[FACT:tokio/src/runtime/runtime.rs:470-472](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L470-L472)。阻塞任务会继续跑直到自然返回，但 Runtime 已经 drop，它们持有的资源可能已经失效。
 
-**坑 3：I/O 资源在 Runtime drop 后失效。** 文档说明「Once the runtime has been dropped, any outstanding I/O resources bound to it will no longer function」[FACT:tokio/src/runtime/runtime.rs:52-54]。`is_rt_shutdown_err` 函数就是用来检测这种错误的 [FACT:tokio/src/runtime/runtime.rs:585-593]。
+**坑 3：I/O 资源在 Runtime drop 后失效。** 文档说明「Once the runtime has been dropped, any outstanding I/O resources bound to it will no longer function」[FACT:tokio/src/runtime/runtime.rs:52-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L52-L54)。`is_rt_shutdown_err` 函数就是用来检测这种错误的 [FACT:tokio/src/runtime/runtime.rs:585-593](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L585-L593)。
 
-**坑 4：`Drop` 默认无限等待。** 文档指出「The `Drop` implementation waits forever for this」[FACT:tokio/src/runtime/runtime.rs:43-44]。如果阻塞任务卡死（比如死循环），drop Runtime 会永久挂起。生产环境应该用 `shutdown_timeout` 设上限。
+**坑 4：`Drop` 默认无限等待。** 文档指出「The `Drop` implementation waits forever for this」[FACT:tokio/src/runtime/runtime.rs:43-44](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L43-L44)。如果阻塞任务卡死（比如死循环），drop Runtime 会永久挂起。生产环境应该用 `shutdown_timeout` 设上限。
 
 # 13.4 信号处理与多 Runtime 冲突
 
@@ -240,7 +240,7 @@ fn signal_enable(signal: SignalKind, handle: &Handle) -> io::Result {
 }
 ```
 
-[FACT:tokio/src/signal/unix.rs:266-296]
+[FACT:tokio/src/signal/unix.rs:266-296](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L266-L296)
 
 关键点：
 
@@ -250,7 +250,7 @@ fn signal_enable(signal: SignalKind, handle: &Handle) -> io::Result {
 
 3. `siginfo.init.get_or_init(...)` 用 `OnceLock` 保证每个信号只注册一次 OS handler。`get_or_init` 的闭包调用 `signal_hook_registry::register`，这是全局的、进程级的注册。
 
-4. 注册的 handler 是 `action(globals, signal)`，它做两件事：`globals.record_event(signal)` 记录事件，然后往 pipe 写一个字节唤醒驱动 [FACT:tokio/src/signal/unix.rs:252-259]。
+4. 注册的 handler 是 `action(globals, signal)`，它做两件事：`globals.record_event(signal)` 记录事件，然后往 pipe 写一个字节唤醒驱动 [FACT:tokio/src/signal/unix.rs:252-259](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L252-L259)。
 
 ## 多 Runtime 冲突的根源
 
@@ -263,9 +263,9 @@ pub(crate) struct OsExtraData {
 }
 ```
 
-[FACT:tokio/src/signal/unix.rs:61-64]
+[FACT:tokio/src/signal/unix.rs:61-64](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L61-L64)
 
-`Default` 实现创建一对 `UnixStream` [FACT:tokio/src/signal/unix.rs:61-64]。这个 pipe 是全局唯一的，所有 Runtime 的信号驱动共享它。
+`Default` 实现创建一对 `UnixStream` [FACT:tokio/src/signal/unix.rs:61-64](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L61-L64)。这个 pipe 是全局唯一的，所有 Runtime 的信号驱动共享它。
 
 问题来了：`signal_enable` 里 `handle.check_inner()` 检查的是**当前 Runtime** 的信号驱动。但 `signal_hook_registry::register` 注册的 handler 是**进程级**的，它写入的是**全局** pipe。如果 Runtime A 先注册了 SIGINT，然后 Runtime B 也注册 SIGINT，`get_or_init` 会直接返回已有的 `Ok(())`，不会重复注册。但 Runtime B 的信号驱动会从全局 pipe 读数据——两个 Runtime 会竞争同一个 pipe 的字节。
 
@@ -292,15 +292,15 @@ sequenceDiagram
 
 ## 设计思考与踩坑
 
-**坑 1：信号处理器永不卸载。** 文档明确警告「Once a signal handler is registered with the process the underlying libc signal handler is never unregistered」[FACT:tokio/src/signal/unix.rs:379-380]。即使 `Signal` 实例被 drop，后续信号仍会被 Tokio 捕获，默认行为不会恢复 [FACT:tokio/src/signal/unix.rs:338-340]。
+**坑 1：信号处理器永不卸载。** 文档明确警告「Once a signal handler is registered with the process the underlying libc signal handler is never unregistered」[FACT:tokio/src/signal/unix.rs:379-380](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L379-L380)。即使 `Signal` 实例被 drop，后续信号仍会被 Tokio 捕获，默认行为不会恢复 [FACT:tokio/src/signal/unix.rs:338-340](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L338-L340)。
 
-**坑 2：信号会被合并。** 文档说明「before `poll` is called, all signal notifications are coalesced into one item returned from `poll`」[FACT:tokio/src/signal/unix.rs:312-315]。如果你收到 10 个 SIGINT 但只 poll 了一次，只会看到一个事件。这是 Unix 信号本身的特性（标准信号不排队），Tokio 没有额外合并。
+**坑 2：信号会被合并。** 文档说明「before `poll` is called, all signal notifications are coalesced into one item returned from `poll`」[FACT:tokio/src/signal/unix.rs:312-315](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L312-L315)。如果你收到 10 个 SIGINT 但只 poll 了一次，只会看到一个事件。这是 Unix 信号本身的特性（标准信号不排队），Tokio 没有额外合并。
 
 **坑 3：多 Runtime 下信号可能丢失。** 由于全局 pipe 被多个 Runtime 竞争读取，一个 Runtime 可能读走字节而另一个永远等不到。生产环境应该只在一个 Runtime 里处理信号，或者用 `signal_hook` 自己管理。
 
-**坑 4：`signal` 函数 panic 条件。** 文档说明「This function panics if there is no current reactor set, or if the `rt` feature flag is not enabled」[FACT:tokio/src/signal/unix.rs:398-405]。在 Runtime 外调用 `signal()` 会 panic。
+**坑 4：`signal` 函数 panic 条件。** 文档说明「This function panics if there is no current reactor set, or if the `rt` feature flag is not enabled」[FACT:tokio/src/signal/unix.rs:398-405](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L398-L405)。在 Runtime 外调用 `signal()` 会 panic。
 
-**坑 5：`recv()` 的取消安全。** 文档保证「This method is cancel safe. If you use it as a branch in `tokio::select!` and another branch completes first, then it is guaranteed that no signal is lost」[FACT:tokio/src/signal/unix.rs:423-427]。这是因为信号事件存在全局的 `EventInfo` 里，`recv()` 只是读取，不消费底层状态。
+**坑 5：`recv()` 的取消安全。** 文档保证「This method is cancel safe. If you use it as a branch in `tokio::select!` and another branch completes first, then it is guaranteed that no signal is lost」[FACT:tokio/src/signal/unix.rs:423-427](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L423-L427)。这是因为信号事件存在全局的 `EventInfo` 里，`recv()` 只是读取，不消费底层状态。
 
 # 设计思考
 
@@ -324,15 +324,15 @@ sequenceDiagram
 
 Q1：如果把 `JoinHandle::poll` 中的 `coop::poll_proceed(cx)` 去掉，在什么场景下会导致其他任务饿死？为什么 `try_read_output` 本身不消耗预算？
 
-**参考解析**：`coop::poll_proceed(cx)` 在 [FACT:tokio/src/runtime/task/join.rs:325-325] 处消耗协作预算。如果去掉，一个在循环里反复 `select!` 多个 `JoinHandle` 的任务可以在一次调度周期内无限轮询所有 handle，永不返回 `Pending`，从而饿死同 worker 上的其他任务。`try_read_output` 本身不消耗预算，因为它只是一次内存读取 + 可能的 waker 存储，不涉及 I/O 或锁竞争，开销极小。预算机制的设计意图是约束「可能长时间运行的操作」，而不是每次 poll 都收费。注意 `coop.made_progress()` 只在 `ret.is_ready()` 时调用 [FACT:tokio/src/runtime/task/join.rs:349-351]，即只有真正拿到输出才归还预算——这是为了防止「轮询了但没结果」的操作累积消耗预算。
+**参考解析**：`coop::poll_proceed(cx)` 在 [FACT:tokio/src/runtime/task/join.rs:325-325](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/task/join.rs#L325-L325) 处消耗协作预算。如果去掉，一个在循环里反复 `select!` 多个 `JoinHandle` 的任务可以在一次调度周期内无限轮询所有 handle，永不返回 `Pending`，从而饿死同 worker 上的其他任务。`try_read_output` 本身不消耗预算，因为它只是一次内存读取 + 可能的 waker 存储，不涉及 I/O 或锁竞争，开销极小。预算机制的设计意图是约束「可能长时间运行的操作」，而不是每次 poll 都收费。注意 `coop.made_progress()` 只在 `ret.is_ready()` 时调用 [FACT:tokio/src/runtime/task/join.rs:349-351](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/task/join.rs#L349-L351)，即只有真正拿到输出才归还预算——这是为了防止「轮询了但没结果」的操作累积消耗预算。
 
 Q2：`blocking/shutdown.rs` 的 `wait` 方法中，如果 `try_enter_blocking_region()` 返回 `None` 且当前正在 panic，为什么选择返回 `false` 而不是继续等待？如果改成继续等待会发生什么？
 
-**参考解析**：`try_enter_blocking_region()` 返回 `None` 表示当前在异步上下文里，不允许阻塞 [FACT:tokio/src/runtime/blocking/shutdown.rs:44-57]。如果此时正在 panic，代码选择返回 `false` 不等待 [FACT:tokio/src/runtime/blocking/shutdown.rs:47-49]。原因是：panic 展开过程中再次 panic 会导致进程 abort（double panic）。如果改成继续等待，就需要调用 `block_on`，而在异步上下文里 `block_on` 会 panic——在 panic 展开中 panic 会直接 abort 进程，丢失所有诊断信息。返回 `false` 让 drop 继续完成，panic 信息得以保留。这是一个「优雅降级」的设计：关闭不完整总比进程崩溃好。
+**参考解析**：`try_enter_blocking_region()` 返回 `None` 表示当前在异步上下文里，不允许阻塞 [FACT:tokio/src/runtime/blocking/shutdown.rs:44-57](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L44-L57)。如果此时正在 panic，代码选择返回 `false` 不等待 [FACT:tokio/src/runtime/blocking/shutdown.rs:47-49](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L47-L49)。原因是：panic 展开过程中再次 panic 会导致进程 abort（double panic）。如果改成继续等待，就需要调用 `block_on`，而在异步上下文里 `block_on` 会 panic——在 panic 展开中 panic 会直接 abort 进程，丢失所有诊断信息。返回 `false` 让 drop 继续完成，panic 信息得以保留。这是一个「优雅降级」的设计：关闭不完整总比进程崩溃好。
 
 Q3：假设你在 Runtime A 里创建了 `Signal` 监听 SIGTERM，然后把 `Signal` 移到 Runtime B 里 poll。`signal_enable` 里的 `handle.check_inner()` 检查的是哪个 Runtime？如果 Runtime A 先 drop 了，Runtime B 里的 `Signal` 还能收到信号吗？
 
-**参考解析**：`signal_enable` 在 `signal()` 调用时执行，此时 `handle` 是 Runtime A 的 [FACT:tokio/src/signal/unix.rs:398-405]。`check_inner()` 检查的是 Runtime A 的信号驱动 [FACT:tokio/src/signal/unix.rs:275]。`Signal` 内部是 `RxFuture`，包装的是 `watch::Receiver<()>` [FACT:tokio/src/signal/unix.rs:366-368]，这个 receiver 注册在全局 `Globals` 的 `EventInfo` 上。如果 Runtime A drop 了，它的信号驱动停止从全局 pipe 读数据，但全局 handler 仍然会 `record_event` 并写 pipe。Runtime B 的信号驱动如果也在运行，会读到 pipe 数据并触发 `EventInfo`，从而唤醒 `Signal` 的 waker。所以 Runtime B 里的 `Signal` **可能**还能收到信号，但取决于 Runtime B 是否有信号驱动在运行。如果 Runtime B 没有信号驱动（比如没启用 signal feature 或驱动已关闭），pipe 数据无人读取，`Signal` 永远等不到唤醒。这就是多 Runtime 信号处理的脆弱性。
+**参考解析**：`signal_enable` 在 `signal()` 调用时执行，此时 `handle` 是 Runtime A 的 [FACT:tokio/src/signal/unix.rs:398-405](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L398-L405)。`check_inner()` 检查的是 Runtime A 的信号驱动 [FACT:tokio/src/signal/unix.rs:275](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L275)。`Signal` 内部是 `RxFuture`，包装的是 `watch::Receiver<()>` [FACT:tokio/src/signal/unix.rs:366-368](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/signal/unix.rs#L366-L368)，这个 receiver 注册在全局 `Globals` 的 `EventInfo` 上。如果 Runtime A drop 了，它的信号驱动停止从全局 pipe 读数据，但全局 handler 仍然会 `record_event` 并写 pipe。Runtime B 的信号驱动如果也在运行，会读到 pipe 数据并触发 `EventInfo`，从而唤醒 `Signal` 的 waker。所以 Runtime B 里的 `Signal` **可能**还能收到信号，但取决于 Runtime B 是否有信号驱动在运行。如果 Runtime B 没有信号驱动（比如没启用 signal feature 或驱动已关闭），pipe 数据无人读取，`Signal` 永远等不到唤醒。这就是多 Runtime 信号处理的脆弱性。
 
 # 章末过渡
 

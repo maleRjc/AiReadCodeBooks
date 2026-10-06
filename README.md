@@ -18,7 +18,7 @@
 ## 🌐 Language Navigation / 多语言入口
 - **English Edition (Current)**: Master documentation, 100-book matrix & English monographs.
 - **[中文版入口 (Chinese Edition)](README_zh.md)**: 查看中文主目录、100本开源专著大纲矩阵与精读指引。
-- **[Interactive Live Web Readers](https://aireadcode.com/books/)**: Experience real-time dual-pane reading with live source code synchronization.
+- **[Interactive Live Web Readers](https://malerjc.github.io/AiReadCodeBooks/)**: Experience real-time dual-pane reading with live source code synchronization.
 - **[AiReadCode Desktop Client](https://aireadcode.com/#downloads)**: Turn your own repositories into structured architectural books with one click.
 
 ---
@@ -29,10 +29,10 @@ The following 4 monographs are fully generated, audited, and ready to read onlin
 
 | Flagship Book | Domain Track | Tech Stack | Stars | Chapters | Online Web Reader | GitHub Markdown |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **[Vue 3 Core Architecture](books/vue3/)** | Frontend & Web Runtimes | `TypeScript` | ★ 45.8k | 14 Chapters | [Interactive Reader](https://aireadcode.com/books/vue3.html) | [Read (EN)](books/vue3/en/01-monorepo-philosophy.md) · [阅读 (ZH)](books/vue3/zh/01-monorepo-philosophy.md) |
-| **[Tokio Internals & Runtime](books/tokio/)** | Systems & High-Performance | `Rust` | ★ 28.5k | 14 Chapters | [Interactive Reader](https://aireadcode.com/books/tokio.html) | [Read (EN)](books/tokio/en/01-async-philosophy-future-waker.md) · [阅读 (ZH)](books/tokio/zh/01-async-philosophy-future-waker.md) |
-| **[Inside vLLM Serving Engine](books/vllm/)** | AI Infra & Deep Learning | `Python/C++/CUDA` | ★ 35.2k | 14 Chapters | [Interactive Reader](https://aireadcode.com/books/vllm.html) | [Read (EN)](books/vllm/en/01-design-philosophy-and-architecture.md) · [阅读 (ZH)](books/vllm/zh/01-design-philosophy-and-architecture.md) |
-| **[NCCL Deep Dive: AllReduce](books/nccl/)** | AI Infra & Deep Learning | `C++/CUDA` | ★ 6.2k | 25 Chapters | [Interactive Reader](https://aireadcode.com/books/nccl.html) | [Read (EN)](books/nccl/en/01-allreduce-external-behavior.md) · [阅读 (ZH)](books/nccl/zh/01-allreduce-external-behavior.md) |
+| **[Vue 3 Core Architecture](books/vue3/)** | Frontend & Web Runtimes | `TypeScript` | ★ 45.8k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [Read (EN)](books/vue3/en/01-monorepo-philosophy.md) · [阅读 (ZH)](books/vue3/zh/01-monorepo-philosophy.md) |
+| **[Tokio Internals & Runtime](books/tokio/)** | Systems & High-Performance | `Rust` | ★ 28.5k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [Read (EN)](books/tokio/en/01-async-philosophy-future-waker.md) · [阅读 (ZH)](books/tokio/zh/01-async-philosophy-future-waker.md) |
+| **[Inside vLLM Serving Engine](books/vllm/)** | AI Infra & Deep Learning | `Python/C++/CUDA` | ★ 35.2k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [Read (EN)](books/vllm/en/01-design-philosophy-and-architecture.md) · [阅读 (ZH)](books/vllm/zh/01-design-philosophy-and-architecture.md) |
+| **[NCCL Deep Dive: AllReduce](books/nccl/)** | AI Infra & Deep Learning | `C++/CUDA` | ★ 6.2k | 25 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [Read (EN)](books/nccl/en/01-allreduce-external-behavior.md) · [阅读 (ZH)](books/nccl/zh/01-allreduce-external-behavior.md) |
 
 ---
 
@@ -199,7 +199,7 @@ AiReadCodeBooks/
    - `Layer 2: End-to-End Main Lifecycle` — Tracing a complete request, packet, or build step.
    - `Layer 3: Core Subsystems` — Deep dive into memory allocators, schedulers, and drivers.
    - `Layer 4: Trade-offs & Production Pitfalls` — Design inferences, deadlocks, and tuning benchmarks.
-3. **Dual-Pane Interactive Experience**: Readers on [aireadcode.com/books](https://aireadcode.com/books/) can click any `[FACT]` badge to view full, syntax-highlighted source code in a synchronized side inspector.
+3. **Dual-Pane Interactive Experience**: Readers on [aireadcode.com/books](https://malerjc.github.io/AiReadCodeBooks/) can click any `[FACT]` badge to view full, syntax-highlighted source code in a synchronized side inspector.
 
 ---
 

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <!-- 极光紫蓝全彩渐变底座 -->
+    <linearGradient id="fav-aurora" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 极光圆角徽章底座 (明亮鲜艳) -->
+  <rect width="32" height="32" rx="8" fill="url(#fav-aurora)"/>
+
+  <!-- 高亮纯白灯泡外轮廓 -->
+  <path d="M16 5C11.5 5 8.5 8 8.5 12C8.5 15 10.5 17 11.5 18.5H20.5C21.5 17 23.5 15 23.5 12C23.5 8 20.5 5 16 5Z" 
+        stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 纯白螺纹基座 -->
+  <line x1="12.5" y1="21" x2="19.5" y2="21" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="13.5" y1="23.5" x2="18.5" y2="23.5" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="14.5" y1="26" x2="17.5" y2="26" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round"/>
+
+  <!-- 亮黄发光代码灯丝 { } (高对比) -->
+  <path d="M14 9C12.8 9 12.2 9.8 12.2 10.8C12.2 11.5 11.2 12 10.5 12C11.2 12 12.2 12.5 12.2 13.2C12.2 14.2 12.8 15 14 15" 
+        stroke="#fde047" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M18 9C19.2 9 19.8 9.8 19.8 10.8C19.8 11.5 20.8 12 21.5 12C20.8 12 19.8 12.5 19.8 13.2C19.8 14.2 19.2 15 18 15" 
+        stroke="#fde047" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

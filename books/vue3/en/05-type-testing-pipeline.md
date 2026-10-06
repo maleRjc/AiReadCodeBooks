@@ -14,7 +14,7 @@
 
 `tsconfig.build.json` 是这条流水线的第一阶段配置。它继承根 `tsconfig.json`，只覆盖构建相关选项。
 
-[FACT:tsconfig.build.json:3-9]
+[FACT:tsconfig.build.json:3-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.build.json#L3-L9)
 
 关键选项逐个拆解：
 
@@ -25,7 +25,7 @@
 
 `include` 列表则精确划定了哪些目录参与出料：
 
-[FACT:tsconfig.build.json:10-23]
+[FACT:tsconfig.build.json:10-23](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.build.json#L10-L23)
 
 注意这里**只列了 12 个目录**，而不是整个 `packages/`。`packages-private/`、`packages/dts-test/`、`packages/sfc-playground/` 等都不在其中。这意味着：私有包和测试包的类型**永远不会**进入发布产物。这是一个物理隔离——不是靠约定，而是靠配置。
 
@@ -38,19 +38,19 @@
 
 第二阶段由 `rollup.dts.config.js` 驱动。它的入口先做一次前置校验：
 
-[FACT:rollup.dts.config.js:15-22]
+[FACT:rollup.dts.config.js:15-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L15-L22)
 
 若 `temp/packages` 不存在，说明第一阶段没跑，脚本直接 `process.exit(1)` 并提示先跑 `tsc`。这是流水线的**顺序契约**：rollup 阶段强依赖 tsc 阶段的产物，缺一不可。
 
 接着读取所有子包目录，并支持 `TARGETS` 环境变量做子集构建：
 
-[FACT:rollup.dts.config.js:15-22]
+[FACT:rollup.dts.config.js:15-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L15-L22)
 
 `TARGETS` 机制允许只重建某几个包的类型，在开发调试时能显著缩短反馈环。
 
 核心是 `targetPackages.map(...)` 为每个包生成一份 Rollup 配置：
 
-[FACT:rollup.dts.config.js:23-42]
+[FACT:rollup.dts.config.js:23-42](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L23-L42)
 
 逐字段解读：
 
@@ -61,7 +61,7 @@
 
 `onwarn` 钩子值得单独说：
 
-[FACT:rollup.dts.config.js:23-42]
+[FACT:rollup.dts.config.js:23-42](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L23-L42)
 
 在 dts rollup 过程中，所有非相对路径的 import 默认被外部化（externalized）。这会导致 Rollup 报 `UNRESOLVED_IMPORT` 警告。但这是**预期行为**——类型文件里的 `import { X } from 'some-pkg'` 本来就该保留为外部引用，不该被打包进来。所以脚本对「非相对路径的未解析导入」直接 `return` 吞掉警告，只对相对路径的未解析导入放行给默认 `warn`。
 
@@ -98,7 +98,7 @@ flowchart TD
 
 `patchTypes` 返回一个 Rollup 插件，核心逻辑在 `renderChunk` 钩子里。它维护两个集合：
 
-[FACT:rollup.dts.config.js:87-88]
+[FACT:rollup.dts.config.js:87-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L87-L88)
 
 - `isExported`：记录所有**原本就被导出**的类型名（来自 `export { ... }` 声明）。
 - `shouldRemoveExport`：记录所有**需要从大导出块中移除**的类型名（因为已经被内联导出了）。
@@ -109,19 +109,19 @@ flowchart TD
 
 **Pass 0：收集所有已导出类型名。**
 
-[FACT:rollup.dts.config.js:90-100]
+[FACT:rollup.dts.config.js:90-100](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L90-L100)
 
 遍历 AST 顶层节点，凡是 `ExportNamedDeclaration` 且**不带 source**（即不是 `export ... from '...'` 的再导出），就把其 specifier 的 local name 加进 `isExported`。
 
 **Pass 1：为声明节点就地添加 `export` 前缀。**
 
-[FACT:rollup.dts.config.js:102-125]
+[FACT:rollup.dts.config.js:102-125](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L102-L125)
 
 遍历顶层节点，对 `VariableDeclaration`、`TSTypeAliasDeclaration`、`TSInterfaceDeclaration`、`TSDeclareFunction`、`TSEnumDeclaration`、`ClassDeclaration` 六类声明调用 `processDeclaration`。
 
 `processDeclaration` 的逻辑：
 
-[FACT:rollup.dts.config.js:70-85]
+[FACT:rollup.dts.config.js:70-85](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L70-L85)
 
 三步：
 
@@ -133,13 +133,13 @@ flowchart TD
 
 注意 `VariableDeclaration` 分支有个额外断言：
 
-[FACT:rollup.dts.config.js:104-115]
+[FACT:rollup.dts.config.js:104-115](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L104-L115)
 
 若一个 `declare const` 声明了多个 declarator（如 `declare const a, b`），直接抛错。因为 `processDeclaration` 只处理 `declarations[0]`，多 declarator 会导致漏处理。这里选择**快速失败**而非静默错误，是防御性编程的体现。
 
 **Pass 2：从大导出块中移除已内联的类型。**
 
-[FACT:rollup.dts.config.js:127-171]
+[FACT:rollup.dts.config.js:127-171](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L127-L171)
 
 遍历 `ExportNamedDeclaration`，对每个 specifier：
 
@@ -149,7 +149,7 @@ flowchart TD
 
 **收尾：追加包专属类型。**
 
-[FACT:rollup.dts.config.js:172-183]
+[FACT:rollup.dts.config.js:172-183](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L172-L183)
 
 `code = s.toString()` 拿到改写后的代码后，检查 `packages/${pkg}/types` 目录是否存在。若存在，读取目录下所有文件内容，用换行拼接后追加到代码末尾。
 
@@ -160,7 +160,7 @@ flowchart TD
 
 注释里给出了直接原因：
 
-[FACT:rollup.dts.config.js:45-51]
+[FACT:rollup.dts.config.js:45-51](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L45-L51)
 
 原文说：把所有类型改成内联导出、并从大导出块中移除，否则在 VitePress 的 `defineComponent` 调用中会报「the inferred type cannot be named without a reference」。
 
@@ -171,13 +171,13 @@ flowchart TD
 
 `copyMts` 插件只对 `vue` 包生效：
 
-[FACT:rollup.dts.config.js:196-204]
+[FACT:rollup.dts.config.js:196-204](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L196-L204)
 
 它在 `writeBundle` 钩子里，把 `vue.d.ts` 的内容原样写入 `vue.d.mts`。
 
 注释解释了原因：
 
-[FACT:rollup.dts.config.js:188-192]
+[FACT:rollup.dts.config.js:188-192](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L188-L192)
 
 根据 TypeScript 4.7 的 `package.json` exports 规范，要为 Node ESM 和 CJS 同时正确提供类型，**必须有两个独立的声明文件**。所以构建时把 `vue.d.ts` 复制一份为 `vue.d.mts`。
 
@@ -195,7 +195,7 @@ flowchart TD
 
 整个测试包的核心只有一个文件：
 
-[FACT:packages-private/dts-built-test/src/index.ts:3-6]
+[FACT:packages-private/dts-built-test/src/index.ts:3-6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/dts-built-test/src/index.ts#L3-L6)
 
 逐行解读：
 
@@ -211,7 +211,7 @@ flowchart TD
 
 ## 包配置：workspace 依赖指向真实产物
 
-[FACT:packages-private/dts-built-test/package.json:1-11]
+[FACT:packages-private/dts-built-test/package.json:1-11](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/dts-built-test/package.json#L1-L11)
 
 关键字段：
 
@@ -284,11 +284,11 @@ sequenceDiagram
 
 `patchTypes` 在多处使用 `assert`：
 
-[FACT:rollup.dts.config.js:74-74]
+[FACT:rollup.dts.config.js:74-74](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L74-L74)
 
-[FACT:rollup.dts.config.js:107-108]
+[FACT:rollup.dts.config.js:107-108](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L107-L108)
 
-[FACT:rollup.dts.config.js:147-148]
+[FACT:rollup.dts.config.js:147-148](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L147-L148)
 
 这些断言在遇到非预期 AST 形状时立即抛错。对比 `onwarn` 里对 `UNRESOLVED_IMPORT` 的静默吞掉——**预期内的噪音吞掉，预期外的形状快速失败**。这是构建脚本的正确姿态：宁可构建失败，也不要产出形状错误的类型文件。
 
@@ -296,7 +296,7 @@ sequenceDiagram
 
 `processDeclaration` 跳过 `_` 开头的类型：
 
-[FACT:rollup.dts.config.js:76-78]
+[FACT:rollup.dts.config.js:76-78](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L76-L78)
 
 这意味着源码里任何以 `_` 开头的导出类型，都不会被内联导出。若某个类型本应公开，却因命名以 `_` 开头而被跳过，用户侧就会遇到「类型不存在」的报错。
 
@@ -305,7 +305,7 @@ sequenceDiagram
 
 ## 生产踩坑：多 declarator 断言
 
-[FACT:rollup.dts.config.js:106-115]
+[FACT:rollup.dts.config.js:106-115](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L106-L115)
 
 若某个 `.d.ts` 里出现 `declare const a, b`，构建直接抛错。这在手写类型里罕见，但若某个工具生成的类型文件用了这种形式，就会触发。错误信息里会打印出问题代码片段，便于定位。
 
@@ -323,15 +323,15 @@ Q1: 若把 `tsconfig.build.json` 的 `include` 白名单改成 `["packages"]`（
 
 **参考解析**：
 
-`include` 从 12 个精确目录改成 `["packages"]` 后，所有子包（包括 `packages-private` 之外的所有 `packages/*`）都会参与 tsc 出料。[FACT:tsconfig.build.json:10-23]
+`include` 从 12 个精确目录改成 `["packages"]` 后，所有子包（包括 `packages-private` 之外的所有 `packages/*`）都会参与 tsc 出料。[FACT:tsconfig.build.json:10-23](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.build.json#L10-L23)
 
 后果链：
 
 1. `temp/packages/` 下会多出许多包的 `.d.ts`。
 
-2. `rollup.dts.config.js` 的 `readdirSync('temp/packages')` 会读到这些多出来的包。[FACT:rollup.dts.config.js:15-22]
+2. `rollup.dts.config.js` 的 `readdirSync('temp/packages')` 会读到这些多出来的包。[FACT:rollup.dts.config.js:15-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L15-L22)
 
-3. `targetPackages` 默认等于所有包，于是会为每个包生成 `packages/<pkg>/dist/<pkg>.d.ts`。[FACT:rollup.dts.config.js:15-22]
+3. `targetPackages` 默认等于所有包，于是会为每个包生成 `packages/<pkg>/dist/<pkg>.d.ts`。[FACT:rollup.dts.config.js:15-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L15-L22)
 
 污染场景：若某个包本不该发布（如内部工具包），它的类型产物会出现在 `dist` 下。若该包的 `package.json` 没有 `private: true`，发布脚本可能把它一起发到 npm，导致内部类型泄漏。
 
@@ -341,7 +341,7 @@ Q2: `patchTypes` 的 pass 1 中，`processDeclaration` 对 `_` 开头的类型�
 
 **参考解析**：
 
-`processDeclaration` 遇到 `_` 开头直接返回，既不加入 `shouldRemoveExport`，也不 prepend `export `。[FACT:rollup.dts.config.js:76-78]
+`processDeclaration` 遇到 `_` 开头直接返回，既不加入 `shouldRemoveExport`，也不 prepend `export `。[FACT:rollup.dts.config.js:76-78](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.dts.config.js#L76-L78)
 
 后果：
 
@@ -372,7 +372,7 @@ Q3: `dts-built-test` 的 `src/index.ts` 用交叉类型 `typeof _CustomPropsNotE
 - 原始写法 `T & { foo: string }`：直接交叉，`foo` 是交叉类型的一部分，若 `defineComponent` 的返回类型处理逻辑擦除了交叉中的额外属性，`foo` 会丢失。
 - `Omit` 写法：`Omit` 先对 `T` 做映射，再与 `{ foo: string }` 交叉。`Omit` 的映射过程可能改变类型结构，使得 bug 的触发条件不再成立——即使 bug 存在，测试也可能通过。
 
-[FACT:packages-private/dts-built-test/src/index.ts:9-12]
+[FACT:packages-private/dts-built-test/src/index.ts:9-12](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/dts-built-test/src/index.ts#L9-L12)
 
 所以测试用例的**最小性**很关键：它必须精确复现 bug 的触发路径。任何额外的类型变换（如 `Omit`、`Pick`）都可能掩盖 bug。这也是为什么测试里用最朴素的交叉类型，而非更「优雅」的写法。
 

@@ -11,11 +11,11 @@
 
 ### 分层结构：Cython 底层 + Python 高层
 
-nccl4py 的设计是两层：底层是 Cython 绑定（`nccl/bindings/cynccl.pxd`），高层是 Python API（`nccl.core`）。README 里明确说了这个分层 [FACT:bindings/nccl4py/README.md:4-4]：
+nccl4py 的设计是两层：底层是 Cython 绑定（`nccl/bindings/cynccl.pxd`），高层是 Python API（`nccl.core`）。README 里明确说了这个分层 [FACT:bindings/nccl4py/README.md:4-4](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L4-L4)：
 
 > `nccl4py provides low-level Cython bindings and a high-level Python API`
 
-Cython 绑定以 `.pxd` 文件形式随 wheel 分发，供其他 Cython 扩展直接 `cimport` [FACT:bindings/nccl4py/README.md:39-43]：
+Cython 绑定以 `.pxd` 文件形式随 wheel 分发，供其他 Cython 扩展直接 `cimport` [FACT:bindings/nccl4py/README.md:39-43](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L39-L43)：
 
 ```cython
 from nccl.bindings cimport cynccl
@@ -25,17 +25,17 @@ from nccl.bindings cimport cynccl
 
 ### 命名空间包：多个发行版共享 `nccl` 前缀
 
-这是 nccl4py 最巧妙的设计。`nccl` 是一个 PEP 420 隐式命名空间包 [FACT:bindings/nccl4py/README.md:50-51]：
+这是 nccl4py 最巧妙的设计。`nccl` 是一个 PEP 420 隐式命名空间包 [FACT:bindings/nccl4py/README.md:50-51](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L50-L51)：
 
 > `nccl` is a PEP 420 implicit namespace package. nccl4py provides `nccl.bindings` and `nccl.core`; other NCCL extension distributions can provide additional `nccl.*` subpackages.
 
-[INFERENCE] 传统 Python 包里，`nccl/__init__.py` 会「拥有」整个 `nccl` 命名空间。如果 nccl4py 和 nccl_ep 的 Python 绑定都想提供 `nccl.xxx`，就会冲突——谁先安装谁赢。PEP 420 命名空间包解决了这个问题：没有 `__init__.py`，多个发行版可以各自往 `nccl/` 目录里放子包，Python 导入系统会把它们合并。所以 nccl4py 提供 `nccl.bindings` 和 `nccl.core`，nccl_ep 提供 `nccl.ep`，两者可以共存 [FACT:contrib/nccl_ep/README.md:80-82]。
+[INFERENCE] 传统 Python 包里，`nccl/__init__.py` 会「拥有」整个 `nccl` 命名空间。如果 nccl4py 和 nccl_ep 的 Python 绑定都想提供 `nccl.xxx`，就会冲突——谁先安装谁赢。PEP 420 命名空间包解决了这个问题：没有 `__init__.py`，多个发行版可以各自往 `nccl/` 目录里放子包，Python 导入系统会把它们合并。所以 nccl4py 提供 `nccl.bindings` 和 `nccl.core`，nccl_ep 提供 `nccl.ep`，两者可以共存 [FACT:contrib/nccl_ep/README.md:80-82](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L80-L82)。
 
 这个设计对Surrounding Ecosystem & Multi-Language Bindings至关重要：未来任何第三方想加 `nccl.monitoring`、`nccl.profiling`，都不需要改 nccl4py 的代码。
 
 ### CUDA 版本选择：extra 机制
 
-安装时用 `nccl4py[cu12]` 或 `nccl4py[cu13]` 选择 CUDA 大版本 [FACT:bindings/nccl4py/README.md:13-17]。README 解释了原因：extras 会安装对应的 NCCL runtime 和 CUDA Python 依赖 [FACT:bindings/nccl4py/README.md:19]。已发布的 wheel 不需要 `CUDA_HOME` 或本地 CUDA Toolkit，但从源码编译需要 [FACT:bindings/nccl4py/README.md:20-21]。
+安装时用 `nccl4py[cu12]` 或 `nccl4py[cu13]` 选择 CUDA 大版本 [FACT:bindings/nccl4py/README.md:13-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L13-L17)。README 解释了原因：extras 会安装对应的 NCCL runtime 和 CUDA Python 依赖 [FACT:bindings/nccl4py/README.md:19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L19)。已发布的 wheel 不需要 `CUDA_HOME` 或本地 CUDA Toolkit，但从源码编译需要 [FACT:bindings/nccl4py/README.md:20-21](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L20-L21)。
 
 [INFERENCE] 这是 Python 生态处理 CUDA 版本碎片化的标准做法。CUDA 12 和 13 的 ABI 不兼容，不能用一个 wheel 通吃。用 extra 让 pip 根据用户环境选择正确的二进制依赖，避免了运行时才发现版本不匹配。
 
@@ -43,7 +43,7 @@ from nccl.bindings cimport cynccl
 
 **坑一：命名空间包与 `__init__.py` 冲突。** 如果某个第三方包在 `nccl/` 下放了 `__init__.py`，PEP 420 命名空间包机制会被破坏，导致 `nccl.core` 导入失败。排查方法：`python -c "import nccl; print(nccl.__path__)"`，如果报 `AttributeError` 说明 `nccl` 不是命名空间包。
 
-**坑二：Cython ABI 版本漂移。** `cynccl.pxd` 是实验性 API [FACT:bindings/nccl4py/README.md:32-32]，NCCL 升级时 `.pxd` 可能变。依赖 `cimport cynccl` 的 Cython 扩展必须和 nccl4py 版本严格匹配，否则编译期符号解析失败。
+**坑二：Cython ABI 版本漂移。** `cynccl.pxd` 是实验性 API [FACT:bindings/nccl4py/README.md:32-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L32-L32)，NCCL 升级时 `.pxd` 可能变。依赖 `cimport cynccl` 的 Cython 扩展必须和 nccl4py 版本严格匹配，否则编译期符号解析失败。
 
 ## nccl4rust：RAII 所有权与设备侧边界
 
@@ -55,7 +55,7 @@ nccl4rust 的核心价值就是把这套所有权语义套在 NCCL 的 C ABI 上
 
 ### 分层结构：五个 crate 各司其职
 
-README 的 Layout 表格列出了五个 crate [FACT:contrib/nccl4rust/README.md:20-28]：
+README 的 Layout 表格列出了五个 crate [FACT:contrib/nccl4rust/README.md:20-28](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L20-L28)：
 
 | Path | Purpose |
 |---|---|
@@ -65,11 +65,11 @@ README 的 Layout 表格列出了五个 crate [FACT:contrib/nccl4rust/README.md:
 | `crates/nccl-device` | 类型化 `DevComm`、`Team`、`Window` 包装 |
 | `shim/` | 纯 C-ABI 垫片，只用公开头文件 |
 
-[INFERENCE] 这个拆分是刻意的。README 解释了动机 [FACT:contrib/nccl4rust/README.md:30-32]：host 应用可以只用 `nccl` 而不需要 Rust GPU 编译器；CUDA-Oxide 内核用 `nccl-device`；需要原始 ABI 的消费者可以选 `-sys` crate。这种「按需分层」让不同用户只付自己需要的编译成本。
+[INFERENCE] 这个拆分是刻意的。README 解释了动机 [FACT:contrib/nccl4rust/README.md:30-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L30-L32)：host 应用可以只用 `nccl` 而不需要 Rust GPU 编译器；CUDA-Oxide 内核用 `nccl-device`；需要原始 ABI 的消费者可以选 `-sys` crate。这种「按需分层」让不同用户只付自己需要的编译成本。
 
 ### 关键设计：用指针而非值传递设备通信器
 
-这是 nccl4rust 最值得学习的设计决策。README 的 Host/device ownership boundary 一节 [FACT:contrib/nccl4rust/README.md:211-219]：
+这是 nccl4rust 最值得学习的设计决策。README 的 Host/device ownership boundary 一节 [FACT:contrib/nccl4rust/README.md:211-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L211-L219)：
 
 > `ncclDevCommCreate` produces a versioned public structure in host memory. The host `DeviceCommunicator` wrapper owns that structure and destroys it before its parent communicator. CUDA-Oxide remains responsible for allocating device memory, copying those bytes, and keeping the copy alive while kernels execute. Kernels construct `nccl_device::DevComm` from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.
 
@@ -77,21 +77,21 @@ README 的 Layout 表格列出了五个 crate [FACT:contrib/nccl4rust/README.md:
 
 ### 安全边界：哪些是 unsafe 的
 
-README 的 Current API contracts 一节列了六条契约 [FACT:contrib/nccl4rust/README.md:230-249]，其中关键几条：
+README 的 Current API contracts 一节列了六条契约 [FACT:contrib/nccl4rust/README.md:230-249](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L230-L249)，其中关键几条：
 
-- 原始 `-sys` crate 只镜像 C ABI，不加所有权或生命周期校验 [FACT:contrib/nccl4rust/README.md:232-233]
-- 当前集合通信和点对点包装接受原始设备指针，声明为 `unsafe` [FACT:contrib/nccl4rust/README.md:42-45]
-- 指针翻译方法返回原始设备指针，无法校验偏移边界、对齐、peer 成员关系、别名或窗口生命周期 [FACT:contrib/nccl4rust/README.md:242-244]
+- 原始 `-sys` crate 只镜像 C ABI，不加所有权或生命周期校验 [FACT:contrib/nccl4rust/README.md:232-233](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L232-L233)
+- 当前集合通信和点对点包装接受原始设备指针，声明为 `unsafe` [FACT:contrib/nccl4rust/README.md:42-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L42-L45)
+- 指针翻译方法返回原始设备指针，无法校验偏移边界、对齐、peer 成员关系、别名或窗口生命周期 [FACT:contrib/nccl4rust/README.md:242-244](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L242-L244)
 
-[INFERENCE] 这是 Rust 绑定 NCCL 的根本困难：NCCL 的很多 API 契约是「缓冲区必须在 CUDA stream 完成前保持有效」，但 Rust 的类型系统无法表达「stream 完成」这个异步事件。所以这些方法只能是 `unsafe`，把责任交回调用者。README 也指出了改进方向 [FACT:contrib/nccl4rust/README.md:44-45]：一个 stream-aware 的缓冲区抽象可以把这些要求编码进安全 API。这是未来工作。
+[INFERENCE] 这是 Rust 绑定 NCCL 的根本困难：NCCL 的很多 API 契约是「缓冲区必须在 CUDA stream 完成前保持有效」，但 Rust 的类型系统无法表达「stream 完成」这个异步事件。所以这些方法只能是 `unsafe`，把责任交回调用者。README 也指出了改进方向 [FACT:contrib/nccl4rust/README.md:44-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L44-L45)：一个 stream-aware 的缓冲区抽象可以把这些要求编码进安全 API。这是未来工作。
 
 ### 设备侧：CUDA-Oxide 与 LTOIR 垫片
 
-设备侧的核心挑战是：NCCL 的设备 API 是 C++ 模板，而 Rust 设备代码（CUDA-Oxide）需要 C ABI。解决方案是一个 C++ 垫片 [FACT:contrib/nccl4rust/README.md:26]：
+设备侧的核心挑战是：NCCL 的设备 API 是 C++ 模板，而 Rust 设备代码（CUDA-Oxide）需要 C ABI。解决方案是一个 C++ 垫片 [FACT:contrib/nccl4rust/README.md:26](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L26)：
 
 > `shim/` — CUDA C++ C-ABI shim built exclusively from public `nccl.h` and `nccl_device.h`
 
-垫片编译成 LTOIR（LLVM 中间表示），和 Rust PTX 一起链接成 cubin [FACT:contrib/nccl4rust/README.md:165-167]。README 说明了构建流程 [FACT:contrib/nccl4rust/README.md:158-163]：
+垫片编译成 LTOIR（LLVM 中间表示），和 Rust PTX 一起链接成 cubin [FACT:contrib/nccl4rust/README.md:165-167](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L165-L167)。README 说明了构建流程 [FACT:contrib/nccl4rust/README.md:158-163](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L158-L163)：
 
 ```bash
 make device \
@@ -104,11 +104,11 @@ make device \
 
 ### 生产避坑
 
-**坑一：NCCL 版本必须精确匹配。** README 明确要求 `Matching NCCL 2.31 headers and runtime` [FACT:contrib/nccl4rust/README.md:80-81]，因为原型直接初始化了早期 NCCL 设备 API 版本中不同的字段。头文件和 `libnccl.so` 版本不一致会导致设备通信器字段错位。
+**坑一：NCCL 版本必须精确匹配。** README 明确要求 `Matching NCCL 2.31 headers and runtime` [FACT:contrib/nccl4rust/README.md:80-81](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L80-L81)，因为原型直接初始化了早期 NCCL 设备 API 版本中不同的字段。头文件和 `libnccl.so` 版本不一致会导致设备通信器字段错位。
 
 **坑二：CUDA graph 与设备通信器。** 设备通信器是 host 内存里的版本化结构，拷贝到设备后内核通过指针访问。如果 CUDA graph 捕获时把设备指针烘焙进内核参数，之后重新创建通信器会导致 graph 里的指针失效。这和 nccl_ep 的 RDMA buffer 重分配问题同源。
 
-**坑三：安全初始化不能和原始 group 混用。** README 警告 [FACT:contrib/nccl4rust/README.md:238-239]：安全初始化和产生输出的管理调用不能和原始 `nccl-sys` group 状态混用，因为包装层观察不到原始 group 状态。混用会导致包装层的轮询逻辑和原始 group 语义冲突。
+**坑三：安全初始化不能和原始 group 混用。** README 警告 [FACT:contrib/nccl4rust/README.md:238-239](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L238-L239)：安全初始化和产生输出的管理调用不能和原始 `nccl-sys` group 状态混用，因为包装层观察不到原始 group 状态。混用会导致包装层的轮询逻辑和原始 group 语义冲突。
 
 ## nccl_ep：专家并行的 dispatch/combine 原语
 
@@ -120,7 +120,7 @@ MoE（Mixture of Experts）模型里，每个 token 要被路由到 top-k 个专
 
 ### 两种算法：LL 与 HT
 
-README 说明了两种算法 [FACT:contrib/nccl_ep/README.md:36-40]：
+README 说明了两种算法 [FACT:contrib/nccl_ep/README.md:36-40](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L36-L40)：
 
 - **Low-Latency (LL)**：小 batch、延迟敏感（LLM 推理）。用直接点对点 all-to-all 通信。
 - **High-Throughput (HT)**：大 batch 训练和推理预填充。用分层通信——节点内 NVLink 聚合，节点间 RDMA。利用 Hopper 的 warp-specialized pipeline 和 TMA。
@@ -129,15 +129,15 @@ README 说明了两种算法 [FACT:contrib/nccl_ep/README.md:36-40]：
 
 ### 核心数据结构：ncclEpGroupConfig_t
 
-这是 EP 的配置结构，字段很多 [FACT:contrib/nccl_ep/README.md:339-362]。关键字段：
+这是 EP 的配置结构，字段很多 [FACT:contrib/nccl_ep/README.md:339-362](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L339-L362)。关键字段：
 
-- `size` 和 `version`：ABI 版本检查，和上一章讲的 size-based ABI 同源 [FACT:contrib/nccl_ep/README.md:340-341]
-- `algorithm`：HT 或 LL [FACT:contrib/nccl_ep/README.md:342]
-- `max_dispatch_tokens_per_rank`：单 rank 最多 dispatch 的 token 数 [FACT:contrib/nccl_ep/README.md:344]
-- `rdma_buffer_size`：LL 模式的 RDMA 缓冲区大小 [FACT:contrib/nccl_ep/README.md:356-356]
-- `alloc`：自定义设备内存分配器 [FACT:contrib/nccl_ep/README.md:359]
+- `size` 和 `version`：ABI 版本检查，和上一章讲的 size-based ABI 同源 [FACT:contrib/nccl_ep/README.md:340-341](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L340-L341)
+- `algorithm`：HT 或 LL [FACT:contrib/nccl_ep/README.md:342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L342)
+- `max_dispatch_tokens_per_rank`：单 rank 最多 dispatch 的 token 数 [FACT:contrib/nccl_ep/README.md:344](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L344)
+- `rdma_buffer_size`：LL 模式的 RDMA 缓冲区大小 [FACT:contrib/nccl_ep/README.md:356-356](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L356-L356)
+- `alloc`：自定义设备内存分配器 [FACT:contrib/nccl_ep/README.md:359](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L359)
 
-[INFERENCE] `rdma_buffer_size` 的 `NCCL_EP_AUTO` 语义值得深挖。README 解释 [FACT:contrib/nccl_ep/README.md:396-406]：AUTO 模式下缓冲区不在 `ncclEpCreateGroup` 时分配，而是第一次 `ncclEpInitHandle` 时按实际 `(layout, num_topk)` 分配。后续 handle 需要更大缓冲区时会集体重分配。这个「惰性分配」设计避免了用户猜测缓冲区大小，但引入了三个约束 [FACT:contrib/nccl_ep/README.md:396-406]：
+[INFERENCE] `rdma_buffer_size` 的 `NCCL_EP_AUTO` 语义值得深挖。README 解释 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：AUTO 模式下缓冲区不在 `ncclEpCreateGroup` 时分配，而是第一次 `ncclEpInitHandle` 时按实际 `(layout, num_topk)` 分配。后续 handle 需要更大缓冲区时会集体重分配。这个「惰性分配」设计避免了用户猜测缓冲区大小，但引入了三个约束 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：
 
 1. 所有 rank 必须用相同 `(layout, num_topk)` 同步调用 `ncclEpInitHandle`
 2. 重分配会丢弃旧缓冲区内容，`send_only` 暂存的数据会丢失
@@ -147,9 +147,9 @@ README 说明了两种算法 [FACT:contrib/nccl_ep/README.md:36-40]：
 
 ### 张量描述符：静态与动态两种形态
 
-`ncclEpTensor_t` 是轻量值类型 [FACT:contrib/nccl_ep/README.md:310-332]。README 展示了两种用法：
+`ncclEpTensor_t` 是轻量值类型 [FACT:contrib/nccl_ep/README.md:310-332](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L310-L332)。README 展示了两种用法：
 
-**静态描述符**（栈上，`NCCL_EP_TENSOR_INIT_INLINE`）[FACT:contrib/nccl_ep/README.md:806-809]：
+**静态描述符**（栈上，`NCCL_EP_TENSOR_INIT_INLINE`）[FACT:contrib/nccl_ep/README.md:806-809](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L806-L809)：
 
 ```c
 ncclEpTensor_t expert_counters = { NCCL_EP_TENSOR_INIT_INLINE,
@@ -158,7 +158,7 @@ ncclEpTensor_t expert_counters = { NCCL_EP_TENSOR_INIT_INLINE,
                                    .sizes = expert_counters_dims };
 ```
 
-**动态描述符**（堆上，`ncclEpTensorAlloc`）[FACT:contrib/nccl_ep/README.md:793-798]：
+**动态描述符**（堆上，`ncclEpTensorAlloc`）[FACT:contrib/nccl_ep/README.md:793-798](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L793-L798)：
 
 ```c
 ncclEpTensor_t* topk_idx = nullptr;
@@ -169,15 +169,15 @@ ncclEpTensor_t* topk_idx = nullptr;
 }
 ```
 
-[INFERENCE] 两种形态的区别在 `sizes` 数组的所有权。静态描述符的 `sizes` 是调用者拥有的栈数组，必须活得比描述符久 [FACT:contrib/nccl_ep/README.md:325-326]。动态描述符的 `sizes` 是库拥有的堆拷贝，由 `ncclEpTensorDestroy` 释放 [FACT:contrib/nccl_ep/README.md:514-514]。公共结构体持有 `ncclEpTensor_t*` 指针，所以两种形态可以在同一个调用里混用 [FACT:contrib/nccl_ep/README.md:514-514]。这个设计让简单场景零堆分配，复杂场景有库管理便利。
+[INFERENCE] 两种形态的区别在 `sizes` 数组的所有权。静态描述符的 `sizes` 是调用者拥有的栈数组，必须活得比描述符久 [FACT:contrib/nccl_ep/README.md:325-326](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L325-L326)。动态描述符的 `sizes` 是库拥有的堆拷贝，由 `ncclEpTensorDestroy` 释放 [FACT:contrib/nccl_ep/README.md:514-514](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L514-L514)。公共结构体持有 `ncclEpTensor_t*` 指针，所以两种形态可以在同一个调用里混用 [FACT:contrib/nccl_ep/README.md:514-514](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L514-L514)。这个设计让简单场景零堆分配，复杂场景有库管理便利。
 
 ### 执行模式：同步与分阶段
 
-README 的 Execution Modes 一节 [FACT:contrib/nccl_ep/README.md:701-741] 说明了两种模式：
+README 的 Execution Modes 一节 [FACT:contrib/nccl_ep/README.md:701-741](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L701-L741) 说明了两种模式：
 
-**同步模式**（默认）：整个操作期间占用 GPU 资源，包括等待数据接收的时间 [FACT:contrib/nccl_ep/README.md:705-709]。
+**同步模式**（默认）：整个操作期间占用 GPU 资源，包括等待数据接收的时间 [FACT:contrib/nccl_ep/README.md:705-709](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L705-L709)。
 
-**分阶段模式**（仅 LL）：操作拆成 send 和 receive 两阶段 [FACT:contrib/nccl_ep/README.md:718-726]。用 `send_only = 1` 发起，数据传输启动后释放 GPU 资源，应用可以用这些资源做计算，最后用 `ncclEpComplete` 完成 [FACT:contrib/nccl_ep/README.md:728-741]。
+**分阶段模式**（仅 LL）：操作拆成 send 和 receive 两阶段 [FACT:contrib/nccl_ep/README.md:718-726](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L718-L726)。用 `send_only = 1` 发起，数据传输启动后释放 GPU 资源，应用可以用这些资源做计算，最后用 `ncclEpComplete` 完成 [FACT:contrib/nccl_ep/README.md:728-741](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L728-L741)。
 
 ```mermaid
 sequenceDiagram
@@ -202,27 +202,27 @@ sequenceDiagram
 
 ### 生产避坑
 
-**坑一：`ncclEpInitHandle` 的条件集体性。** AUTO 模式下，`ncclEpInitHandle` 是条件集体调用 [FACT:contrib/nccl_ep/README.md:396-406]。如果某个 rank 因为 layout 不同触发了重分配，其他 rank 必须同步参与。不同步会导致死锁或数据错乱。
+**坑一：`ncclEpInitHandle` 的条件集体性。** AUTO 模式下，`ncclEpInitHandle` 是条件集体调用 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)。如果某个 rank 因为 layout 不同触发了重分配，其他 rank 必须同步参与。不同步会导致死锁或数据错乱。
 
-**坑二：CUDA graph 捕获期间禁止 `ncclEpInitHandle`。** README 明确警告 [FACT:contrib/nccl_ep/README.md:396-406]：AUTO 模式下不能在 `cudaStreamBeginCapture` 和 `cudaStreamEndCapture` 之间调用 `ncclEpInitHandle`。因为重分配会改变 RDMA 基址，而 graph 捕获已经烘焙了旧指针。
+**坑二：CUDA graph 捕获期间禁止 `ncclEpInitHandle`。** README 明确警告 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：AUTO 模式下不能在 `cudaStreamBeginCapture` 和 `cudaStreamEndCapture` 之间调用 `ncclEpInitHandle`。因为重分配会改变 RDMA 基址，而 graph 捕获已经烘焙了旧指针。
 
-**坑三：guard 开销。** README 提到 [FACT:contrib/nccl_ep/README.md:299-303]：EP 默认给内部通信缓冲区加 guard，防止相邻 dispatch/combine 调用互相破坏数据。高级用户如果已保证连续操作不会竞争，可以用 `NCCL_EP_DISABLE_GUARD=1` 关闭以回收开销。但关错了会导致数据静默损坏。
+**坑三：guard 开销。** README 提到 [FACT:contrib/nccl_ep/README.md:299-303](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L299-L303)：EP 默认给内部通信缓冲区加 guard，防止相邻 dispatch/combine 调用互相破坏数据。高级用户如果已保证连续操作不会竞争，可以用 `NCCL_EP_DISABLE_GUARD=1` 关闭以回收开销。但关错了会导致数据静默损坏。
 
 ## nccl_ubx：融合集合通信与对称分配器
 
 ### Intuitive Architectural Model：把「搬家前后的打包拆包」也交给搬家公司
 
-普通集合通信只负责搬数据。但实际模型里，AllReduce 之前往往要做残差加法，之后要做 RMSNorm。如果这些操作分开做，数据要在显存里多走几趟。nccl_ubx 的思路是：把残差加法、RMSNorm、mxfp8 量化都融合进集合通信内核 [FACT:contrib/nccl_ubx/README.md:6-9]。就像搬家公司不仅搬箱子，还帮你打包和拆包，一趟搞定。
+普通集合通信只负责搬数据。但实际模型里，AllReduce 之前往往要做残差加法，之后要做 RMSNorm。如果这些操作分开做，数据要在显存里多走几趟。nccl_ubx 的思路是：把残差加法、RMSNorm、mxfp8 量化都融合进集合通信内核 [FACT:contrib/nccl_ubx/README.md:6-9](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L6-L9)。就像搬家公司不仅搬箱子，还帮你打包和拆包，一趟搞定。
 
 ### 硬件前提：必须有 NVLink 多播
 
-README 明确要求 SM 9.0+（Hopper/Blackwell），且 MC 内核路径需要 NVLink 多播硬件 [FACT:contrib/nccl_ubx/README.md:24-24]。SM 8.0（A100）不支持，因为 Ampere 没有 NVLink 多播硬件，`multimem.*` 内联 PTX 无法为 arch 8.0 汇编 [FACT:contrib/nccl_ubx/README.md:24-24]。
+README 明确要求 SM 9.0+（Hopper/Blackwell），且 MC 内核路径需要 NVLink 多播硬件 [FACT:contrib/nccl_ubx/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L24-L24)。SM 8.0（A100）不支持，因为 Ampere 没有 NVLink 多播硬件，`multimem.*` 内联 PTX 无法为 arch 8.0 汇编 [FACT:contrib/nccl_ubx/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L24-L24)。
 
 [INFERENCE] 这解释了为什么 ubx 是「实验性」的——它依赖 Hopper 才引入的 NVLink 多播能力。`multimem.*` 指令允许一个 GPU 用一条指令把数据写到多个 GPU 的对称地址，这是硬件加速的集合通信基础。没有这个硬件，ubx 的核心优化就不成立。
 
 ### 对称分配器：让 PyTorch 张量变成 NCCL 窗口
 
-ubx 的核心是自定义对称分配器 [FACT:contrib/nccl_ubx/README.md:11-14]：
+ubx 的核心是自定义对称分配器 [FACT:contrib/nccl_ubx/README.md:11-14](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L11-L14)：
 
 > A central piece of the design is a custom symmetric allocator that provides zero-copy collective input/output buffers while remaining easy to plug into existing PyTorch code: tensors are ordinary `torch.Tensor` instances backed by an NCCL-managed symmetric window.
 
@@ -230,7 +230,7 @@ ubx 的核心是自定义对称分配器 [FACT:contrib/nccl_ubx/README.md:11-14]
 
 ### 集合通信变体与自动选择
 
-README 的 Available collectives 表格 [FACT:contrib/nccl_ubx/README.md:90-90]：
+README 的 Available collectives 表格 [FACT:contrib/nccl_ubx/README.md:90-90](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L90-L90)：
 
 | Op | Variants | Auto-select |
 |---|---|---|
@@ -242,7 +242,7 @@ README 的 Available collectives 表格 [FACT:contrib/nccl_ubx/README.md:90-90]�
 
 ### 融合操作：residual + RMSNorm
 
-README 提到 [FACT:contrib/nccl_ubx/README.md:103-103]：
+README 提到 [FACT:contrib/nccl_ubx/README.md:103-103](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L103-L103)：
 
 > `SymmAllocator.allreduce_mc()` and `allreduce_lamport()` accept optional `gamma`/`residual_in` parameters to fuse residual addition + RMSNorm into the same kernel.
 
@@ -250,7 +250,7 @@ README 提到 [FACT:contrib/nccl_ubx/README.md:103-103]：
 
 ### MoE token dispatch + mxfp8 量化
 
-README 描述了 `a2av_token_bf16_mxfp8` [FACT:contrib/nccl_ubx/README.md:103-103]：
+README 描述了 `a2av_token_bf16_mxfp8` [FACT:contrib/nccl_ubx/README.md:103-103](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L103-L103)：
 
 > a single GPU kernel that routes bf16 tokens to remote ranks while quantizing them to mxfp8 (E8M0 scale per 32 elements) on the fly.
 
@@ -258,23 +258,23 @@ README 描述了 `a2av_token_bf16_mxfp8` [FACT:contrib/nccl_ubx/README.md:103-10
 
 ### 生产避坑
 
-**坑一：`TORCH_CUDA_ARCH_LIST` 必须带 `a` 后缀。** README 强调 [FACT:contrib/nccl_ubx/README.md:47-56]：用 `a` 后缀确保访问完整 `multimem.*` 指令集。有些加速专用变体在普通 `9.0`/`10.0` 上不可用，未来内核用这些变体会静默降性能或汇编失败。
+**坑一：`TORCH_CUDA_ARCH_LIST` 必须带 `a` 后缀。** README 强调 [FACT:contrib/nccl_ubx/README.md:47-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L47-L56)：用 `a` 后缀确保访问完整 `multimem.*` 指令集。有些加速专用变体在普通 `9.0`/`10.0` 上不可用，未来内核用这些变体会静默降性能或汇编失败。
 
-**坑二：`UBX_BUILD_TIMEOUT` 的运行时开销。** README 说明 [FACT:contrib/nccl_ubx/README.md:47-56]：设为 1 会在内核侧编译进 spinloop 超时，增加运行时开销（额外的 `clock64()` 检查和超时时的 `printf`）。只在排查挂死时开启。
+**坑二：`UBX_BUILD_TIMEOUT` 的运行时开销。** README 说明 [FACT:contrib/nccl_ubx/README.md:47-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L47-L56)：设为 1 会在内核侧编译进 spinloop 超时，增加运行时开销（额外的 `clock64()` 检查和超时时的 `printf`）。只在排查挂死时开启。
 
-**坑三：`NCCL_NVLS_ENABLE=0` 的降级。** README 列出这个环境变量 [FACT:contrib/nccl_ubx/README.md:202]：设为 0 可以在没有 NVLink 多播的情况下运行。但 MC 内核路径会失效，只剩 UC/Lamport 变体，性能大幅下降。
+**坑三：`NCCL_NVLS_ENABLE=0` 的降级。** README 列出这个环境变量 [FACT:contrib/nccl_ubx/README.md:202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L202)：设为 0 可以在没有 NVLink 多播的情况下运行。但 MC 内核路径会失效，只剩 UC/Lamport 变体，性能大幅下降。
 
 ## nccl_checkpoint：LD_PRELOAD 拦截与状态重放
 
 ### Intuitive Architectural Model：给通信域拍快照
 
-训练任务跑了几小时，突然要迁移到另一台机器，或者要保存状态以便恢复。普通检查点只保存模型权重和优化器状态，但 NCCL 通信域的状态（rank 编号、连接、缓冲区）没法直接序列化。nccl_checkpoint 的思路是：拦截所有 NCCL 调用，记录初始化步骤，恢复时重放这些步骤 [FACT:contrib/nccl_checkpoint/README.md:3-7]。
+训练任务跑了几小时，突然要迁移到另一台机器，或者要保存状态以便恢复。普通检查点只保存模型权重和优化器状态，但 NCCL 通信域的状态（rank 编号、连接、缓冲区）没法直接序列化。nccl_checkpoint 的思路是：拦截所有 NCCL 调用，记录初始化步骤，恢复时重放这些步骤 [FACT:contrib/nccl_checkpoint/README.md:3-7](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L3-L7)。
 
 就像录下你组装家具的每一步，搬家后按录像重新组装，而不是试图把组装好的家具整体搬走。
 
 ### Core Mechanics：LD_PRELOAD 符号拦截
 
-README 的 Design 一节 [FACT:contrib/nccl_checkpoint/README.md:17-20]：
+README 的 Design 一节 [FACT:contrib/nccl_checkpoint/README.md:17-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L17-L20)：
 
 > The application is launched with `LD_PRELOAD=/path/to/libnccl-checkpoint-shim.so` in the environment. This allows the library to intercept all calls to NCCL functions to capture all resource initialization steps.
 
@@ -282,7 +282,7 @@ README 的 Design 一节 [FACT:contrib/nccl_checkpoint/README.md:17-20]：
 
 ### 检查点流程
 
-README 的 Python 示例 [FACT:contrib/nccl_checkpoint/README.md:44-58] 展示了完整流程：
+README 的 Python 示例 [FACT:contrib/nccl_checkpoint/README.md:44-58](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L44-L58) 展示了完整流程：
 
 ```python
 nccl_checkpoint.checkpoint_prepare()
@@ -295,38 +295,38 @@ nccl_checkpoint.checkpoint_restore()
 ```
 
 [INFERENCE] 流程分四步：
-1. `checkpoint_prepare()`：销毁所有 communicator，让 CUDA Checkpoint 和 CRIU 能安全 dump 进程状态 [FACT:contrib/nccl_checkpoint/README.md:25-27]
+1. `checkpoint_prepare()`：销毁所有 communicator，让 CUDA Checkpoint 和 CRIU 能安全 dump 进程状态 [FACT:contrib/nccl_checkpoint/README.md:25-27](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L25-L27)
 2. `cuCheckpointProcessLock/Checkpoint`：CUDA 驱动锁定进程并做检查点
 3. CRIU dump：外部工具把进程内存和文件描述符 dump 到磁盘
-4. `cuCheckpointProcessRestore/Unlock` + `checkpoint_restore()`：恢复进程，重放 NCCL 配置 [FACT:contrib/nccl_checkpoint/README.md:29-31]
+4. `cuCheckpointProcessRestore/Unlock` + `checkpoint_restore()`：恢复进程，重放 NCCL 配置 [FACT:contrib/nccl_checkpoint/README.md:29-31](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L29-L31)
 
 ### Redis KVS：跨机器 rendezvous
 
-README 解释了为什么需要 Redis [FACT:contrib/nccl_checkpoint/README.md:33-38]：
+README 解释了为什么需要 Redis [FACT:contrib/nccl_checkpoint/README.md:33-38](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L33-L38)：
 
 > Because it is useful to restore on different hardware, IP addresses may have changed. There is no convenient way to directly inform the NCCL Checkpoint library of all peer addresses during the restore process, so the library depends on a temporary Redis Key-Value store to be made available.
 
 [INFERENCE] 恢复时可能换机器，IP 变了。NCCL 通信域重建需要知道所有 peer 的新地址。但 shim 没法直接知道这些地址，所以用一个 Redis KVS 做 rendezvous——所有进程把新地址写到 KVS，从 KVS 读其他进程的地址。这就像搬家后大家约定在一个公共留言板上交换新地址。
 
-README 说明 Redis 只在恢复引导阶段需要 [FACT:contrib/nccl_checkpoint/README.md:221-221]，`checkpoint_restore()` 返回后就可以停掉。
+README 说明 Redis 只在恢复引导阶段需要 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)，`checkpoint_restore()` 返回后就可以停掉。
 
 ### 限制：三个不支持
 
-README 的 Limitations 一节 [FACT:contrib/nccl_checkpoint/README.md:119-129] 列了三个限制：
+README 的 Limitations 一节 [FACT:contrib/nccl_checkpoint/README.md:119-129](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L119-L129) 列了三个限制：
 
-1. `ncclWinGetUserPtr()` 返回的指针在恢复后无效 [FACT:contrib/nccl_checkpoint/README.md:125-126]
-2. 不支持 CUDA graph 捕获 [FACT:contrib/nccl_checkpoint/README.md:136-136]
-3. 不支持设备 API——`ncclDevComm` 对象和设备可见的 `ncclWindow_t` 值无法恢复 [FACT:contrib/nccl_checkpoint/README.md:136-136]
+1. `ncclWinGetUserPtr()` 返回的指针在恢复后无效 [FACT:contrib/nccl_checkpoint/README.md:125-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L125-L126)
+2. 不支持 CUDA graph 捕获 [FACT:contrib/nccl_checkpoint/README.md:136-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L136-L136)
+3. 不支持设备 API——`ncclDevComm` 对象和设备可见的 `ncclWindow_t` 值无法恢复 [FACT:contrib/nccl_checkpoint/README.md:136-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L136-L136)
 
 [INFERENCE] 第三个限制最严重。设备 API 是 NCCL 新方向（第 19 章讲的 DevComm），但 checkpoint 不支持。这意味着用设备 API 的应用（比如 nccl_ep、nccl_ubx）无法用 checkpoint 恢复。这是生态碎片化的体现——新特性跑得快，但可靠性工具跟不上。
 
 ### 生产避坑
 
-**坑一：`NCCL_CHECKPOINT_KVS_PATH` 在检查点前设置，恢复时不可改。** README 警告 [FACT:contrib/nccl_checkpoint/README.md:221-221]：这个环境变量在检查点准备阶段不用，但会被捕获进检查点，恢复时无法轻易修改。所以必须在检查点前就设好，且恢复环境里 Redis 地址要匹配。
+**坑一：`NCCL_CHECKPOINT_KVS_PATH` 在检查点前设置，恢复时不可改。** README 警告 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)：这个环境变量在检查点准备阶段不用，但会被捕获进检查点，恢复时无法轻易修改。所以必须在检查点前就设好，且恢复环境里 Redis 地址要匹配。
 
-**坑二：`NCCL_CHECKPOINT_KVS_TIMEOUT` 只覆盖 shim 的 Redis rendezvous。** README 说明 [FACT:contrib/nccl_checkpoint/README.md:221-221]：默认 300 秒。一旦 communicator 重放进入 NCCL 传输建立阶段，底层 NCCL 传输调用用它们自己的行为，可能需要传输特定的诊断。也就是说，超时只保护 Redis 阶段，传输建立阶段挂死要靠 `NCCL_DEBUG` 排查。
+**坑二：`NCCL_CHECKPOINT_KVS_TIMEOUT` 只覆盖 shim 的 Redis rendezvous。** README 说明 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)：默认 300 秒。一旦 communicator 重放进入 NCCL 传输建立阶段，底层 NCCL 传输调用用它们自己的行为，可能需要传输特定的诊断。也就是说，超时只保护 Redis 阶段，传输建立阶段挂死要靠 `NCCL_DEBUG` 排查。
 
-**坑三：NCCL 版本必须匹配。** README 要求 NCCL 2.31.0 或更新 [FACT:contrib/nccl_checkpoint/README.md:158]，且建议 `NCCL_SRC` 路径里的 NCCL 版本精确匹配运行时 NCCL 库版本 [FACT:contrib/nccl_checkpoint/README.md:156-158]。版本不匹配会导致重放时结构体布局错位。
+**坑三：NCCL 版本必须匹配。** README 要求 NCCL 2.31.0 或更新 [FACT:contrib/nccl_checkpoint/README.md:158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L158)，且建议 `NCCL_SRC` 路径里的 NCCL 版本精确匹配运行时 NCCL 库版本 [FACT:contrib/nccl_checkpoint/README.md:156-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L156-L158)。版本不匹配会导致重放时结构体布局错位。
 
 ## 设计思考：Surrounding Ecosystem & Multi-Language Bindings的三种模式
 
@@ -377,23 +377,23 @@ flowchart TD
 
 ## 本章思考与自测
 
-<details><summary>Q1: nccl_ep 的 `rdma_buffer_size = NCCL_EP_AUTO` 模式下，如果 rank 0 先调用了 `ncclEpInitHandle` 且触发了缓冲区重分配，而 rank 1 因为 layout 不同没有触发重分配，会发生什么？请结合 [FACT:contrib/nccl_ep/README.md:396-406] 的约束分析。</summary>
+<details><summary>Q1: nccl_ep 的 `rdma_buffer_size = NCCL_EP_AUTO` 模式下，如果 rank 0 先调用了 `ncclEpInitHandle` 且触发了缓冲区重分配，而 rank 1 因为 layout 不同没有触发重分配，会发生什么？请结合 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406) 的约束分析。</summary>
 
-**参考解析**：README 明确说明 [FACT:contrib/nccl_ep/README.md:396-406]：`All ranks must call ncclEpInitHandle in lockstep with the same (layout, num_topk)`。AUTO 模式下 `ncclEpInitHandle` 是条件集体调用——是否触发重分配取决于该 handle 的 `(layout, num_topk)` 是否需要比当前缓冲区更大的空间。
+**参考解析**：README 明确说明 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：`All ranks must call ncclEpInitHandle in lockstep with the same (layout, num_topk)`。AUTO 模式下 `ncclEpInitHandle` 是条件集体调用——是否触发重分配取决于该 handle 的 `(layout, num_topk)` 是否需要比当前缓冲区更大的空间。
 
-如果 rank 0 的 layout 需要更大缓冲区触发重分配，而 rank 1 的 layout 不需要，那么 rank 0 会执行「deregister window → free → ncclMemAlloc → register」这套集体操作 [FACT:contrib/nccl_ep/README.md:396-406]，而 rank 1 不会。这导致两个问题：
+如果 rank 0 的 layout 需要更大缓冲区触发重分配，而 rank 1 的 layout 不需要，那么 rank 0 会执行「deregister window → free → ncclMemAlloc → register」这套集体操作 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)，而 rank 1 不会。这导致两个问题：
 
 1. **集合操作不匹配**：NCCL 的 window deregister/register 是集合操作，需要所有 rank 参与。rank 0 单方面执行会导致 rank 1 在后续通信中引用旧的窗口句柄，而 rank 0 已经换了新窗口，通信失败或数据错乱。
 
-2. **基址不一致**：重分配后 rank 0 的 RDMA 基址变了，rank 1 没变。虽然 README 说「recorded layout offsets on every live handle are pure offsets relative to the group's rdma_buffer and resolve correctly against the new base」[FACT:contrib/nccl_ep/README.md:396-406]，但这只在所有 rank 都重分配的前提下成立。rank 1 的基址没变，rank 0 的变了，跨 rank 的地址解析会错位。
+2. **基址不一致**：重分配后 rank 0 的 RDMA 基址变了，rank 1 没变。虽然 README 说「recorded layout offsets on every live handle are pure offsets relative to the group's rdma_buffer and resolve correctly against the new base」[FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)，但这只在所有 rank 都重分配的前提下成立。rank 1 的基址没变，rank 0 的变了，跨 rank 的地址解析会错位。
 
-正确做法是：所有 rank 用相同的 `(layout, num_topk)` 同步调用 `ncclEpInitHandle`，确保重分配决策一致。如果无法保证，应该用显式 `rdma_buffer_size > 0` 模式，在 `ncclEpCreateGroup` 时一次性分配足够大的缓冲区，避免运行期重分配 [FACT:contrib/nccl_ep/README.md:396-406]。
+正确做法是：所有 rank 用相同的 `(layout, num_topk)` 同步调用 `ncclEpInitHandle`，确保重分配决策一致。如果无法保证，应该用显式 `rdma_buffer_size > 0` 模式，在 `ncclEpCreateGroup` 时一次性分配足够大的缓冲区，避免运行期重分配 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)。
 
 </details>
 
-<details><summary>Q2: nccl4rust 为什么用指针而非值传递 `ncclDevComm_t` 给设备内核？如果改成值传递，在 NCCL 升级结构体布局后会发生什么？请结合 [FACT:contrib/nccl4rust/README.md:211-219] 分析。</summary>
+<details><summary>Q2: nccl4rust 为什么用指针而非值传递 `ncclDevComm_t` 给设备内核？如果改成值传递，在 NCCL 升级结构体布局后会发生什么？请结合 [FACT:contrib/nccl4rust/README.md:211-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L211-L219) 分析。</summary>
 
-**参考解析**：README 明确说明 [FACT:contrib/nccl4rust/README.md:217-219]：`Kernels construct nccl_device::DevComm from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.`
+**参考解析**：README 明确说明 [FACT:contrib/nccl4rust/README.md:217-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L217-L219)：`Kernels construct nccl_device::DevComm from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.`
 
 `ncclDevComm_t` 是版本化的公共结构体，不同 NCCL 版本字段可能不同。如果用值传递：
 
@@ -417,7 +417,7 @@ flowchart TD
 
 但有几个边界情况：
 
-1. **直接 `dlopen` + `dlsym`**：如果 nccl4py 用 `dlopen("libnccl.so")` 然后 `dlsym` 拿函数指针，`LD_PRELOAD` 拦截不到，因为 `dlsym` 直接在指定的 `.so` 里找符号，不走全局符号表。README 提到 C 应用用 `dlsym` 解析 `ncclCheckpointPrepare` [FACT:contrib/nccl_checkpoint/README.md:109-109]，但那是解析 checkpoint 自己的符号，不是 NCCL 符号。
+1. **直接 `dlopen` + `dlsym`**：如果 nccl4py 用 `dlopen("libnccl.so")` 然后 `dlsym` 拿函数指针，`LD_PRELOAD` 拦截不到，因为 `dlsym` 直接在指定的 `.so` 里找符号，不走全局符号表。README 提到 C 应用用 `dlsym` 解析 `ncclCheckpointPrepare` [FACT:contrib/nccl_checkpoint/README.md:109-109](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L109-L109)，但那是解析 checkpoint 自己的符号，不是 NCCL 符号。
 
 2. **符号绑定时机**：如果 nccl4py 在 `LD_PRELOAD` 生效前就绑定了 NCCL 符号（比如在 `__attribute__((constructor))` 里），拦截可能失效。但正常情况 `LD_PRELOAD` 在进程启动时就生效，早于任何用户代码。
 

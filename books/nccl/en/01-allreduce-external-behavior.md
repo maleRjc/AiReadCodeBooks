@@ -13,14 +13,14 @@
 
 顶层 `Makefile` 是一个极薄的调度层，它本身不编译任何源文件，而是把工作转发给各个子目录的 Makefile。
 
-[FACT:Makefile:44-45] 定义了 `src.%` 模式规则，把 `src.build`、`src.install` 等目标转发给 `src/Makefile`：
+[FACT:Makefile:44-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/Makefile#L44-L45) 定义了 `src.%` 模式规则，把 `src.build`、`src.install` 等目标转发给 `src/Makefile`：
 
 ```
 src.%:
 	${MAKE} -C src $* BUILDDIR=${ABSBUILDDIR}
 ```
 
-[FACT:Makefile:47-48] 定义了 `examples` 目标，它依赖 `src.build`，然后进入 `docs/examples` 目录构建示例：
+[FACT:Makefile:47-48](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/Makefile#L47-L48) 定义了 `examples` 目标，它依赖 `src.build`，然后进入 `docs/examples` 目录构建示例：
 
 ```
 examples: src.build
@@ -29,19 +29,19 @@ examples: src.build
 
 注意这里的依赖关系：示例的构建依赖 `src.build` 先完成，因为示例需要链接 NCCL 库，而 `NCCL_HOME` 环境变量把构建产物目录传给示例的 Makefile。这就是"先有库，再有示例"的构建顺序约束。
 
-[FACT:Makefile:29] 列出了所有可清理的目标集合：
+[FACT:Makefile:29](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/Makefile#L29) 列出了所有可清理的目标集合：
 
 ```
 TARGETS := src pkg nccl4py ir
 ```
 
-[FACT:Makefile:30] 用 GNU Make 的替换引用语法 `${TARGETS:%=%.clean}` 把 `src pkg nccl4py ir` 展开成 `src.clean pkg.clean nccl4py.clean ir.clean`，一次性定义所有清理目标。这是 Makefile 里常见的"用数据驱动规则"技巧——新增一个模块只需往 `TARGETS` 里加一个词。
+[FACT:Makefile:30](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/Makefile#L30) 用 GNU Make 的替换引用语法 `${TARGETS:%=%.clean}` 把 `src pkg nccl4py ir` 展开成 `src.clean pkg.clean nccl4py.clean ir.clean`，一次性定义所有清理目标。这是 Makefile 里常见的"用数据驱动规则"技巧——新增一个模块只需往 `TARGETS` 里加一个词。
 
 ### CMake 入口：版本号从哪来
 
 CMake 入口比 Makefile 复杂得多，因为它要处理跨平台、CUDA 版本探测、架构选择等。我们只关注与"跑起来"直接相关的部分。
 
-[FACT:CMakeLists.txt:5-11] 展示了版本号的来源——它不是硬编码在 CMakeLists.txt 里，而是从 `makefiles/version.mk` 读取后用正则提取：
+[FACT:CMakeLists.txt:5-11](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/CMakeLists.txt#L5-L11) 展示了版本号的来源——它不是硬编码在 CMakeLists.txt 里，而是从 `makefiles/version.mk` 读取后用正则提取：
 
 ```cmake
 file(READ ${CMAKE_SOURCE_DIR}/makefiles/version.mk VERSION_CONTENT)
@@ -52,7 +52,7 @@ math(EXPR NCCL_VERSION_CODE "(${NCCL_MAJOR} * 10000) + (${NCCL_MINOR} * 100) + $
 
 [INFERENCE] 把版本号集中放在 `version.mk` 里，让 Makefile 和 CMake 两套构建系统共享同一个版本源，避免"两套构建系统版本号不一致"这个经典工程陷阱。`NCCL_VERSION_CODE` 的计算公式 `MAJOR*10000 + MINOR*100 + PATCH` 与头文件里的 `NCCL_VERSION` 宏保持一致。
 
-[FACT:CMakeLists.txt:14-20] 把这些版本号通过 `add_compile_definitions` 注入到所有 C++ 源文件：
+[FACT:CMakeLists.txt:14-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/CMakeLists.txt#L14-L20) 把这些版本号通过 `add_compile_definitions` 注入到所有 C++ 源文件：
 
 ```cmake
 add_compile_definitions(
@@ -64,7 +64,7 @@ add_compile_definitions(
 )
 ```
 
-[FACT:CMakeLists.txt:24-25] 声明了项目语言为 CUDA、CXX、C：
+[FACT:CMakeLists.txt:24-25](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/CMakeLists.txt#L24-L25) 声明了项目语言为 CUDA、CXX、C：
 
 ```cmake
 project(NCCL VERSION ${NCCL_MAJOR}.${NCCL_MINOR}.${NCCL_PATCH}
@@ -73,7 +73,7 @@ project(NCCL VERSION ${NCCL_MAJOR}.${NCCL_MINOR}.${NCCL_PATCH}
 
 ### CUDA 架构选择：为什么默认值这么复杂
 
-[FACT:CMakeLists.txt:140-171] 是一大段根据 CUDA 版本决定 `CMAKE_CUDA_ARCHITECTURES` 的逻辑。以 CUDA 12.8 及以上为例：
+[FACT:CMakeLists.txt:140-171](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/CMakeLists.txt#L140-L171) 是一大段根据 CUDA 版本决定 `CMAKE_CUDA_ARCHITECTURES` 的逻辑。以 CUDA 12.8 及以上为例：
 
 ```cmake
 elseif(${CUDA_MAJOR} EQUAL 12)
@@ -117,7 +117,7 @@ flowchart TD
 
 ### 数据结构：三个数组承载全部状态
 
-[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:88-92] 定义了示例的核心变量：
+[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:88-92](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L88-L92) 定义了示例的核心变量：
 
 ```c
 int num_gpus;                 // Number of available CUDA devices
@@ -128,7 +128,7 @@ int *devices = NULL;          // Array of device IDs to use
 
 这里体现了 NCCL 单进程多卡编程模型的核心：**每个 GPU 一个通信域、一个 stream、一个设备号**。三个数组的长度都是 `num_gpus`，下标 `i` 对应第 `i` 个 GPU。
 
-`ncclComm_t` 在头文件里被定义为不透明指针。[FACT:src/nccl.h.in:36] 给出了它的真实类型：
+`ncclComm_t` 在头文件里被定义为不透明指针。[FACT:src/nccl.h.in:36](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L36) 给出了它的真实类型：
 
 ```c
 typedef struct ncclComm* ncclComm_t;
@@ -138,7 +138,7 @@ typedef struct ncclComm* ncclComm_t;
 
 ### Step-by-Step：从设备探测到通信域创建
 
-**第一步：探测设备数。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:96-104] 调用 `cudaGetDeviceCount` 并检查是否为 0：
+**第一步：探测设备数。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:96-104](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L96-L104) 调用 `cudaGetDeviceCount` 并检查是否为 0：
 
 ```c
 CUDACHECK(cudaGetDeviceCount(&num_gpus));
@@ -152,7 +152,7 @@ if (num_gpus == 0) {
 
 这一步在干什么：向 CUDA 运行时询问"这台机器上有几张 GPU"。如果返回 0，说明没有可用设备，程序直接退出——这是最前置的守卫条件。
 
-**第二步：分配宿主内存并填充设备列表。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:114-121] 分配三个数组并检查分配是否成功：
+**第二步：分配宿主内存并填充设备列表。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:114-121](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L114-L121) 分配三个数组并检查分配是否成功：
 
 ```c
 devices = (int *)malloc(num_gpus * sizeof(int));
@@ -165,7 +165,7 @@ if (!devices || !comms || !streams) {
 }
 ```
 
-[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:126-136] 用循环填充 `devices[i] = i`，并打印每个设备的属性：
+[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:126-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L126-L136) 用循环填充 `devices[i] = i`，并打印每个设备的属性：
 
 ```c
 for (int i = 0; i < num_gpus; i++) {
@@ -177,7 +177,7 @@ for (int i = 0; i < num_gpus; i++) {
 }
 ```
 
-**第三步：为每个 GPU 创建 stream。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:140-145] 是关键：
+**第三步：为每个 GPU 创建 stream。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:140-145](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L140-L145) 是关键：
 
 ```c
 for (int i = 0; i < num_gpus; i++) {
@@ -188,13 +188,13 @@ for (int i = 0; i < num_gpus; i++) {
 
 注意 `cudaSetDevice` 必须在 `cudaStreamCreate` 之前调用。这是 CUDA 编程的基本规则：**stream 属于当前活跃设备**，如果不先切换设备，stream 会创建在错误的 GPU 上。这是新手最容易踩的坑之一。
 
-**第四步：创建通信域。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:169] 是整个示例的核心调用：
+**第四步：创建通信域。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:169](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L169) 是整个示例的核心调用：
 
 ```c
 NCCLCHECK(ncclCommInitAll(comms, num_gpus, devices));
 ```
 
-`ncclCommInitAll` 是单进程多卡场景的便捷入口。头文件 [FACT:src/nccl.h.in:301-301] 给出了它的契约：
+`ncclCommInitAll` 是单进程多卡场景的便捷入口。头文件 [FACT:src/nccl.h.in:301-301](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L301-L301) 给出了它的契约：
 
 ```c
 /* Creates a clique of communicators (single process version).
@@ -208,7 +208,7 @@ ncclResult_t  ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist);
 
 三个参数的含义：`comm` 是预分配的通信域数组，`ndev` 是设备数，`devlist` 是设备号列表（传 NULL 则用前 `ndev` 个设备）。调用返回后，`comms[i]` 就是第 `i` 个设备的通信域，其 rank 为 `i`。
 
-**第五步：验证通信域属性。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:185-189] 用三个查询 API 验证：
+**第五步：验证通信域属性。** [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:185-189](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L185-L189) 用三个查询 API 验证：
 
 ```c
 NCCLCHECK(ncclCommUserRank(comms[i], &rank));
@@ -216,7 +216,7 @@ NCCLCHECK(ncclCommCount(comms[i], &size));
 NCCLCHECK(ncclCommCuDevice(comms[i], &device));
 ```
 
-这三个 API 在头文件里的定义分别是 [FACT:src/nccl.h.in:396]、[FACT:src/nccl.h.in:400]、[FACT:src/nccl.h.in:404]。它们分别回答三个问题：我是谁（rank）、一共有几个人（size）、我在哪张卡上（device）。
+这三个 API 在头文件里的定义分别是 [FACT:src/nccl.h.in:396](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L396)、[FACT:src/nccl.h.in:400](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L400)、[FACT:src/nccl.h.in:404](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L404)。它们分别回答三个问题：我是谁（rank）、一共有几个人（size）、我在哪张卡上（device）。
 
 ### 通信域创建流程时序图
 
@@ -257,7 +257,7 @@ AllReduce 是集合通信里最常用的操作：每个参与者贡献一份数�
 
 ### 数据结构：数据缓冲区与初始化
 
-[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:59-63] 定义了核心变量：
+[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:59-63](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L59-L63) 定义了核心变量：
 
 ```c
 int num_gpus = 0;
@@ -269,7 +269,7 @@ float **recvbuff;
 
 注意 `sendbuff` 和 `recvbuff` 是 `float**`——指向指针数组的指针。每个 `sendbuff[i]` 是第 `i` 张 GPU 上的设备内存地址。
 
-[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:99] 定义了数据规模：
+[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:99](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L99) 定义了数据规模：
 
 ```c
 const size_t size = 32 * 1024 * 1024; // 32M floats for demonstration
@@ -277,7 +277,7 @@ const size_t size = 32 * 1024 * 1024; // 32M floats for demonstration
 
 32M 个 float，每个 4 字节，即 128 MB 的发送缓冲和 128 MB 的接收缓冲，每张卡各一份。
 
-[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:101-120] 是每个设备的初始化循环：
+[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:101-120](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L101-L120) 是每个设备的初始化循环：
 
 ```c
 for (int i = 0; i < num_gpus; i++) {
@@ -297,7 +297,7 @@ for (int i = 0; i < num_gpus; i++) {
 
 ### Step-by-Step：AllReduce 调用与验证
 
-**第一步：Group 包裹。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:130-136] 是核心调用：
+**第一步：Group 包裹。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:130-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L130-L136) 是核心调用：
 
 ```c
 NCCLCHECK(ncclGroupStart());
@@ -308,14 +308,14 @@ for (int i = 0; i < num_gpus; i++) {
 NCCLCHECK(ncclGroupEnd());
 ```
 
-这里有一个**极其重要的细节**：注释 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:128-129] 明确说明：
+这里有一个**极其重要的细节**：注释 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:128-129](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L128-L129) 明确说明：
 
 ```c
 // NOTE: ncclGroupStart and ncclGroupEnd are essential to avoid
 // deadlock when using ncclCommInitAll and multiple communication calls.
 ```
 
-为什么必须用 Group？头文件 [FACT:src/nccl.h.in:844-864] 给出了解释：
+为什么必须用 Group？头文件 [FACT:src/nccl.h.in:844-864](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L844-L864) 给出了解释：
 
 ```c
 /* Group semantics
@@ -331,7 +331,7 @@ NCCLCHECK(ncclGroupEnd());
 
 [INFERENCE] 核心矛盾在于：集合通信需要所有 rank 同时参与，但单线程里你只能一个一个调用 `ncclAllReduce`。如果第一个 `ncclAllReduce` 调用就阻塞等待其他 rank，而其他 rank 的调用还没发出，就会死锁。Group 机制的作用是：`ncclGroupStart` 之后的所有调用只做"登记"，不实际启动；`ncclGroupEnd` 时才把所有登记的操作一起提交，让它们能并发推进。这就像点外卖时先把所有菜加进购物车，最后一起结算，而不是一道菜一道菜地下单。
 
-**第二步：同步 stream。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142]：
+**第二步：同步 stream。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L139-L142)：
 
 ```c
 for (int i = 0; i < num_gpus; i++) {
@@ -340,9 +340,9 @@ for (int i = 0; i < num_gpus; i++) {
 }
 ```
 
-头文件 [FACT:src/nccl.h.in:854-856] 强调：`ncclGroupEnd` 只保证操作被**入队到 stream**，不保证操作**完成**。所以必须显式同步 stream，才能安全读取结果。
+头文件 [FACT:src/nccl.h.in:854-856](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L854-L856) 强调：`ncclGroupEnd` 只保证操作被**入队到 stream**，不保证操作**完成**。所以必须显式同步 stream，才能安全读取结果。
 
-**第三步：验证结果。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:152-169]：
+**第三步：验证结果。** [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:152-169](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L152-L169)：
 
 ```c
 float expected = (float)(num_gpus * (num_gpus - 1) / 2);
@@ -411,7 +411,7 @@ for (int i = 0; i < num_gpus; i++) {
 
 ### 销毁的两个阶段：Finalize 与 Destroy
 
-[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:176-183] 展示了标准的销毁流程：
+[FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:176-183](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L176-L183) 展示了标准的销毁流程：
 
 ```c
 NCCLCHECK(ncclGroupStart());
@@ -424,7 +424,7 @@ for (int i = 0; i < num_gpus; i++) {
 }
 ```
 
-头文件 [FACT:src/nccl.h.in:309-309] 解释了 `ncclCommFinalize` 的语义：
+头文件 [FACT:src/nccl.h.in:309-309](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L309-L309) 解释了 `ncclCommFinalize` 的语义：
 
 ```c
 /* Finalize a communicator. ncclCommFinalize flushes all issued communications,
@@ -435,7 +435,7 @@ for (int i = 0; i < num_gpus; i++) {
 ncclResult_t  ncclCommFinalize(ncclComm_t comm);
 ```
 
-[FACT:src/nccl.h.in:313-313] 解释了 `ncclCommDestroy`：
+[FACT:src/nccl.h.in:313-313](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L313-L313) 解释了 `ncclCommDestroy`：
 
 ```c
 /* Frees local resources associated with communicator object. */
@@ -446,7 +446,7 @@ ncclResult_t  ncclCommDestroy(ncclComm_t comm);
 
 ### 销毁顺序的完整链条
 
-[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:221-249] 展示了完整的清理顺序，注释 [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:218-219] 强调：
+[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:221-249](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L221-L249) 展示了完整的清理顺序，注释 [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:218-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L218-L219) 强调：
 
 ```c
 // IMPORTANT: Proper cleanup is critical for NCCL applications
@@ -454,10 +454,10 @@ ncclResult_t  ncclCommDestroy(ncclComm_t comm);
 ```
 
 顺序是：
-1. 同步所有 stream（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:224-227]）
-2. Finalize + Destroy 通信域（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240]）
-3. 销毁 CUDA stream（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:246-249]）
-4. 释放宿主内存（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:253-255]）
+1. 同步所有 stream（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:224-227](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L224-L227)）
+2. Finalize + Destroy 通信域（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L233-L240)）
+3. 销毁 CUDA stream（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:246-249](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L246-L249)）
+4. 释放宿主内存（[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:253-255](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L253-L255)）
 
 ### 通信域状态机
 
@@ -490,7 +490,7 @@ stateDiagram-v2
 
 ### 坑二：忘记同步 stream 就读结果
 
-[FACT:src/nccl.h.in:854-856] 明确说明 `ncclGroupEnd` 只保证入队，不保证完成。如果省略 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142] 的 stream 同步，直接读取 `recvbuff`，会读到未完成的数据。
+[FACT:src/nccl.h.in:854-856](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L854-L856) 明确说明 `ncclGroupEnd` 只保证入队，不保证完成。如果省略 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L139-L142) 的 stream 同步，直接读取 `recvbuff`，会读到未完成的数据。
 
 症状是：结果时对时错，或者读到全 0。这是因为 `cudaMemcpy` 默认是同步的，但它同步的是**当前 stream**，而 AllReduce 可能在其他 stream 上执行。排查方法：在读取结果前加 `cudaStreamSynchronize`，如果问题消失，就是这个坑。
 
@@ -502,7 +502,7 @@ stateDiagram-v2
 
 ### 坑四：设备号与 rank 混淆
 
-[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:198-200] 有一个验证：
+[FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:198-200](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L198-L200) 有一个验证：
 
 ```c
 if (device != devices[i]) {
@@ -526,9 +526,9 @@ if (device != devices[i]) {
 
 ## 本章思考与自测
 
-<details><summary>Q1: 如果把 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:130-136] 的 ncclGroupStart/ncclGroupEnd 去掉，改成直接循环调用 ncclAllReduce，在单进程多卡场景下会发生什么？为什么？</summary>
+<details><summary>Q1: 如果把 [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:130-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L130-L136) 的 ncclGroupStart/ncclGroupEnd 去掉，改成直接循环调用 ncclAllReduce，在单进程多卡场景下会发生什么？为什么？</summary>
 
-**参考解析**：会发生死锁。头文件 [FACT:src/nccl.h.in:844-864] 解释了原因：集合通信调用可能执行 inter-CPU 同步，需要所有 rank 同时参与。在单线程里，第一次循环迭代调用 `ncclAllReduce(comms[0], ...)` 时，NCCL 需要等待其他 rank 也发起 AllReduce 才能推进。但其他 rank 的调用还在循环里没执行到（因为当前线程被阻塞在第一次调用上），于是第一次调用永远等不到其他 rank，死锁。
+**参考解析**：会发生死锁。头文件 [FACT:src/nccl.h.in:844-864](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L844-L864) 解释了原因：集合通信调用可能执行 inter-CPU 同步，需要所有 rank 同时参与。在单线程里，第一次循环迭代调用 `ncclAllReduce(comms[0], ...)` 时，NCCL 需要等待其他 rank 也发起 AllReduce 才能推进。但其他 rank 的调用还在循环里没执行到（因为当前线程被阻塞在第一次调用上），于是第一次调用永远等不到其他 rank，死锁。
 
 Group 机制的作用是把"发起"和"执行"分离：`ncclGroupStart` 之后的所有调用只做登记，`ncclGroupEnd` 时才把所有登记的操作一起提交，让它们能并发推进。这从根本上避免了单线程死锁。
 
@@ -536,17 +536,17 @@ Group 机制的作用是把"发起"和"执行"分离：`ncclGroupStart` 之后�
 
 </details>
 
-<details><summary>Q2: [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142] 的 cudaStreamSynchronize 能否用 cudaDeviceSynchronize 替代？两者在语义上有什么区别？在什么场景下这个替代会出问题？</summary>
+<details><summary>Q2: [FACT:docs/examples/03_collectives/01_allreduce/c/main.cc:139-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/03_collectives/01_allreduce/c/main.cc#L139-L142) 的 cudaStreamSynchronize 能否用 cudaDeviceSynchronize 替代？两者在语义上有什么区别？在什么场景下这个替代会出问题？</summary>
 
 **参考解析**：可以用 `cudaDeviceSynchronize` 替代，但语义不同。`cudaStreamSynchronize(streams[i])` 只等待指定 stream 上的操作完成；`cudaDeviceSynchronize` 等待当前设备上**所有** stream 的操作完成。
 
 在单进程多卡场景下，`cudaDeviceSynchronize` 只同步当前设备（由 `cudaSetDevice` 决定），所以需要配合 `cudaSetDevice(i)` 循环使用。如果省略 `cudaSetDevice`，`cudaDeviceSynchronize` 只会同步默认设备（通常是 device 0），其他设备的 AllReduce 可能还没完成。
 
-头文件 [FACT:src/nccl.h.in:854-856] 强调 `ncclGroupEnd` 只保证入队不保证完成，所以同步是必须的。用 `cudaStreamSynchronize` 更精确，因为它只等待相关 stream，不会误等无关操作。用 `cudaDeviceSynchronize` 的问题是：如果设备上有其他无关的长时间运行 kernel，会被误等，降低性能。
+头文件 [FACT:src/nccl.h.in:854-856](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L854-L856) 强调 `ncclGroupEnd` 只保证入队不保证完成，所以同步是必须的。用 `cudaStreamSynchronize` 更精确，因为它只等待相关 stream，不会误等无关操作。用 `cudaDeviceSynchronize` 的问题是：如果设备上有其他无关的长时间运行 kernel，会被误等，降低性能。
 
 </details>
 
-<details><summary>Q3: [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240] 的销毁顺序是"先 Finalize 所有通信域，再 Destroy 所有通信域"。如果改成"对每个通信域先 Finalize 再 Destroy"（即在一个循环里完成两个操作），会有什么问题？</summary>
+<details><summary>Q3: [FACT:docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc#L233-L240) 的销毁顺序是"先 Finalize 所有通信域，再 Destroy 所有通信域"。如果改成"对每个通信域先 Finalize 再 Destroy"（即在一个循环里完成两个操作），会有什么问题？</summary>
 
 **参考解析**：会破坏 Group 语义。当前的写法是：
 
@@ -568,7 +568,7 @@ for (i) {
 
 第一次迭代的 `ncclCommFinalize(comms[0])` 会阻塞等待所有 rank 静默，但其他通信域的 Finalize 还没发起，导致死锁——这与 Q1 的死锁是同一类问题。
 
-另外，头文件 [FACT:src/nccl.h.in:309-309] 说明 `ncclCommFinalize` 返回时通信域可能还处于 `ncclInProgress` 状态，需要等待全局静默才能进入 `ncclSuccess`。如果紧接着就 `ncclCommDestroy`，可能在通信域还没完全静默时就释放本地资源，导致未定义行为。正确做法是 Finalize 后轮询 `ncclCommGetAsyncError` 确认状态，再 Destroy。
+另外，头文件 [FACT:src/nccl.h.in:309-309](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl.h.in#L309-L309) 说明 `ncclCommFinalize` 返回时通信域可能还处于 `ncclInProgress` 状态，需要等待全局静默才能进入 `ncclSuccess`。如果紧接着就 `ncclCommDestroy`，可能在通信域还没完全静默时就释放本地资源，导致未定义行为。正确做法是 Finalize 后轮询 `ncclCommGetAsyncError` 确认状态，再 Destroy。
 
 </details>
 

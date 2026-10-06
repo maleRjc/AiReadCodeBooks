@@ -27,7 +27,7 @@ struct ncclIbvSymbols {
 
 全局只有一个实例，配合 `std::once_flag` 保证线程安全初始化：
 
-[FACT:src/misc/ibvwrap.cc:26-29]
+[FACT:src/misc/ibvwrap.cc:26-29](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L26-L29)
 ```c
 static std::once_flag initOnceFlag;
 static ncclResult_t initResult;
@@ -42,7 +42,7 @@ struct ncclIbvSymbols ibvSymbols;
 
 当 NCCL 第一次需要 IB 传输时，会调用 `wrap_ibv_symbols()`：
 
-[FACT:src/misc/ibvwrap.cc:26-29]
+[FACT:src/misc/ibvwrap.cc:26-29](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L26-L29)
 ```c
 ncclResult_t wrap_ibv_symbols(void) {
   std::call_once(initOnceFlag, []() { initResult = buildIbvSymbols(&ibvSymbols); });
@@ -54,7 +54,7 @@ ncclResult_t wrap_ibv_symbols(void) {
 
 这个"允许 NULL"的设计贯穿整个封装层。看 `CHECK_NOT_NULL` 宏：
 
-[FACT:src/misc/ibvwrap.cc:26-29]
+[FACT:src/misc/ibvwrap.cc:26-29](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L26-L29)
 ```c
 #define CHECK_NOT_NULL(container, internal_name) \
   if (container.internal_name == NULL) { \
@@ -75,7 +75,7 @@ ncclResult_t wrap_ibv_symbols(void) {
 
 看 `IBV_PTR_CHECK_ERRNO` 这个最复杂的宏：
 
-[FACT:src/misc/ibvwrap.cc:38-45]
+[FACT:src/misc/ibvwrap.cc:38-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L38-L45)
 ```c
 #define IBV_PTR_CHECK_ERRNO(container, internal_name, call, retval, error_retval, name) \
   CHECK_NOT_NULL(container, internal_name); \
@@ -91,7 +91,7 @@ ncclResult_t wrap_ibv_symbols(void) {
 
 而 `IBV_INT_CHECK` 用于返回 int 的函数：
 
-[FACT:src/misc/ibvwrap.cc:84-91]
+[FACT:src/misc/ibvwrap.cc:84-91](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L84-L91)
 ```c
 #define IBV_INT_CHECK(container, internal_name, call, error_retval, name) \
   CHECK_NOT_NULL(container, internal_name); \
@@ -123,7 +123,7 @@ ncclResult_t wrap_ibv_symbols(void) {
 
 **`ibv_gid`：全局标识符**
 
-[FACT:src/include/ibvcore.h:58-64]
+[FACT:src/include/ibvcore.h:58-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L58-L64)
 ```c
 union ibv_gid {
 	uint8_t			raw[16];
@@ -136,7 +136,7 @@ union ibv_gid {
 
 GID 是 InfiniBand 的"IP 地址"，16 字节。它既可作为 16 字节数组访问，也可作为两个 64 位整数访问。RoCE（RDMA over Converged Ethernet）场景下，GID 实际上就是 IPv6 地址——这也是为什么 `ibvGetGidStr` 用 `inet_ntop(AF_INET6, ...)` 来格式化：
 
-[FACT:src/include/ibvwrap.h:102-108]
+[FACT:src/include/ibvwrap.h:102-108](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvwrap.h#L102-L108)
 ```c
 static inline const char* ibvGetGidStr(union ibv_gid* gid, char* gidStr, size_t strLen) {
   static_assert(sizeof(union ibv_gid) == sizeof(struct in6_addr),
@@ -149,7 +149,7 @@ static inline const char* ibvGetGidStr(union ibv_gid* gid, char* gidStr, size_t 
 
 **`ibv_mr`：内存注册句柄**
 
-[FACT:src/include/ibvcore.h:402-410]
+[FACT:src/include/ibvcore.h:402-410](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L402-L410)
 ```c
 struct ibv_mr {
 	struct ibv_context     *context;
@@ -168,7 +168,7 @@ struct ibv_mr {
 
 **`ibv_send_wr`：发送工作请求**
 
-[FACT:src/include/ibvcore.h:704-738]
+[FACT:src/include/ibvcore.h:704-738](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L704-L738)
 ```c
 struct ibv_send_wr {
 	uint64_t		wr_id;
@@ -192,7 +192,7 @@ struct ibv_send_wr {
 
 `ibv_sge` 描述一段本地内存：
 
-[FACT:src/include/ibvcore.h:698-702]
+[FACT:src/include/ibvcore.h:698-702](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L698-L702)
 ```c
 struct ibv_sge {
 	uint64_t		addr;
@@ -207,7 +207,7 @@ struct ibv_sge {
 
 有些函数 NCCL 选择内联实现，而不是走符号表。比如 `ibv_post_send`：
 
-[FACT:src/include/ibvcore.h:1099-1101]
+[FACT:src/include/ibvcore.h:1099-1101](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L1099-L1101)
 ```c
 static inline int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr) {
   return qp->context->ops.post_send(qp, wr, bad_wr);
@@ -220,7 +220,7 @@ static inline int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr, struc
 
 NCCL 的封装 `wrap_ibv_post_send` 也是内联的：
 
-[FACT:src/include/ibvwrap.h:77-85]
+[FACT:src/include/ibvwrap.h:77-85](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvwrap.h#L77-L85)
 ```c
 static inline ncclResult_t wrap_ibv_post_send(struct ibv_qp* qp, struct ibv_send_wr* wr, struct ibv_send_wr** bad_wr) {
   int ret = qp->context->ops.post_send(
@@ -235,7 +235,7 @@ static inline ncclResult_t wrap_ibv_post_send(struct ibv_qp* qp, struct ibv_send
 
 注意 `IBV_SUCCESS` 定义为 0：
 
-[FACT:src/include/ibvwrap.h:23-25]
+[FACT:src/include/ibvwrap.h:23-25](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvwrap.h#L23-L25)
 ```c
 typedef enum ibv_return_enum {
   IBV_SUCCESS = 0,
@@ -246,14 +246,14 @@ typedef enum ibv_return_enum {
 
 `ibvcore.h` 里有一段精妙的 ABI 版本探测代码：
 
-[FACT:src/include/ibvcore.h:81]
+[FACT:src/include/ibvcore.h:81](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L81)
 ```c
 static void *__VERBS_ABI_IS_EXTENDED = ((uint8_t *)NULL) - 1;
 ```
 
 这是一个"魔法指针"——值为 `(uint8_t*)0 - 1`，即 `0xFFFFFFFFFFFFFFFF`。它被用作 `ibv_context.abi_compat` 字段的标记值：
 
-[FACT:src/include/ibvcore.h:1072-1081]
+[FACT:src/include/ibvcore.h:1072-1081](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L1072-L1081)
 ```c
 static inline struct verbs_context *verbs_get_ctx(struct ibv_context *ctx)
 {
@@ -267,7 +267,7 @@ static inline struct verbs_context *verbs_get_ctx(struct ibv_context *ctx)
 
 如果 `abi_compat` 等于这个魔法值，说明底层库支持扩展 ABI，此时可以通过 `container_of` 技巧从 `ibv_context` 反推出外层的 `verbs_context`。`verbs_context` 的最后一个字段就是 `ibv_context`：
 
-[FACT:src/include/ibvcore.h:1068-1069]
+[FACT:src/include/ibvcore.h:1068-1069](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L1068-L1069)
 ```c
 	size_t   sz;			/* Must be immediately before struct ibv_context */
 	struct ibv_context context;	/* Must be last field in the struct */
@@ -277,7 +277,7 @@ static inline struct verbs_context *verbs_get_ctx(struct ibv_context *ctx)
 
 `verbs_get_ctx_op` 宏进一步封装了这个检查：
 
-[FACT:src/include/ibvcore.h:1083-1086]
+[FACT:src/include/ibvcore.h:1083-1086](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L1083-L1086)
 ```c
 #define verbs_get_ctx_op(ctx, op) ({ \
 	struct verbs_context *__vctx = verbs_get_ctx(ctx); \
@@ -287,7 +287,7 @@ static inline struct verbs_context *verbs_get_ctx(struct ibv_context *ctx)
 
 它检查三件事：是否是扩展 ABI、结构体是否足够大包含该字段、该字段是否非空。只有全部满足才返回有效指针。这就是 `ibv_query_port_ex` 能安全调用的基础：
 
-[FACT:src/include/ibvcore.h:1121-1132]
+[FACT:src/include/ibvcore.h:1121-1132](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L1121-L1132)
 ```c
 static inline int ibv_query_port_ex(struct ibv_context *context,
 				    uint8_t port_num,
@@ -303,7 +303,7 @@ static inline int ibv_query_port_ex(struct ibv_context *context,
 
 如果底层库不支持扩展 `query_port`，返回 -1，调用方 `wrap_ibv_query_port` 会回退到老 API：
 
-[FACT:src/misc/ibvwrap.cc:156-171]
+[FACT:src/misc/ibvwrap.cc:156-171](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L156-L171)
 ```c
 ncclResult_t wrap_ibv_query_port(struct ibv_context* context, uint8_t port_num, struct ibv_port_attr* port_attr) {
 #ifndef NCCL_BUILD_RDMA_CORE
@@ -334,7 +334,7 @@ Queue Pair（QP）是 RDMA 通信的基本单位，它包含发送队列（SQ）
 
 ### 状态枚举与转换
 
-[FACT:src/include/ibvcore.h:636-645]
+[FACT:src/include/ibvcore.h:636-645](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L636-L645)
 ```c
 enum ibv_qp_state {
 	IBV_QPS_RESET,
@@ -350,7 +350,7 @@ enum ibv_qp_state {
 
 这是标准的 RDMA QP 状态机。NCCL 的 `ibvQpStateName` 把枚举翻译成可读字符串用于日志：
 
-[FACT:src/misc/ibvwrap.cc:263-293]
+[FACT:src/misc/ibvwrap.cc:263-293](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L263-L293)
 ```c
 static void ibvQpStateName(enum ibv_qp_state state, char* msg, const size_t len) {
   switch (state) {
@@ -386,7 +386,7 @@ stateDiagram-v2
 
 `wrap_ibv_modify_qp` 是本章最复杂的函数，它实现了一套完整的重试机制：
 
-[FACT:src/misc/ibvwrap.cc:360-385]
+[FACT:src/misc/ibvwrap.cc:360-385](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L360-L385)
 ```c
 ncclResult_t wrap_ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int attr_mask) {
   char qpMsg[1024];
@@ -424,7 +424,7 @@ ncclResult_t wrap_ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int
 
 **第三步：判断是否重试**。`IBV_MQP_RETRY_ERRNO_ALL(ret)` 决定是否继续：
 
-[FACT:src/misc/ibvwrap.cc:107-109]
+[FACT:src/misc/ibvwrap.cc:107-109](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L107-L109)
 ```c
 #define IBV_ERR_EQ(e, code) (e == code || e == (-code))
 #define IBV_MQP_RETRY_ERRNO(e) (IBV_ERR_EQ(e, ETIMEDOUT))
@@ -435,7 +435,7 @@ ncclResult_t wrap_ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int
 
 **第四步：失败时打印诊断信息**。`ibvModifyQpLog` 收集设备名、端口号、当前状态、目标状态、本地/远端 GID：
 
-[FACT:src/misc/ibvwrap.cc:297-339]
+[FACT:src/misc/ibvwrap.cc:297-339](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L297-L339)
 ```c
 static void ibvModifyQpLog(struct ibv_qp* qp, enum ibv_qp_state qpState, struct ibv_qp_attr* userAttr, int userFlag,
                            char* msg, size_t msgLen) {
@@ -452,7 +452,7 @@ static void ibvModifyQpLog(struct ibv_qp* qp, enum ibv_qp_state qpState, struct 
 
 注意 `QP_ATTR` 宏的巧妙设计：
 
-[FACT:src/misc/ibvwrap.cc:295]
+[FACT:src/misc/ibvwrap.cc:295](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L295)
 ```c
 #define QP_ATTR(attr, userAttr, userFlag, mask) ((userFlag & mask) ? (userAttr) : (attr))
 ```
@@ -461,7 +461,7 @@ static void ibvModifyQpLog(struct ibv_qp* qp, enum ibv_qp_state qpState, struct 
 
 **第五步：失败时给出提示**。`printIbModifyQpHint` 针对常见错误码给出排查建议：
 
-[FACT:src/misc/ibvwrap.cc:341-358]
+[FACT:src/misc/ibvwrap.cc:341-358](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L341-L358)
 ```c
 static void printIbModifyQpHint(int status) {
   switch (status) {
@@ -499,7 +499,7 @@ NCCL 封装了三种内存注册函数，对应不同的使用场景：
 
 **路径一：普通注册**
 
-[FACT:src/misc/ibvwrap.cc:198-201]
+[FACT:src/misc/ibvwrap.cc:198-201](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L198-L201)
 ```c
 ncclResult_t wrap_ibv_reg_mr(struct ibv_mr** ret, struct ibv_pd* pd, void* addr, size_t length, int access) {
   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_mr, ibv_internal_reg_mr(pd, addr, length, access), *ret, NULL,
@@ -511,7 +511,7 @@ ncclResult_t wrap_ibv_reg_mr(struct ibv_mr** ret, struct ibv_pd* pd, void* addr,
 
 **路径二：指定 IOVA 注册**
 
-[FACT:src/misc/ibvwrap.cc:211-219]
+[FACT:src/misc/ibvwrap.cc:211-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L211-L219)
 ```c
 ncclResult_t wrap_ibv_reg_mr_iova2(struct ibv_mr** ret, struct ibv_pd* pd, void* addr, size_t length, uint64_t iova,
                                    int access) {
@@ -528,7 +528,7 @@ ncclResult_t wrap_ibv_reg_mr_iova2(struct ibv_mr** ret, struct ibv_pd* pd, void*
 
 **路径三：DMA-BUF 注册（GPUDirect RDMA 的关键）**
 
-[FACT:src/misc/ibvwrap.cc:222-227]
+[FACT:src/misc/ibvwrap.cc:222-227](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L222-L227)
 ```c
 ncclResult_t wrap_ibv_reg_dmabuf_mr(struct ibv_mr** ret, struct ibv_pd* pd, uint64_t offset, size_t length,
                                     uint64_t iova, int fd, int access) {
@@ -546,7 +546,7 @@ ncclResult_t wrap_ibv_reg_dmabuf_mr(struct ibv_mr** ret, struct ibv_pd* pd, uint
 
 注意有两个"direct"版本：
 
-[FACT:src/misc/ibvwrap.cc:203-209]
+[FACT:src/misc/ibvwrap.cc:203-209](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L203-L209)
 ```c
 struct ibv_mr* wrap_direct_ibv_reg_mr(struct ibv_pd* pd, void* addr, size_t length, int access) {
   if (ibvSymbols.ibv_internal_reg_mr == NULL) {
@@ -557,7 +557,7 @@ struct ibv_mr* wrap_direct_ibv_reg_mr(struct ibv_pd* pd, void* addr, size_t leng
 }
 ```
 
-[FACT:src/misc/ibvwrap.cc:229-236]
+[FACT:src/misc/ibvwrap.cc:229-236](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L229-L236)
 ```c
 struct ibv_mr* wrap_direct_ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
                                              int access) {
@@ -575,7 +575,7 @@ struct ibv_mr* wrap_direct_ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset,
 
 ### 访问权限标志
 
-[FACT:src/include/ibvcore.h:365-372]
+[FACT:src/include/ibvcore.h:365-372](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L365-L372)
 ```c
 enum ibv_access_flags {
 	IBV_ACCESS_LOCAL_WRITE		= 1,
@@ -618,7 +618,7 @@ flowchart LR
     wqe -->|网络| remote["对端 GPU 显存<br/>(remote_addr + rkey)"]
 ```
 
-图中每个节点都对应源码中的真实类型：`ibv_mr` 来自 [FACT:src/include/ibvcore.h:402-410]，`ibv_send_wr` 来自 [FACT:src/include/ibvcore.h:704-738]，`ibv_qp` 来自 [FACT:src/include/ibvcore.h:787-802]。
+图中每个节点都对应源码中的真实类型：`ibv_mr` 来自 [FACT:src/include/ibvcore.h:402-410](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L402-L410)，`ibv_send_wr` 来自 [FACT:src/include/ibvcore.h:704-738](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L704-L738)，`ibv_qp` 来自 [FACT:src/include/ibvcore.h:787-802](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L787-L802)。
 
 ## 13.5 工作完成与错误诊断
 
@@ -630,7 +630,7 @@ RDMA 是异步的——你 `post_send` 之后不会立即知道结果。网卡�
 
 ### WC 结构体
 
-[FACT:src/include/ibvcore.h:349-363]
+[FACT:src/include/ibvcore.h:349-363](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L349-L363)
 ```c
 struct ibv_wc {
 	uint64_t		wr_id;
@@ -655,7 +655,7 @@ struct ibv_wc {
 
 `ibvWcStatusStr` 把状态枚举翻译成字符串：
 
-[FACT:src/misc/ibvwrap.cc:415-464]
+[FACT:src/misc/ibvwrap.cc:415-464](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L415-L464)
 ```c
 const char* ibvWcStatusStr(enum ibv_wc_status status) {
   switch (status) {
@@ -688,7 +688,7 @@ const char* ibvWcStatusStr(enum ibv_wc_status status) {
 
 `ibvWcOpcodeStr` 和 `ibvWrOpcodeStr` 分别翻译完成 opcode 和请求 opcode：
 
-[FACT:src/misc/ibvwrap.cc:467-488]
+[FACT:src/misc/ibvwrap.cc:467-488](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L467-L488)
 ```c
 const char* ibvWcOpcodeStr(enum ibv_wc_opcode opcode) {
   switch (opcode) {
@@ -705,7 +705,7 @@ const char* ibvWcOpcodeStr(enum ibv_wc_opcode opcode) {
 
 注意 `IBV_WC_RECV` 的值是 `1 << 7`：
 
-[FACT:src/include/ibvcore.h:329-342]
+[FACT:src/include/ibvcore.h:329-342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvcore.h#L329-L342)
 ```c
 enum ibv_wc_opcode {
 	IBV_WC_SEND,
@@ -725,7 +725,7 @@ enum ibv_wc_opcode {
 
 `wrap_ibv_poll_cq` 是内联的：
 
-[FACT:src/include/ibvwrap.h:60-69]
+[FACT:src/include/ibvwrap.h:60-69](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/ibvwrap.h#L60-L69)
 ```c
 static inline ncclResult_t wrap_ibv_poll_cq(struct ibv_cq* cq, int num_entries, struct ibv_wc* wc, int* num_done) {
   int done = cq->context->ops.poll_cq(cq, num_entries,
@@ -753,7 +753,7 @@ static inline ncclResult_t wrap_ibv_poll_cq(struct ibv_cq* cq, int num_entries, 
 
 **排查**：源码已经给出了提示：
 
-[FACT:src/misc/ibvwrap.cc:343-347]
+[FACT:src/misc/ibvwrap.cc:343-347](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L343-L347)
 ```c
   case ETIMEDOUT:
     INFO(NCCL_NET, "HINT: In many cases this error indicates that the NICs are not cross-rail connected.");
@@ -773,7 +773,7 @@ static inline ncclResult_t wrap_ibv_poll_cq(struct ibv_cq* cq, int num_entries, 
 
 **排查**：
 
-[FACT:src/misc/ibvwrap.cc:341-358]
+[FACT:src/misc/ibvwrap.cc:341-358](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L341-L358)
 ```c
   case EINVAL:
     INFO(NCCL_NET, "HINT: In many cases this error indicates an incorrect GID index is forced by "
@@ -791,7 +791,7 @@ static inline ncclResult_t wrap_ibv_poll_cq(struct ibv_cq* cq, int num_entries, 
 
 **根因**：网卡驱动或内核不支持 DMA-BUF，`wrap_direct_ibv_reg_dmabuf_mr` 返回 NULL 并设置 `errno = EOPNOTSUPP`：
 
-[FACT:src/misc/ibvwrap.cc:229-236]
+[FACT:src/misc/ibvwrap.cc:229-236](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L229-L236)
 ```c
 struct ibv_mr* wrap_direct_ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
                                              int access) {
@@ -813,7 +813,7 @@ struct ibv_mr* wrap_direct_ibv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset,
 
 `wrap_ibv_dereg_mr` 是注销入口：
 
-[FACT:src/misc/ibvwrap.cc:238-241]
+[FACT:src/misc/ibvwrap.cc:238-241](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L238-L241)
 ```c
 ncclResult_t wrap_ibv_dereg_mr(
   struct ibv_mr* mr) {
@@ -855,7 +855,7 @@ ncclResult_t wrap_ibv_dereg_mr(
 
 <details><summary>Q1: 如果把 `wrap_ibv_symbols` 里的 `std::call_once` 换成普通的 `if (initResult == ncclSuccess) return initResult;` 双检锁，在什么并发场景下会出问题？</summary>
 
-**参考解析**：看 [FACT:src/misc/ibvwrap.cc:26-29]：
+**参考解析**：看 [FACT:src/misc/ibvwrap.cc:26-29](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/ibvwrap.cc#L26-L29)：
 
 ```c
 ncclResult_t wrap_ibv_symbols(void) {

@@ -16,7 +16,7 @@
 
 **身份标识与生命周期哨兵**
 
-[FACT:src/include/comm.h:576-580] 定义了 `startMagic`，[FACT:src/include/comm.h:879-881] 定义了 `endMagic`。这两个字段不是安全密钥，而是内存越界检测哨兵。在 [FACT:src/include/comm.h:883-885] 处有两个 `static_assert`：
+[FACT:src/include/comm.h:576-580](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L576-L580) 定义了 `startMagic`，[FACT:src/include/comm.h:879-881](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L879-L881) 定义了 `endMagic`。这两个字段不是安全密钥，而是内存越界检测哨兵。在 [FACT:src/include/comm.h:883-885](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L883-L885) 处有两个 `static_assert`：
 
 ```c
 static_assert(offsetof(struct ncclComm, startMagic) == 0, "startMagic must be the first field of ncclComm");
@@ -28,27 +28,27 @@ static_assert(offsetof(struct ncclComm, endMagic) == sizeof(struct ncclComm) - s
 
 **Rank 与拓扑信息**
 
-[FACT:src/include/comm.h:628-629] 定义了 `rank` 和 `nRanks`——我在通信域中的编号和总参与者数。[FACT:src/include/comm.h:644-652] 定义了节点相关字段：`node`（我所在节点编号）、`nNodes`（总节点数）、`localRank`（节点内编号）、`localRanks`（节点内 GPU 数），以及三张映射表 `rankToNode`、`rankToLocalRank`、`localRankToRank`。
+[FACT:src/include/comm.h:628-629](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L628-L629) 定义了 `rank` 和 `nRanks`——我在通信域中的编号和总参与者数。[FACT:src/include/comm.h:644-652](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L644-L652) 定义了节点相关字段：`node`（我所在节点编号）、`nNodes`（总节点数）、`localRank`（节点内编号）、`localRanks`（节点内 GPU 数），以及三张映射表 `rankToNode`、`rankToLocalRank`、`localRankToRank`。
 
 [INFERENCE] 这三张映射表是拓扑感知算法的基础。比如 Ring 算法需要知道「我的下一个 rank 是否在同一节点内」来决定走 NVLink 还是网络。如果没有这些映射表，每次算法选择都要重新查询拓扑图，开销巨大。
 
 **通道与缓冲区**
 
-[FACT:src/include/comm.h:593-593] 定义了 `channels[MAXCHANNELS]`——这是通信域内所有通道的数组。[FACT:src/include/comm.h:674-676] 定义了通道数量：`nChannels`（连接通道数）、`collChannels`（集合通信入队通道数）、`nvlsChannels`（NVLS 通道数）。
+[FACT:src/include/comm.h:593-593](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L593-L593) 定义了 `channels[MAXCHANNELS]`——这是通信域内所有通道的数组。[FACT:src/include/comm.h:674-676](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L674-L676) 定义了通道数量：`nChannels`（连接通道数）、`collChannels`（集合通信入队通道数）、`nvlsChannels`（NVLS 通道数）。
 
-[FACT:src/include/comm.h:691-693] 定义了缓冲区大小：`buffSizes[NCCL_NUM_PROTOCOLS]`（每种协议的缓冲区大小）、`p2pChunkSize`（P2P 块大小）、`nvlsChunkSize`（NVLS 块大小）。
+[FACT:src/include/comm.h:691-693](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L691-L693) 定义了缓冲区大小：`buffSizes[NCCL_NUM_PROTOCOLS]`（每种协议的缓冲区大小）、`p2pChunkSize`（P2P 块大小）、`nvlsChunkSize`（NVLS 块大小）。
 
 [INFERENCE] `buffSizes` 数组的索引就是协议枚举值（LL/LL128/Simple），这意味着每种协议有独立的缓冲区大小配置。LL 协议需要小缓冲区以降低延迟，Simple 协议需要大缓冲区以提高带宽——这个数组让两种需求共存。
 
 **工作队列与 FIFO**
 
-[FACT:src/include/comm.h:719-728] 定义了工作 FIFO 相关字段：`workFifoBytes`（FIFO 大小，2 的幂）、`workFifoBuf`（主机侧 FIFO 缓冲区）、`workFifoBufDev`（设备侧 FIFO 缓冲区）、`workFifoProduced`（已生产字节数）、`workFifoConsumed`（已消费字节数）。
+[FACT:src/include/comm.h:719-728](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L719-L728) 定义了工作 FIFO 相关字段：`workFifoBytes`（FIFO 大小，2 的幂）、`workFifoBuf`（主机侧 FIFO 缓冲区）、`workFifoBufDev`（设备侧 FIFO 缓冲区）、`workFifoProduced`（已生产字节数）、`workFifoConsumed`（已消费字节数）。
 
 [INFERENCE] 这是一个典型的生产者-消费者环形缓冲区。主机侧（生产者）把工作描述写入 FIFO，GPU kernel（消费者）读取并执行。`workFifoBytes` 必须是 2 的幂，这样可以用位掩码代替取模运算，加速索引计算。
 
 **进程内同步屏障**
 
-[FACT:src/include/comm.h:731-731] 定义了进程内多通信域同步机制：
+[FACT:src/include/comm.h:731-731](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L731-L731) 定义了进程内多通信域同步机制：
 
 ```c
 struct ncclComm* intraComm0; // leader of intra-process comms (self possible)
@@ -68,7 +68,7 @@ uint64_t intraBarrierGate; // only used if this is intraComm0
 
 **异步错误状态**
 
-[FACT:src/include/comm.h:705-705] 定义了 `asyncResult`——这个字段记录通信域的异步操作状态。上一章我们提到 `ncclCommFinalize` 返回时通信域可能还处于 `ncclInProgress` 状态，就是通过这个字段追踪的。
+[FACT:src/include/comm.h:705-705](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L705-L705) 定义了 `asyncResult`——这个字段记录通信域的异步操作状态。上一章我们提到 `ncclCommFinalize` 返回时通信域可能还处于 `ncclInProgress` 状态，就是通过这个字段追踪的。
 
 ### 场景驱动 Walkthrough：从 ncclCommInitRank 到结构体填充
 
@@ -76,7 +76,7 @@ uint64_t intraBarrierGate; // only used if this is intraComm0
 
 **第一步：分配与清零**
 
-NCCL 使用 `ncclCalloc` 分配 `ncclComm`，确保所有字段初始为 0。此时 `startMagic` 和 `endMagic` 被设置为 `NCCL_MAGIC`（[FACT:src/include/comm.h:563-569] 定义为 `0x0280028002800280`，注释说 "Nickel atomic number is 28"）。
+NCCL 使用 `ncclCalloc` 分配 `ncclComm`，确保所有字段初始为 0。此时 `startMagic` 和 `endMagic` 被设置为 `NCCL_MAGIC`（[FACT:src/include/comm.h:563-569](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L563-L569) 定义为 `0x0280028002800280`，注释说 "Nickel atomic number is 28"）。
 
 **第二步：填充身份信息**
 
@@ -84,7 +84,7 @@ NCCL 使用 `ncclCalloc` 分配 `ncclComm`，确保所有字段初始为 0。此
 
 **第三步：构建拓扑图**
 
-NCCL 调用拓扑探测模块枚举所有 GPU、网卡、PCI 交换机，构建 `topo` 字段（[FACT:src/include/comm.h:595-595]）。这个拓扑图决定了后续算法选择和路径规划。
+NCCL 调用拓扑探测模块枚举所有 GPU、网卡、PCI 交换机，构建 `topo` 字段（[FACT:src/include/comm.h:595-595](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L595-L595)）。这个拓扑图决定了后续算法选择和路径规划。
 
 **第四步：初始化通道**
 
@@ -126,7 +126,7 @@ NCCL 调用拓扑探测模块枚举所有 GPU、网卡、PCI 交换机，构建 
 
 ### 数据结构与内存布局
 
-`ncclChannel` 定义在 [FACT:src/include/comm.h:169-191]：
+`ncclChannel` 定义在 [FACT:src/include/comm.h:169-191](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L169-L191)：
 
 ```c
 struct ncclChannel {
@@ -168,7 +168,7 @@ struct ncclChannel {
 
 **通道数量计算**
 
-通道数量在 `ncclComm` 中定义（[FACT:src/include/comm.h:674-676]）：
+通道数量在 `ncclComm` 中定义（[FACT:src/include/comm.h:674-676](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L674-L676)）：
 
 ```c
 int nChannels; // connection nChannels
@@ -180,7 +180,7 @@ int nvlsChannels; // enqueue nChannels
 
 **P2P 通道调度**
 
-[FACT:src/include/channel.h:21-33] 定义了 `ncclP2pChannelBaseForRound` 函数，用于计算 P2P 通信中每个 round 使用的通道基址：
+[FACT:src/include/channel.h:21-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/channel.h#L21-L33) 定义了 `ncclP2pChannelBaseForRound` 函数，用于计算 P2P 通信中每个 round 使用的通道基址：
 
 ```c
 inline uint8_t ncclP2pChannelBaseForRound(struct ncclComm* comm, int p2pRound) {
@@ -210,7 +210,7 @@ NCCL 的 tuning 模块根据消息大小和拓扑选择算法（比如 Ring）�
 
 **第二步：通道分配**
 
-`ncclTaskColl` 结构体（[FACT:src/include/comm.h:212-273]）被创建，其中 `nChannels` 字段被设置为 4（[FACT:src/include/comm.h:254-254]）。`channelLo` 和 `channelHi` 字段（[FACT:src/include/comm.h:256-257]）标记该任务使用的通道范围。
+`ncclTaskColl` 结构体（[FACT:src/include/comm.h:212-273](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L212-L273)）被创建，其中 `nChannels` 字段被设置为 4（[FACT:src/include/comm.h:254-254](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L254-L254)）。`channelLo` 和 `channelHi` 字段（[FACT:src/include/comm.h:256-257](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L256-L257)）标记该任务使用的通道范围。
 
 **第三步：数据切分**
 
@@ -255,7 +255,7 @@ NCCL 的 tuning 模块会根据消息大小自动选择最优通道数。小消�
 
 **踩坑场景三：P2P 通道冲突**
 
-`ncclP2pChannelBaseForRound` 的 `reverseBits` 操作如果实现有误，会导致多个 round 映射到同一通道，造成串行化。[FACT:src/include/channel.h:32-32] 的 `reverseBits(base, log2Up(comm->p2pnChannels))` 确保通道分配均匀。
+`ncclP2pChannelBaseForRound` 的 `reverseBits` 操作如果实现有误，会导致多个 round 映射到同一通道，造成串行化。[FACT:src/include/channel.h:32-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/channel.h#L32-L32) 的 `reverseBits(base, log2Up(comm->p2pnChannels))` 确保通道分配均匀。
 
 ## 2.3 算法 algorithm：Tree/Ring/CollNet/NVLS/PAT 的拓扑组织
 
@@ -269,7 +269,7 @@ NCCL 的 tuning 模块会根据消息大小自动选择最优通道数。小消�
 
 **Ring 算法**
 
-Ring 算法的核心是 `ncclRing` 结构体（在 `src/include/comm.h` 中通过 `channels[i].ring` 引用）。[FACT:src/include/collectives.h:81-116] 定义了 `RingAlgorithm` 基类：
+Ring 算法的核心是 `ncclRing` 结构体（在 `src/include/comm.h` 中通过 `channels[i].ring` 引用）。[FACT:src/include/collectives.h:81-116](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L81-L116) 定义了 `RingAlgorithm` 基类：
 
 ```c
 class RingAlgorithm {
@@ -308,7 +308,7 @@ public:
 
 - `refCount`：引用计数，用于 proxy 线程和 GPU kernel 共享算法对象。
 - `nRanks`：环上节点数。
-- `nStepsPerLoop`：每轮循环的步数。AllReduce 是 `2*(nRanks-1)*chunkSteps`（[FACT:src/include/collectives.h:218-218]）。
+- `nStepsPerLoop`：每轮循环的步数。AllReduce 是 `2*(nRanks-1)*chunkSteps`（[FACT:src/include/collectives.h:218-218](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L218-L218)）。
 - `chunkSteps` / `sliceSteps`：块步数和切片步数，控制流水线粒度。
 - `sliceSize` / `loopSize` / `channelSize`：切片大小、循环大小、通道大小。
 - `sendbuff` / `recvbuff`：发送和接收缓冲区指针。
@@ -316,7 +316,7 @@ public:
 
 **引用计数的原子操作**
 
-[FACT:src/include/collectives.h:106-108] 展示了 `incRefCount` 和 `decRefCount`：
+[FACT:src/include/collectives.h:106-108](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L106-L108) 展示了 `incRefCount` 和 `decRefCount`：
 
 ```c
 int incRefCount() {
@@ -331,9 +331,9 @@ int decRefCount() {
 
 **RingARAlgorithm：AllReduce 的 Ring 实现**
 
-[FACT:src/include/collectives.h:118-234] 定义了 `RingARAlgorithm`，继承自 `RingAlgorithm`。核心方法是 `getNextSendAddr` 和 `getNextRecvAddr`。
+[FACT:src/include/collectives.h:118-234](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L118-L234) 定义了 `RingARAlgorithm`，继承自 `RingAlgorithm`。核心方法是 `getNextSendAddr` 和 `getNextRecvAddr`。
 
-[FACT:src/include/collectives.h:126-167] 的 `getNextSendAddr` 逻辑：
+[FACT:src/include/collectives.h:126-167](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L126-L167) 的 `getNextSendAddr` 逻辑：
 
 ```c
 void getNextSendAddr(int curStep, uint8_t** sendbuffOut, size_t* sizeOut, void** mhandleOut) {
@@ -362,7 +362,7 @@ void getNextSendAddr(int curStep, uint8_t** sendbuffOut, size_t* sizeOut, void**
 
 **PAT 算法**
 
-PAT（Parallel Aggregated Tree）是 NVLS 的并行化变体。[FACT:src/include/collectives.h:416-423] 定义了 `ncclPatStep`：
+PAT（Parallel Aggregated Tree）是 NVLS 的并行化变体。[FACT:src/include/collectives.h:416-423](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L416-L423) 定义了 `ncclPatStep`：
 
 ```c
 struct ncclPatStep {
@@ -375,7 +375,7 @@ struct ncclPatStep {
 };
 ```
 
-[FACT:src/include/collectives.h:425-435] 定义了 `ncclPatPeer`：
+[FACT:src/include/collectives.h:425-435](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L425-L435) 定义了 `ncclPatPeer`：
 
 ```c
 struct ncclPatPeer {
@@ -408,7 +408,7 @@ struct ncclPatPeer {
 
 - 步骤 4-6：每个 rank 将自己拥有的归约结果沿环传播，最终所有 rank 拥有完整结果。
 
-[FACT:src/include/collectives.h:218-218] 的 `nStepsPerLoop = 2 * (nRanks - 1) * chunkSteps` 正好对应这个流程：Reduce-Scatter 需要 `(nRanks-1)*chunkSteps` 步，AllGather 也需要 `(nRanks-1)*chunkSteps` 步，总共 `2*(nRanks-1)*chunkSteps` 步。
+[FACT:src/include/collectives.h:218-218](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L218-L218) 的 `nStepsPerLoop = 2 * (nRanks - 1) * chunkSteps` 正好对应这个流程：Reduce-Scatter 需要 `(nRanks-1)*chunkSteps` 步，AllGather 也需要 `(nRanks-1)*chunkSteps` 步，总共 `2*(nRanks-1)*chunkSteps` 步。
 
 ### 设计思考与生产踩坑
 
@@ -422,11 +422,11 @@ struct ncclPatPeer {
 
 **踩坑场景二：NVLS 硬件不支持**
 
-NVLS 需要特定的硬件支持（NVLink SHARP）。如果硬件不支持但代码强制使用 NVLS，会回退到 Ring 或 Tree，但可能伴随性能抖动。[FACT:src/include/comm.h:755-755] 的 `nvlsSupport` 字段标记硬件是否支持 NVLS。
+NVLS 需要特定的硬件支持（NVLink SHARP）。如果硬件不支持但代码强制使用 NVLS，会回退到 Ring 或 Tree，但可能伴随性能抖动。[FACT:src/include/comm.h:755-755](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L755-L755) 的 `nvlsSupport` 字段标记硬件是否支持 NVLS。
 
 **踩坑场景三：PAT 算法的聚合因子配置**
 
-PAT 算法的 `aggFactor` 决定了聚合多少个步骤。[FACT:src/include/collectives.h:537-560] 展示了 `aggFactor` 的计算逻辑：
+PAT 算法的 `aggFactor` 决定了聚合多少个步骤。[FACT:src/include/collectives.h:537-560](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L537-L560) 展示了 `aggFactor` 的计算逻辑：
 
 ```c
 aggFactor = 1;
@@ -459,7 +459,7 @@ while (d > 1 && aggFactor < nranks / 2) {
 
 **协议枚举**
 
-[FACT:src/include/comm.h:55-57] 定义了协议相关的线程阈值：
+[FACT:src/include/comm.h:55-57](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L55-L57) 定义了协议相关的线程阈值：
 
 ```c
 #define NCCL_LL_THREAD_THRESHOLD 8
@@ -471,11 +471,11 @@ while (d > 1 && aggFactor < nranks / 2) {
 
 **协议缓冲区**
 
-[FACT:src/include/comm.h:691-691] 定义了 `buffSizes[NCCL_NUM_PROTOCOLS]`——每种协议有独立的缓冲区大小。
+[FACT:src/include/comm.h:691-691](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L691-L691) 定义了 `buffSizes[NCCL_NUM_PROTOCOLS]`——每种协议有独立的缓冲区大小。
 
 **协议相关的 FIFO 结构**
 
-[FACT:src/include/comm.h:59-83] 定义了 `ncclSendMem` 和 `ncclRecvMem`：
+[FACT:src/include/comm.h:59-83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L59-L83) 定义了 `ncclSendMem` 和 `ncclRecvMem`：
 
 ```c
 struct ncclSendMem {
@@ -505,7 +505,7 @@ struct ncclRecvMem {
 };
 ```
 
-[INFERENCE] `ncclSendMem` 和 `ncclRecvMem` 是发送和接收的共享内存结构。`head` 和 `tail` 是环形缓冲区的读写指针，`pad1` 确保它们在不同缓存行。`connFifo` 数组存储每个步骤的连接信息（模式、偏移、大小、指针），定义在 [FACT:src/include/collectives.h:72-77]：
+[INFERENCE] `ncclSendMem` 和 `ncclRecvMem` 是发送和接收的共享内存结构。`head` 和 `tail` 是环形缓冲区的读写指针，`pad1` 确保它们在不同缓存行。`connFifo` 数组存储每个步骤的连接信息（模式、偏移、大小、指针），定义在 [FACT:src/include/collectives.h:72-77](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L72-L77)：
 
 ```c
 struct ncclConnFifo {
@@ -590,7 +590,7 @@ GPU kernel 通过 NVLink 或网络将数据发送到目标 rank。
 
 **传输层枚举**
 
-[FACT:src/include/transport.h:18-23] 定义了传输层类型：
+[FACT:src/include/transport.h:18-23](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L18-L23) 定义了传输层类型：
 
 ```c
 #define NTRANSPORTS 4
@@ -603,7 +603,7 @@ GPU kernel 通过 NVLink 或网络将数据发送到目标 rank。
 
 **传输层接口**
 
-[FACT:src/include/transport.h:129-146] 定义了 `ncclTransportComm`——传输层的通信接口：
+[FACT:src/include/transport.h:129-146](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L129-L146) 定义了 `ncclTransportComm`——传输层的通信接口：
 
 ```c
 struct ncclTransportComm {
@@ -638,7 +638,7 @@ struct ncclTransportComm {
 
 **传输层结构体**
 
-[FACT:src/include/transport.h:148-154] 定义了 `ncclTransport`：
+[FACT:src/include/transport.h:148-154](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L148-L154) 定义了 `ncclTransport`：
 
 ```c
 struct ncclTransport {
@@ -654,7 +654,7 @@ struct ncclTransport {
 
 **传输层实例**
 
-[FACT:src/include/transport.h:36-36] 声明了四个传输层实例：
+[FACT:src/include/transport.h:36-36](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L36-L36) 声明了四个传输层实例：
 
 ```c
 extern struct ncclTransport p2pTransport;
@@ -663,7 +663,7 @@ extern struct ncclTransport netTransport;
 extern struct ncclTransport collNetTransport;
 ```
 
-[FACT:src/include/transport.h:36-36] 定义了传输层数组：
+[FACT:src/include/transport.h:36-36](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L36-L36) 定义了传输层数组：
 
 ```c
 extern struct ncclTransport* ncclTransports[];
@@ -671,7 +671,7 @@ extern struct ncclTransport* ncclTransports[];
 
 **对等节点信息**
 
-[FACT:src/include/transport.h:46-74] 定义了 `ncclPeerInfo`——rank 之间交换的元数据：
+[FACT:src/include/transport.h:46-74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L46-L74) 定义了 `ncclPeerInfo`——rank 之间交换的元数据：
 
 ```c
 struct ncclPeerInfo {
@@ -721,7 +721,7 @@ struct ncclPeerInfo {
 
 **第二步：调用 canConnect**
 
-[FACT:src/include/transport.h:148-154] 的 `canConnect` 回调被调用，检查拓扑图确认两个 GPU 之间有 NVLink 或 PCIe 连接。
+[FACT:src/include/transport.h:148-154](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/transport.h#L148-L154) 的 `canConnect` 回调被调用，检查拓扑图确认两个 GPU 之间有 NVLink 或 PCIe 连接。
 
 **第三步：调用 setup**
 
@@ -813,15 +813,15 @@ flowchart TD
 
 **阶段二：任务创建**
 
-NCCL 创建 `ncclTaskColl` 结构体（[FACT:src/include/comm.h:212-273]），填充 `func`（AllReduce）、`sendbuff`、`recvbuff`、`count`、`datatype`、`opHost` 等字段。
+NCCL 创建 `ncclTaskColl` 结构体（[FACT:src/include/comm.h:212-273](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L212-L273)），填充 `func`（AllReduce）、`sendbuff`、`recvbuff`、`count`、`datatype`、`opHost` 等字段。
 
 **阶段三：算法和协议选择**
 
-Tuning 模块根据消息大小、拓扑结构、硬件能力选择算法（Ring/Tree/NVLS）和协议（LL/LL128/Simple）。选择结果写入 `ncclTaskColl` 的 `algorithm` 和 `protocol` 字段（[FACT:src/include/comm.h:227-227]）。
+Tuning 模块根据消息大小、拓扑结构、硬件能力选择算法（Ring/Tree/NVLS）和协议（LL/LL128/Simple）。选择结果写入 `ncclTaskColl` 的 `algorithm` 和 `protocol` 字段（[FACT:src/include/comm.h:227-227](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L227-L227)）。
 
 **阶段四：通道分配**
 
-根据算法和协议，确定使用的通道数和通道范围。`nChannels`、`channelLo`、`channelHi` 字段被设置（[FACT:src/include/comm.h:254-257]）。
+根据算法和协议，确定使用的通道数和通道范围。`nChannels`、`channelLo`、`channelHi` 字段被设置（[FACT:src/include/comm.h:254-257](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L254-L257)）。
 
 **阶段五：传输层选择**
 
@@ -829,7 +829,7 @@ Tuning 模块根据消息大小、拓扑结构、硬件能力选择算法（Ring
 
 **阶段六：Kernel 启动**
 
-NCCL 构建 `ncclKernelPlan`（[FACT:src/include/comm.h:357-410]），包含工作队列、清理队列、任务队列等。然后启动 GPU kernel。
+NCCL 构建 `ncclKernelPlan`（[FACT:src/include/comm.h:357-410](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L357-L410)），包含工作队列、清理队列、任务队列等。然后启动 GPU kernel。
 
 **阶段七：执行通信**
 
@@ -861,19 +861,19 @@ GPU kernel 读取工作 FIFO，执行数据传输和归约操作。Proxy 线程�
 
 ## 本章思考与自测
 
-<details><summary>Q1: 如果将 [FACT:src/include/comm.h:731-731] 中的 `intraPad1[64 - sizeof(uint64_t)]` 改为 `intraPad1[0]`（即去掉缓存行填充），在多进程场景下会出现什么性能问题？为什么？</summary>
+<details><summary>Q1: 如果将 [FACT:src/include/comm.h:731-731](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L731-L731) 中的 `intraPad1[64 - sizeof(uint64_t)]` 改为 `intraPad1[0]`（即去掉缓存行填充），在多进程场景下会出现什么性能问题？为什么？</summary>
 
 **参考解析**：
 
 去掉填充后，`intraBarrierPhase`、`intraBarrierCounter`、`intraBarrierGate` 三个字段会紧密排列在内存中，很可能共享同一个缓存行（通常 64 字节）。
 
-在多进程场景下，每个进程有自己的 `ncclComm` 副本，但 `intraComm0` 指向的 leader 通信域的 `intraBarrierCounter` 和 `intraBarrierGate` 会被所有进程读写。当进程 A 调用 `ncclCommIntraBarrierIn` 更新 `intraBarrierCounter`（[FACT:src/include/comm.h:943-959]）时，会导致进程 B 的 `intraBarrierGate` 缓存行失效。进程 B 在 `ncclCommIntraBarrierOut` 中轮询 `intraBarrierGate`（[FACT:src/include/comm.h:962-977]），每次缓存失效都要重新从内存加载，延迟从纳秒级上升到微秒级。
+在多进程场景下，每个进程有自己的 `ncclComm` 副本，但 `intraComm0` 指向的 leader 通信域的 `intraBarrierCounter` 和 `intraBarrierGate` 会被所有进程读写。当进程 A 调用 `ncclCommIntraBarrierIn` 更新 `intraBarrierCounter`（[FACT:src/include/comm.h:943-959](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L943-L959)）时，会导致进程 B 的 `intraBarrierGate` 缓存行失效。进程 B 在 `ncclCommIntraBarrierOut` 中轮询 `intraBarrierGate`（[FACT:src/include/comm.h:962-977](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/comm.h#L962-L977)），每次缓存失效都要重新从内存加载，延迟从纳秒级上升到微秒级。
 
 这就是**伪共享（False Sharing）**问题。填充 56 字节确保每个字段独占一个缓存行，消除伪共享。
 
 </details>
 
-<details><summary>Q2: 如果将 [FACT:src/include/collectives.h:106-108] 的 `incRefCount` 从 `memory_order_relaxed` 改为 `memory_order_seq_cst`，会有什么影响？为什么作者选择 `relaxed`？</summary>
+<details><summary>Q2: 如果将 [FACT:src/include/collectives.h:106-108](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L106-L108) 的 `incRefCount` 从 `memory_order_relaxed` 改为 `memory_order_seq_cst`，会有什么影响？为什么作者选择 `relaxed`？</summary>
 
 **参考解析**：
 
@@ -881,13 +881,13 @@ GPU kernel 读取工作 FIFO，执行数据传输和归约操作。Proxy 线程�
 
 `incRefCount` 只需要保证原子性，不需要同步其他内存操作。因为增加引用计数不会触发对象销毁，也不会依赖其他线程的写操作。`memory_order_relaxed` 正好满足这个需求——只保证原子性，不插入屏障。
 
-相比之下，`decRefCount`（[FACT:src/include/collectives.h:109-111]）使用 `memory_order_release`，因为减少引用计数可能触发对象销毁，需要确保之前的写操作对其他线程可见。
+相比之下，`decRefCount`（[FACT:src/include/collectives.h:109-111](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L109-L111)）使用 `memory_order_release`，因为减少引用计数可能触发对象销毁，需要确保之前的写操作对其他线程可见。
 
 这是 C++ 内存模型的经典应用：根据操作语义选择最弱的内存序，在保证正确性的前提下最大化性能。
 
 </details>
 
-<details><summary>Q3: 如果将 [FACT:src/include/channel.h:32-32] 的 `reverseBits(base, log2Up(comm->p2pnChannels))` 改为直接返回 `base % comm->p2pnChannels`，在什么场景下会导致性能下降？为什么？</summary>
+<details><summary>Q3: 如果将 [FACT:src/include/channel.h:32-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/channel.h#L32-L32) 的 `reverseBits(base, log2Up(comm->p2pnChannels))` 改为直接返回 `base % comm->p2pnChannels`，在什么场景下会导致性能下降？为什么？</summary>
 
 **参考解析**：
 

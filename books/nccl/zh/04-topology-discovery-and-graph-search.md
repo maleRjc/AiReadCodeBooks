@@ -14,7 +14,7 @@
 
 拓扑图的核心是 `ncclTopoSystem`，它按节点类型分组存储所有设备。节点类型定义在 `topoNodeTypeStr` 数组里：
 
-[FACT:src/graph/topo.cc:33-35]
+[FACT:src/graph/topo.cc:33-35](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L33-L35)
 
 ```c
 const char* topoNodeTypeStr[] = {"GPU", "PCI", "NVS", "CPU", "NIC", "NET", "GIN", "RMA", "DEV", "CXB"};
@@ -26,7 +26,7 @@ const char* topoPathTypeStr[] = {"LOC", "NVL", "NVB", "C2C", "PIX", "PXB", "P2C"
 
 每个节点由 `ncclTopoNode` 表示，创建时根据类型初始化不同的字段。以 GPU 节点为例：
 
-[FACT:src/graph/topo.cc:105-141]
+[FACT:src/graph/topo.cc:105-141](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L105-L141)
 
 ```c
 ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNode** node, int type, uint64_t id) {
@@ -51,7 +51,7 @@ ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNo
 
 节点之间的连接由 `ncclTopoLink` 表示。`ncclTopoConnectNodes` 负责建立双向连接：
 
-[FACT:src/graph/topo.cc:179-204]
+[FACT:src/graph/topo.cc:179-204](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L179-L204)
 
 ```c
 ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode* remNode, int type, float bw) {
@@ -92,7 +92,7 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
 
 第一步，解析 CPU 节点。`ncclTopoAddCpu` 从 XML 中读取 CPU 的架构、厂商、型号，并创建 CPU 节点：
 
-[FACT:src/graph/topo.cc:806-875]
+[FACT:src/graph/topo.cc:806-875](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L806-L875)
 
 ```c
 ncclResult_t ncclTopoAddCpu(struct ncclXmlNode* xmlCpu, struct ncclTopoSystem* system) {
@@ -118,7 +118,7 @@ CPU 节点是拓扑树的根。每个 CPU 下面挂着 PCI 子树和 NIC 节点�
 
 第二步，添加 NVLink 连接。注意 `ncclTopoAddGpu` 只读取 GPU 的基本属性，注释明确说 "Do not go any further, nvlinks will be added in a second pass"：
 
-[FACT:src/graph/topo.cc:590-598]
+[FACT:src/graph/topo.cc:590-598](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L590-L598)
 
 ```c
 ncclResult_t ncclTopoAddGpu(struct ncclXmlNode* xmlGpu, struct ncclTopoSystem* system, struct ncclTopoNode* gpu) {
@@ -136,7 +136,7 @@ ncclResult_t ncclTopoAddGpu(struct ncclXmlNode* xmlGpu, struct ncclTopoSystem* s
 
 第三步，处理网络设备。`ncclTopoAddNic` 遍历 NIC 下的 net/gin/rma 子节点，分别调用对应的添加函数。以 `ncclTopoAddNet` 为例：
 
-[FACT:src/graph/topo.cc:461-503]
+[FACT:src/graph/topo.cc:461-503](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L461-L503)
 
 ```c
 static ncclResult_t ncclTopoAddNet(struct ncclXmlNode* xmlNet, struct ncclXmlNode* parent,
@@ -162,7 +162,7 @@ static ncclResult_t ncclTopoAddNet(struct ncclXmlNode* xmlNet, struct ncclXmlNod
 
 第四步，收尾处理。`ncclTopoGetSystemFromXml` 在完成所有节点和链路添加后，还会做几件清理工作：
 
-[FACT:src/graph/topo.cc:1080-1088]
+[FACT:src/graph/topo.cc:1080-1088](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L1080-L1088)
 
 ```c
   NCCLCHECK(ncclTopoAddNvLinks(topNode, *topoSystem, NULL, 0));
@@ -182,7 +182,7 @@ static ncclResult_t ncclTopoAddNet(struct ncclXmlNode* xmlNet, struct ncclXmlNod
 
 **坑点一：`ncclTopoGetNode` 找不到节点时不报错。** 看这个函数：
 
-[FACT:src/graph/topo.cc:95-103]
+[FACT:src/graph/topo.cc:95-103](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L95-L103)
 
 ```c
 ncclResult_t ncclTopoGetNode(struct ncclTopoSystem* system, struct ncclTopoNode** node, int type, uint64_t id) {
@@ -202,7 +202,7 @@ ncclResult_t ncclTopoGetNode(struct ncclTopoSystem* system, struct ncclTopoNode*
 
 **坑点三：`ncclTopoRemoveNode` 的指针修正。** 删除节点时，所有指向被删节点的链路都要移除，且指向被删节点之后节点的指针要前移：
 
-[FACT:src/graph/topo.cc:143-177]
+[FACT:src/graph/topo.cc:143-177](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/topo.cc#L143-L177)
 
 ```c
 ncclResult_t ncclTopoRemoveNode(struct ncclTopoSystem* system, int type, int index) {
@@ -257,7 +257,7 @@ struct ncclTopoLinkList {
 
 路径计算由 `ncclTopoSetPaths` 完成，它是一个 BFS：
 
-[FACT:src/graph/paths.cc:52-147]
+[FACT:src/graph/paths.cc:52-147](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/paths.cc#L52-L147)
 
 ```c
 static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclTopoSystem* system) {
@@ -314,7 +314,7 @@ BFS 从 `baseNode` 出发，逐层扩展。每到达一个新节点，就计算�
 
 搜索的核心是递归函数 `ncclTopoSearchRecGpu`。它从某个 GPU 出发，尝试走到下一个 GPU，直到走完所有 GPU 形成一条路径：
 
-[FACT:src/graph/search.cc:639-756]
+[FACT:src/graph/search.cc:639-756](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/search.cc#L639-L756)
 
 ```c
 ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopoGraph* graph,
@@ -374,7 +374,7 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
 
 `ncclTopoSearchNextGpuSort` 决定尝试下一个 GPU 的顺序：
 
-[FACT:src/graph/search.cc:254-327]
+[FACT:src/graph/search.cc:254-327](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/search.cc#L254-L327)
 
 ```c
 ncclResult_t ncclTopoSearchNextGpuSort(struct ncclTopoSystem* system, struct ncclTopoGraph* graph,
@@ -411,7 +411,7 @@ ncclResult_t ncclTopoSearchNextGpuSort(struct ncclTopoSystem* system, struct ncc
 
 **为什么搜索有超时？** 看这些常量：
 
-[FACT:src/graph/search.cc:329-330]
+[FACT:src/graph/search.cc:329-330](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/search.cc#L329-L330)
 
 ```c
 #define NCCL_SEARCH_GLOBAL_TIMEOUT (1ULL << 19)
@@ -424,7 +424,7 @@ ncclResult_t ncclTopoSearchNextGpuSort(struct ncclTopoSystem* system, struct ncc
 
 **坑点一：`ncclTopoFollowPath` 的带宽扣减是全局副作用。** 看这个函数：
 
-[FACT:src/graph/search.cc:127-173]
+[FACT:src/graph/search.cc:127-173](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/search.cc#L127-L173)
 
 ```c
 static ncclResult_t ncclTopoFollowPath(struct ncclTopoSystem* system, struct ncclTopoGraph* graph, int type1,
@@ -450,7 +450,7 @@ rewind:
 
 **坑点二：`ncclTopoCompareGraphs` 的比较逻辑很微妙。** 它优先比较 `nChannels * bwIntra`，但还有一堆特殊情况：
 
-[FACT:src/graph/search.cc:446-477]
+[FACT:src/graph/search.cc:446-477](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/search.cc#L446-L477)
 
 ```c
 ncclResult_t ncclTopoCompareGraphs(struct ncclTopoSystem* system, struct ncclTopoGraph* graph,
@@ -480,7 +480,7 @@ ncclResult_t ncclTopoCompareGraphs(struct ncclTopoSystem* system, struct ncclTop
 
 Ring 的构建由 `ncclBuildRings` 完成：
 
-[FACT:src/graph/rings.cc:29-74]
+[FACT:src/graph/rings.cc:29-74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/rings.cc#L29-L74)
 
 ```c
 ncclResult_t ncclBuildRings(int nrings, int* rings, int rank, int nranks, int* prev, int* next) {
@@ -528,7 +528,7 @@ end:
 
 Tree 的构建由 `ncclGetBtree` 完成：
 
-[FACT:src/graph/trees.cc:32-67]
+[FACT:src/graph/trees.cc:32-67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/trees.cc#L32-L67)
 
 ```c
 ncclResult_t ncclGetBtree(int nranks, int rank, int* u, int* d0, int* d1, int* parentChildType) {
@@ -603,7 +603,7 @@ rank 7 -> rank 0
 
 **坑点二：`ncclGetDtree` 的奇数 rank 处理。** 对于奇数个 rank，第二棵树是"移位"而不是"镜像"：
 
-[FACT:src/graph/trees.cc:90-112]
+[FACT:src/graph/trees.cc:90-112](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/graph/trees.cc#L90-L112)
 
 ```c
 ncclResult_t ncclGetDtree(int nranks, int rank, int* s0, int* d0_0, int* d0_1, int* parentChildType0, int* s1,

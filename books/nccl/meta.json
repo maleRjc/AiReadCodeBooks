@@ -18,7 +18,7 @@
   ],
   "summary": "A 25-chapter tour-de-force of NVIDIA NCCL: from topology graph discovery and algorithm tuning to multi-channel kernel scheduling, device-side LL/LL128/Simple protocols, and InfiniBand GPUDirect RDMA.",
   "summaryZh": "全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。",
-  "webReaderUrl": "https://aireadcode.com/books/nccl.html",
+  "webReaderUrl": "https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01",
   "chapters": [
     {
       "index": 1,
@@ -220,5 +220,9 @@
       "pathEn": "en/25-retrospective-allreduce-complete-journey.md",
       "pathZh": "zh/25-retrospective-allreduce-complete-journey.md"
     }
-  ]
+  ],
+  "commit": "12df1a11afad322be5a204a2db890161cbf8131d",
+  "branch": "master",
+  "version": "v2.25.1",
+  "defaultFile": "src/nccl.h"
 }

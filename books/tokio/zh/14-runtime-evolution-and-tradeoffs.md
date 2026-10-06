@@ -22,7 +22,7 @@ work-stealing 的取舍是：每个 worker 持有本地队列，`spawn` 时优�
 
 这是本章源码材料里最值得玩味的一处。看 `tokio/src/runtime/io/mod.rs` 的模块结构：
 
-[FACT:tokio/src/runtime/io/mod.rs:5-22]
+[FACT:tokio/src/runtime/io/mod.rs:5-22](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L5-L22)
 
 ```rust
 mod driver;
@@ -54,7 +54,7 @@ static EXPOSE_IO: PtrExposeDomain = PtrExposeDomain::new();
 
 `tokio/src/loom/mod.rs` 只有 14 行，却揭示了 Tokio 并发正确性的验证策略：
 
-[FACT:tokio/src/loom/mod.rs:1-14]
+[FACT:tokio/src/loom/mod.rs:1-14](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/loom/mod.rs#L1-L14)
 
 ```rust
 //! This module abstracts over `loom` and `std::sync` depending on whether we
@@ -97,7 +97,7 @@ pub(crate) use self::mocked::*;
 
 文档开篇就点明了问题：
 
-[FACT:tokio/docs/reactor-refactor.md:16-20]
+[FACT:tokio/docs/reactor-refactor.md:16-20](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L16-L20)
 
 ```rust
 Currently, I/O types require `&mut self` for `async` functions. The reason for
@@ -114,7 +114,7 @@ direction (a direction is either read-related events or write-related events).
 
 重构的核心思路是「把 waker 从资源状态移到操作 Future 里」，从而支持每个操作注册多个 waker：
 
-[FACT:tokio/docs/reactor-refactor.md:22-25]
+[FACT:tokio/docs/reactor-refactor.md:22-25](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L22-L25)
 
 ```rust
 Moving the waker from the internal I/O resource's state to the operation's
@@ -125,7 +125,7 @@ concerns unique to the I/O driver.
 
 新的 `ScheduledIo` 结构如下：
 
-[FACT:tokio/docs/reactor-refactor.md:97-134]
+[FACT:tokio/docs/reactor-refactor.md:97-134](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L97-L134)
 
 ```rust
 #[derive(Debug)]
@@ -176,7 +176,7 @@ struct Waiter {
 
 **第三，`reader` 和 `writer` 两个 `Option<Waker>` 是给 `AsyncRead`/`AsyncWrite` 用的。** 文档解释了原因：
 
-[FACT:tokio/docs/reactor-refactor.md:210-213]
+[FACT:tokio/docs/reactor-refactor.md:210-213](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L210-L213)
 
 ```rust
 The `AsyncRead` and `AsyncWrite` traits use a "poll" based API. This means that
@@ -192,7 +192,7 @@ not possible to cancel interest in the readiness events.
 
 重构中最棘手的问题是竞态。文档给了一个具体的死锁场景：
 
-[FACT:tokio/docs/reactor-refactor.md:175-175]
+[FACT:tokio/docs/reactor-refactor.md:175-175](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L175-L175)
 
 ```rust
 If care is not taken, if between `mio_socket.read(buf)` returning and
@@ -204,7 +204,7 @@ function could deadlock. This happens because the readiness event is received,
 
 解决方案是引入 tick 机制，把 `readiness` 这个 `AtomicUsize` 拆成多个位段：
 
-[FACT:tokio/docs/reactor-refactor.md:199-199]
+[FACT:tokio/docs/reactor-refactor.md:199-199](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L199-L199)
 
 ```
 | shutdown | generation |  driver tick | readiness |
@@ -243,7 +243,7 @@ flowchart TD
 
 侵入式链表带来一个新问题：如果 `readiness()` 返回的 Future 被提前 drop，链表节点必须被摘除。文档明确警告：
 
-[FACT:tokio/docs/reactor-refactor.md:144-148]
+[FACT:tokio/docs/reactor-refactor.md:144-148](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L144-L148)
 
 ```rust
 The future returned by `readiness()` uses an intrusive linked list to store the
@@ -260,7 +260,7 @@ prevents leaking memory.
 
 **为什么不用 `Vec<Waker>` 而用侵入式链表？** 文档在讨论 `&Resource` 实现时给出了答案：
 
-[FACT:tokio/docs/reactor-refactor.md:228-233]
+[FACT:tokio/docs/reactor-refactor.md:228-233](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L228-L233)
 
 ```rust
 It is only possible to implement `AsyncRead` and `AsyncWrite` for resource types
@@ -276,7 +276,7 @@ memory leaks.
 
 **生产踩坑点**：`TcpStream::by_ref()` 返回的 `TcpStreamRef` 持有 `read_waiter` 和 `write_waiter` 两个节点：
 
-[FACT:tokio/docs/reactor-refactor.md:238-244]
+[FACT:tokio/docs/reactor-refactor.md:238-244](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L238-L244)
 
 ```rust
 struct TcpStreamRef {
@@ -303,7 +303,7 @@ struct TcpStreamRef {
 
 整个例子的关键在 `TokioContext` 这个包装类型：
 
-[FACT:examples/custom-executor.rs:51-54]
+[FACT:examples/custom-executor.rs:51-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L51-L54)
 
 ```rust
 impl ThreadPool {
@@ -319,7 +319,7 @@ impl ThreadPool {
 
 看整个例子的结构：
 
-[FACT:examples/custom-executor.rs:38-48]
+[FACT:examples/custom-executor.rs:38-48](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L38-L48)
 
 ```rust
 static EXECUTOR: Lazy = Lazy::new(|| {
@@ -380,7 +380,7 @@ sequenceDiagram
 > **〔设计推断与架构权衡〕**
 > `tokio/src/runtime/io/mod.rs` 顶部的 cfg 条件透露了 io_uring 的接入方式：
 
-[FACT:tokio/src/runtime/io/mod.rs:1-4]
+[FACT:tokio/src/runtime/io/mod.rs:1-4](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L1-L4)
 
 ```rust
 #![cfg_attr(
@@ -422,14 +422,14 @@ sequenceDiagram
 
 Q1: 在 `ScheduledIo` 的 `readiness` 位段布局中，如果把 `tick` 字段从 8 位缩减到 4 位，在什么场景下会触发错误？请结合 `clear_readiness` 的 tick 匹配逻辑分析。
 
-**参考解析**：`tick` 在每次 `mio::poll()` 时递增 [FACT:tokio/docs/reactor-refactor.md:185-185]。`clear_readiness` 只在 `event.tick == 当前 readiness.tick` 时才清除就绪位 [FACT:tokio/docs/reactor-refactor.md:199-199]。如果 tick 只有 4 位，那么每 16 次 poll 就会回绕。假设某个 `ReadyEvent` 携带 tick=15，在它被 `clear_readiness` 之前，mio 又 poll 了 1 次，tick 回绕到 0。此时 `clear_readiness` 发现 tick 不匹配（15 != 0），会错误地跳过清除——但实际上期间可能没有新事件到达，只是 tick 回绕了。这会导致就绪位被永久保留，后续 `readiness()` 立即返回但 `read` 仍然 `WouldBlock`，陷入忙循环。8 位 tick 在正常负载下足够（256 次 poll 内完成一次 read-clear 循环），但极端高并发下仍有回绕风险，这是位段布局的固有边界。
+**参考解析**：`tick` 在每次 `mio::poll()` 时递增 [FACT:tokio/docs/reactor-refactor.md:185-185](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L185-L185)。`clear_readiness` 只在 `event.tick == 当前 readiness.tick` 时才清除就绪位 [FACT:tokio/docs/reactor-refactor.md:199-199](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L199-L199)。如果 tick 只有 4 位，那么每 16 次 poll 就会回绕。假设某个 `ReadyEvent` 携带 tick=15，在它被 `clear_readiness` 之前，mio 又 poll 了 1 次，tick 回绕到 0。此时 `clear_readiness` 发现 tick 不匹配（15 != 0），会错误地跳过清除——但实际上期间可能没有新事件到达，只是 tick 回绕了。这会导致就绪位被永久保留，后续 `readiness()` 立即返回但 `read` 仍然 `WouldBlock`，陷入忙循环。8 位 tick 在正常负载下足够（256 次 poll 内完成一次 read-clear 循环），但极端高并发下仍有回绕风险，这是位段布局的固有边界。
 
 Q2: `examples/custom-executor.rs` 中，Tokio 运行时被创建但从未 `block_on`。如果此时调用 `rt.shutdown_timeout()`，会发生什么？为什么这个例子选择不调用？
 
-**参考解析**：`rt.shutdown_timeout()` 会等待所有任务完成并关闭 I/O 驱动。但在这个例子里，任务实际运行在 `futures::executor::ThreadPool` 上 [FACT:examples/custom-executor.rs:51-54]，Tokio 运行时里没有任务——它只提供 I/O 驱动。如果调用 `shutdown_timeout`，它会立即返回（因为没有任务），但 I/O 驱动的后台线程可能仍在运行。例子选择不调用，是因为 `EXECUTOR` 是 `Lazy` 静态变量，程序退出时由 Rust 的静态析构机制处理。真正的坑在于：如果 `TokioContext` 包装的 Future 还在运行，而 `Runtime` 被 drop，那么 Future 里的 I/O 操作会 panic（找不到运行时上下文）。生产环境必须确保所有 `TokioContext` Future 完成后才 drop Runtime。
+**参考解析**：`rt.shutdown_timeout()` 会等待所有任务完成并关闭 I/O 驱动。但在这个例子里，任务实际运行在 `futures::executor::ThreadPool` 上 [FACT:examples/custom-executor.rs:51-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L51-L54)，Tokio 运行时里没有任务——它只提供 I/O 驱动。如果调用 `shutdown_timeout`，它会立即返回（因为没有任务），但 I/O 驱动的后台线程可能仍在运行。例子选择不调用，是因为 `EXECUTOR` 是 `Lazy` 静态变量，程序退出时由 Rust 的静态析构机制处理。真正的坑在于：如果 `TokioContext` 包装的 Future 还在运行，而 `Runtime` 被 drop，那么 Future 里的 I/O 操作会 panic（找不到运行时上下文）。生产环境必须确保所有 `TokioContext` Future 完成后才 drop Runtime。
 
 Q3: 假设你要为 Tokio 添加一个基于 io_uring 的 I/O 后端。根据 `reactor-refactor.md` 中 `readiness()` 的语义，哪些部分可以直接复用，哪些必须重写？
 
-**参考解析**：可以直接复用的是 `Registration` 的注册接口和 `ScheduledIo` 的 `waiters` 链表结构——它们管理的是「谁在等」，与底层是 epoll 还是 io_uring 无关。必须重写的是 `readiness()` 的语义：epoll 下它返回「fd 就绪」，io_uring 下没有「就绪」概念，只有「提交的 SQE 完成」。`clear_readiness` 的 tick 机制也需要重新设计——io_uring 的完成事件自带 user_data 标识，不需要 tick 来区分新旧事件。最根本的改动是：`readiness()` 返回的 Future 在 io_uring 下应该变成「提交 SQE 并等待 CQE」，这意味着 `Waiter` 结构需要携带 SQE 参数，而不仅仅是 `interest`。这也是为什么 io_uring 支持受 `tokio_unstable` 保护 [FACT:tokio/src/runtime/io/mod.rs:1-4]——它不是替换后端，而是改变 I/O 驱动的抽象契约。
+**参考解析**：可以直接复用的是 `Registration` 的注册接口和 `ScheduledIo` 的 `waiters` 链表结构——它们管理的是「谁在等」，与底层是 epoll 还是 io_uring 无关。必须重写的是 `readiness()` 的语义：epoll 下它返回「fd 就绪」，io_uring 下没有「就绪」概念，只有「提交的 SQE 完成」。`clear_readiness` 的 tick 机制也需要重新设计——io_uring 的完成事件自带 user_data 标识，不需要 tick 来区分新旧事件。最根本的改动是：`readiness()` 返回的 Future 在 io_uring 下应该变成「提交 SQE 并等待 CQE」，这意味着 `Waiter` 结构需要携带 SQE 参数，而不仅仅是 `interest`。这也是为什么 io_uring 支持受 `tokio_unstable` 保护 [FACT:tokio/src/runtime/io/mod.rs:1-4](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L1-L4)——它不是替换后端，而是改变 I/O 驱动的抽象契约。
 
 至此，我们完成了从具体陷阱到架构权衡的爬升。回顾全书，从 Future 的惰性求值到调度器的公平性，从取消安全到关闭顺序，再到本章的 io_uring 与可插拔驱动，所有讨论都围绕一个核心：在异步边界上清晰地划分状态所有权。Tokio 的架构并非一成不变，io_uring 的零拷贝 I/O、驱动层的解耦、自定义执行器接口的开放，都在推动它向更灵活、更高效的方向演进。当你合上这本书，希望留下的不是一堆 API 用法，而是一套判断力：知道何时该信任运行时，何时该介入底层，以及如何在生产环境中避开那些会咬人的组合。异步 Rust 的生态仍在快速生长，保持对源码与官方文档的追踪，比记住任何结论都更重要。

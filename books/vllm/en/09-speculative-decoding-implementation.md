@@ -12,7 +12,7 @@ KV Connector 就像两家分店之间的快递系统。Prefill 店算好了半�
 
 ## 双角色：Scheduler 侧与 Worker 侧
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:137-142] 定义了连接器的两种角色：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:137-142](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L137-L142) 定义了连接器的两种角色：
 
 ```python
 class KVConnectorRole(enum.Enum):
@@ -24,7 +24,7 @@ class KVConnectorRole(enum.Enum):
 
 这个划分不是随意的。Scheduler 进程负责全局调度决策——哪些请求需要传输、什么时候可以释放 block；Worker 进程负责实际的数据搬运。两者通过 `KVConnectorMetadata` 通信。
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:153-158] 定义了 Scheduler 到 Worker 方向的元数据基类：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:153-158](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L153-L158) 定义了 Scheduler 到 Worker 方向的元数据基类：
 
 ```python
 class KVConnectorMetadata(ABC):  # noqa: B024
@@ -34,11 +34,11 @@ class KVConnectorMetadata(ABC):  # noqa: B024
     pass
 ```
 
-反向的 Worker 到 Scheduler 方向，[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:161-176] 定义了 `KVConnectorWorkerMetadata`，它要求实现 `aggregate` 方法——因为一个 engine step 里可能有多个 worker 各自返回元数据，需要聚合后再交给 Scheduler。
+反向的 Worker 到 Scheduler 方向，[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:161-176](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L161-L176) 定义了 `KVConnectorWorkerMetadata`，它要求实现 `aggregate` 方法——因为一个 engine step 里可能有多个 worker 各自返回元数据，需要聚合后再交给 Scheduler。
 
 ## 核心数据结构：KVConnectorTransferResults
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:87-96] 定义了传输结果的快照结构：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:87-96](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L87-L96) 定义了传输结果的快照结构：
 
 ```python
 @dataclass
@@ -54,17 +54,17 @@ class KVConnectorTransferResults:
 
 整个连接器的生命周期围绕几个关键钩子展开。Scheduler 侧：
 
-- `get_num_new_matched_tokens` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:485-518]：查询远程缓存能命中多少 token。注释特别强调"应该只考虑实际可用的最大前缀"，如果某些 token 因为连接问题或驱逐拿不到，就不能算进去。
-- `update_state_after_alloc` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:520-544]：block 分配后更新状态。注释里有个容易踩的坑——判断是否加载要看 `num_external_tokens`，而不是 `blocks` 是否为空，因为 MultiConnector 的非选中子连接器也会收到真实 block。
-- `request_finished` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:579-598]：请求完成时调用，返回 `True` 表示连接器接管 block 的异步释放责任。
+- `get_num_new_matched_tokens` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:485-518](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L485-L518)：查询远程缓存能命中多少 token。注释特别强调"应该只考虑实际可用的最大前缀"，如果某些 token 因为连接问题或驱逐拿不到，就不能算进去。
+- `update_state_after_alloc` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:520-544](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L520-L544)：block 分配后更新状态。注释里有个容易踩的坑——判断是否加载要看 `num_external_tokens`，而不是 `blocks` 是否为空，因为 MultiConnector 的非选中子连接器也会收到真实 block。
+- `request_finished` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:579-598](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L579-L598)：请求完成时调用，返回 `True` 表示连接器接管 block 的异步释放责任。
 
 Worker 侧：
 
 - `start_load_kv` / `wait_for_layer_load`：逐层加载，支持流水线。
 - `save_kv_layer` / `wait_for_save`：逐层保存。
-- `get_transfer_results` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:396-397]：返回异步传输的完成情况。
+- `get_transfer_results` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:396-397](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L396-L397)：返回异步传输的完成情况。
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:192-201] 还有一个容易被忽略但很关键的设计——`requires_kv_delivery` 属性：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:192-201](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L192-L201) 还有一个容易被忽略但很关键的设计——`requires_kv_delivery` 属性：
 
 ```python
 @property
@@ -79,7 +79,7 @@ def requires_kv_delivery(self) -> bool:
 
 ## 握手元数据
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:145-150] 定义了握手元数据的基类：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/base.py:145-150](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/base.py#L145-L150) 定义了握手元数据的基类：
 
 ```python
 class KVConnectorHandshakeMetadata(ABC):  # noqa: B024
@@ -104,7 +104,7 @@ NIXL（NVIDIA Inference Xfer Library）是 NVIDIA 提供的底层传输库，支
 
 NIXL 的核心概念是 **region**（内存区域）和 **descriptor**（描述符）。每个 KV Cache 层在 NIXL 中注册为一个或多个 region，每个 region 有基地址、块长度、块步长。
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:740-751] 列出了 region 相关的核心字段：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:740-751](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L740-L751) 列出了 region 相关的核心字段：
 
 ```python
 # Number of NIXL regions. Currently one region per cache
@@ -118,7 +118,7 @@ self.region_num_blocks: list[int] = []
 self._mixed_mem_types = False
 ```
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:897-900] 进一步说明了块步长的来源：
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:897-900](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L897-L900) 进一步说明了块步长的来源：
 
 ```python
 # Per-region block stride in bytes. Taken from the registered tensor's
@@ -131,9 +131,9 @@ self.block_stride_per_layer = list[int]()
 
 ## 握手协议：ZMQ + 兼容性哈希
 
-握手是 NIXL 连接器最复杂的部分。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:974-1128] 的 `_nixl_handshake` 方法完整展示了这个过程。
+握手是 NIXL 连接器最复杂的部分。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:974-1128](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L974-L1128) 的 `_nixl_handshake` 方法完整展示了这个过程。
 
-第一步是设置 CUDA 设备上下文。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:988-998] 的注释解释了原因：
+第一步是设置 CUDA 设备上下文。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:988-998](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L988-L998) 的注释解释了原因：
 
 ```python
 # the first time we connect to a remote agent.
@@ -148,7 +148,7 @@ if not self.use_host_buffer:
 
 这是一个非常隐蔽的坑：握手在后台线程执行，如果没有显式设置设备，UCX 找不到有效的 CUDA 上下文，会静默禁用 NVLink 通信，退化成慢速路径。
 
-第二步是通过 ZMQ 发送元数据查询。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1029-1036]：
+第二步是通过 ZMQ 发送元数据查询。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1029-1036](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L1029-L1036)：
 
 ```python
 msg = msgspec.msgpack.encode(
@@ -161,9 +161,9 @@ sock.send(msg)
 reply_parts = sock.recv_multipart()
 ```
 
-5 秒超时是防止对端死掉后无限等待。同时，代码用 RTT 估算时钟偏移 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1042-1045]，保留最小 RTT 样本——因为高 RTT 只是噪声，会扭曲中点估计。
+5 秒超时是防止对端死掉后无限等待。同时，代码用 RTT 估算时钟偏移 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1042-1045](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L1042-L1045)，保留最小 RTT 样本——因为高 RTT 只是噪声，会扭曲中点估计。
 
-第三步是兼容性校验。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1063-1080]：
+第三步是兼容性校验。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1063-1080](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L1063-L1080)：
 
 ```python
 assert self.compat_hash is not None
@@ -177,7 +177,7 @@ if (
     )
 ```
 
-兼容性哈希在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1372-1376] 计算：
+兼容性哈希在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1372-1376](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L1372-L1376) 计算：
 
 ```python
 self.compat_hash = compute_nixl_compatibility_hash(
@@ -187,11 +187,11 @@ self.compat_hash = compute_nixl_compatibility_hash(
 )
 ```
 
-注意 `transfer_mode` 也参与哈希——[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:163-166] 的注释说明：push（WRITE）连接器和 pull（READ）连接器永远不应该握手成功。
+注意 `transfer_mode` 也参与哈希——[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:163-166](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L163-L166) 的注释说明：push（WRITE）连接器和 pull（READ）连接器永远不应该握手成功。
 
 ## 异步握手调度
 
-握手是异步的，通过线程池执行。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:824-835]：
+握手是异步的，通过线程池执行。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:824-835](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L824-L835)：
 
 ```python
 self._handshake_initiation_executor = ThreadPoolExecutor(
@@ -209,13 +209,13 @@ self._handshake_lock = threading.RLock()
 
 `max_workers=1` 是因为 NIXL 不保证线程安全。`_handshake_lock` 保护 `_handshake_futures` 和 `_remote_agents` 两个字典。
 
-`_ensure_handshake` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1257-1317] 实现了幂等的握手发起：如果已经握手成功直接返回 None；如果正在握手中返回已有的 Future；否则提交新任务并注册回调。
+`_ensure_handshake` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:1257-1317](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L1257-L1317) 实现了幂等的握手发起：如果已经握手成功直接返回 None；如果正在握手中返回已有的 Future；否则提交新任务并注册回调。
 
 ## 描述符构建：从 block ID 到 NIXL descriptor
 
-握手完成后，需要为每个请求构建描述符。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:172-310] 的 `_compute_desc_ids` 是核心。
+握手完成后，需要为每个请求构建描述符。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:172-310](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L172-L310) 的 `_compute_desc_ids` 是核心。
 
-对于纯 attention 模型（无 SSM），走快速路径 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:226-262]。注释解释了 HMA 场景下的处理：
+对于纯 attention 模型（无 SSM），走快速路径 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:226-262](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L226-L262)。注释解释了 HMA 场景下的处理：
 
 ```python
 # NOTE (NickLucche) With HMA, every kv group has the same number of layers
@@ -226,7 +226,7 @@ self._handshake_lock = threading.RLock()
 # block_ids and compute the descs ids for all groups at once.
 ```
 
-对于混合 SSM 模型，描述符布局更复杂 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:285-304]：
+对于混合 SSM 模型，描述符布局更复杂 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:285-304](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L285-L304)：
 
 ```python
 elif _is_ssm_spec(spec_type):
@@ -241,7 +241,7 @@ elif _is_ssm_spec(spec_type):
 
 ## 传输拓扑与 TP 映射
 
-异构 TP 是 NIXL 连接器最复杂的场景。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2130-2178] 的 `add_remote_agent` 文档详细解释了各种情况：
+异构 TP 是 NIXL 连接器最复杂的场景。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2130-2178](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L2130-L2178) 的 `add_remote_agent` 文档详细解释了各种情况：
 
 当 D.world_size > P.world_size 时，多个 D worker 从同一个 P worker 读取不同的 KV head 分片。文档给出了具体例子：D TP=4，P TP=2，tp_ratio=2。D-Worker0 读取 P-Worker0 的前半部分 KV head，D-Worker1 读取后半部分。
 
@@ -251,7 +251,7 @@ elif _is_ssm_spec(spec_type):
 
 这是 NIXL 连接器最精妙的设计之一。Prefill 实例发送 KV 后，不能立即释放 block——因为 decode 实例可能还在读。但如果永远不释放，显存会泄漏。
 
-解决方案是租约（lease）。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:528-528]：
+解决方案是租约（lease）。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:528-528](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L528-L528)：
 
 ```python
 kv_lease_duration: int = vllm_config.kv_transfer_config.get_from_extra_config(
@@ -263,7 +263,7 @@ self._lease_extension = kv_lease_duration * 2 // 3
 
 默认租约 30 秒，每次心跳延长 20 秒（2/3）。
 
-心跳处理在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034]：
+心跳处理在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3014-L3034)：
 
 ```python
 def _handle_heartbeat(self, payload: str) -> None:
@@ -276,7 +276,7 @@ def _handle_heartbeat(self, payload: str) -> None:
 
 注意 `max(old, new_expiry)`——心跳只能延长租约，不能缩短。
 
-租约过期后的回收在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2986-3012]：
+租约过期后的回收在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2986-3012](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L2986-L3012)：
 
 ```python
 def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
@@ -293,7 +293,7 @@ def _reap_expired_send_leases(self, done_sending: set[str]) -> None:
 
 ## 传输状态机与失败恢复
 
-传输的生命周期通过 `_pop_done_transfers` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3036-3086] 管理：
+传输的生命周期通过 `_pop_done_transfers` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3036-3086](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3036-L3086) 管理：
 
 ```python
 for handle in handles:
@@ -315,7 +315,7 @@ for handle in handles:
 
 NIXL 传输有三种状态：`DONE`（完成）、`PROC`（进行中）、其他（失败）。
 
-失败处理在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3103-3127]：
+失败处理在 [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3103-3127](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3103-L3127)：
 
 ```python
 def _handle_failed_transfer(
@@ -332,7 +332,7 @@ def _handle_failed_transfer(
     return handle is None or self._try_release_xfer_handle(req_id, handle)
 ```
 
-`_try_release_xfer_handle` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101] 的注释很关键：
+`_try_release_xfer_handle` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3088-L3101) 的注释很关键：
 
 ```python
 except Exception as e:
@@ -349,7 +349,7 @@ except Exception as e:
 
 ## 失败请求的 block 处理
 
-当接收失败时，[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2876-2891] 展示了处理逻辑：
+当接收失败时，[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:2876-2891](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L2876-L2891) 展示了处理逻辑：
 
 ```python
 for req_id in done_recving:
@@ -369,11 +369,11 @@ for req_id in done_recving:
         continue
 ```
 
-失败的 block ID 被放入 `_invalid_block_ids` 队列，Scheduler 通过 `get_block_ids_with_load_errors` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3491-3504] 取出，决定是否重试。
+失败的 block ID 被放入 `_invalid_block_ids` 队列，Scheduler 通过 `get_block_ids_with_load_errors` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3491-3504](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3491-L3504) 取出，决定是否重试。
 
 ## 远程引擎的 TTL 驱逐
 
-长期运行的实例会不断遇到新的远程引擎，如果不清理，内存会无限增长。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3506-3532] 的 `_evict_stale_engines` 实现了 TTL 驱逐：
+长期运行的实例会不断遇到新的远程引擎，如果不清理，内存会无限增长。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3506-3532](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3506-L3532) 的 `_evict_stale_engines` 实现了 TTL 驱逐：
 
 ```python
 def _evict_stale_engines(self) -> None:
@@ -387,7 +387,7 @@ def _evict_stale_engines(self) -> None:
             self._cleanup_remote_engine(eid)
 ```
 
-关键约束是 `busy` 集合——有进行中传输的引擎不能被驱逐。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546] 的注释解释了原因：
+关键约束是 `busy` 集合——有进行中传输的引擎不能被驱逐。[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3534-L3546) 的注释解释了原因：
 
 ```python
 """Remote engines a transfer is still reading from.
@@ -457,11 +457,11 @@ sequenceDiagram
 
 ## 为什么失败时保留 handle？
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101] 的注释说得很清楚：状态错误不保证 DMA 停止。如果此时释放 handle，DMA 可能还在往已释放的内存写数据，导致数据损坏或崩溃。宁可暂时泄漏，也不能冒这个风险。
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3088-L3101) 的注释说得很清楚：状态错误不保证 DMA 停止。如果此时释放 handle，DMA 可能还在往已释放的内存写数据，导致数据损坏或崩溃。宁可暂时泄漏，也不能冒这个风险。
 
 ## 为什么 TTL 驱逐要检查 busy？
 
-[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546] 的注释揭示了一个隐蔽的 bug 场景：时间戳在读取发起时打上，读取期间不刷新。如果传输时间超过 TTL，引擎看起来是空闲的，但实际上还在被读取。如果此时驱逐，正在进行的传输会失败。
+[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3534-L3546) 的注释揭示了一个隐蔽的 bug 场景：时间戳在读取发起时打上，读取期间不刷新。如果传输时间超过 TTL，引擎看起来是空闲的，但实际上还在被读取。如果此时驱逐，正在进行的传输会失败。
 
 ## 生产环境踩坑点
 
@@ -473,7 +473,7 @@ sequenceDiagram
 
 4. **TP 不匹配**：异构 TP 需要 block-contiguous 布局（如 LBHNC）。如果用了非连续布局，异构 TP 会失败。
 
-5. **NIXL UAR 耗尽**：[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:631-636] 的注释警告：每个 UCX 线程通过 DevX 分配 UAR（doorbell pages），过多的 NIXL UAR 使用会耗尽 NIC UAR 空间，导致 NVSHMEM（DeepEP 内核使用）在 RDMA 初始化时失败。
+5. **NIXL UAR 耗尽**：[FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:631-636](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L631-L636) 的注释警告：每个 UCX 线程通过 DevX 分配 UAR（doorbell pages），过多的 NIXL UAR 使用会耗尽 NIC UAR 空间，导致 NVSHMEM（DeepEP 内核使用）在 RDMA 初始化时失败。
 
 ---
 
@@ -495,14 +495,14 @@ sequenceDiagram
 
 Q1: 如果把 `_try_release_xfer_handle` 中的异常处理去掉，直接调用 `release_xfer_handle`，在什么场景下会导致数据损坏？为什么？
 
-**参考解析**：`_try_release_xfer_handle` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101] 的注释明确指出："A status error does not guarantee that the backend stopped DMA." 如果去掉异常处理，当 `release_xfer_handle` 抛出异常时，调用方会认为释放成功，继续释放 block。但实际上 NIXL 后端的 DMA 可能还在进行中，正在往这块内存写数据。一旦 block 被重新分配给其他请求，DMA 写入会污染新请求的 KV Cache，导致输出乱码或 NaN。更糟的是，如果 block 被释放回显存池并被其他张量复用，DMA 可能写入非法地址导致崩溃。正确的做法是保留 handle 和 block，在下一轮 `_pop_done_transfers` 中重试释放。
+**参考解析**：`_try_release_xfer_handle` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3088-3101](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3088-L3101) 的注释明确指出："A status error does not guarantee that the backend stopped DMA." 如果去掉异常处理，当 `release_xfer_handle` 抛出异常时，调用方会认为释放成功，继续释放 block。但实际上 NIXL 后端的 DMA 可能还在进行中，正在往这块内存写数据。一旦 block 被重新分配给其他请求，DMA 写入会污染新请求的 KV Cache，导致输出乱码或 NaN。更糟的是，如果 block 被释放回显存池并被其他张量复用，DMA 可能写入非法地址导致崩溃。正确的做法是保留 handle 和 block，在下一轮 `_pop_done_transfers` 中重试释放。
 
 Q2: `_reap_expired_send_leases` 的注释说"不能因为遇到第一个未过期的请求就停止扫描"。如果改成遇到未过期就 break，在什么场景下会触发 block 泄漏？
 
-**参考解析**：`_reqs_to_send` 是一个普通 dict，不是按过期时间排序的优先队列。心跳处理 `_handle_heartbeat` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034] 会原地更新过期时间：`self._reqs_to_send[req_id] = max(old, new_expiry)`。这意味着一个先加入的请求可能因为持续收到心跳而拥有很晚的过期时间，排在它后面的请求可能已经过期。如果遇到第一个未过期就 break，后面已过期的请求永远不会被回收，它们的 block 会一直占用显存。在长时间运行、请求模式混合（有些请求被频繁心跳续期，有些请求的 decode 实例已经崩溃）的场景下，这会累积成严重的显存泄漏。
+**参考解析**：`_reqs_to_send` 是一个普通 dict，不是按过期时间排序的优先队列。心跳处理 `_handle_heartbeat` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3014-L3034) 会原地更新过期时间：`self._reqs_to_send[req_id] = max(old, new_expiry)`。这意味着一个先加入的请求可能因为持续收到心跳而拥有很晚的过期时间，排在它后面的请求可能已经过期。如果遇到第一个未过期就 break，后面已过期的请求永远不会被回收，它们的 block 会一直占用显存。在长时间运行、请求模式混合（有些请求被频繁心跳续期，有些请求的 decode 实例已经崩溃）的场景下，这会累积成严重的显存泄漏。
 
 Q3: `_evict_stale_engines` 用 `_engines_with_inflight_transfers` 保护有进行中传输的引擎。如果去掉这个保护，在什么网络故障场景下会导致传输失败？
 
-**参考解析**：`_engines_with_inflight_transfers` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546] 的注释解释了一个关键场景："The timestamp is stamped when a read is issued and not refreshed while it runs, so a transfer that outlives the TTL leaves its engine looking idle. A peer that has lost its NIC holds one indefinitely." 假设对端网卡故障，一个 NIXL 读操作挂起超过 TTL（默认 3600 秒）。`_engine_last_active` 时间戳在读取发起时打上，读取期间不刷新，所以引擎看起来已经空闲。如果此时 `_evict_stale_engines` 驱逐了这个引擎，会调用 `_cleanup_remote_engine` 释放 `dst_xfer_side_handles` 并移除 remote agent。但正在进行的 DMA 还在使用这些资源，释放后会导致传输失败甚至崩溃。`busy` 集合显式保护了这种情况，确保有进行中传输的引擎不会被驱逐。
+**参考解析**：`_engines_with_inflight_transfers` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py#L3534-L3546) 的注释解释了一个关键场景："The timestamp is stamped when a read is issued and not refreshed while it runs, so a transfer that outlives the TTL leaves its engine looking idle. A peer that has lost its NIC holds one indefinitely." 假设对端网卡故障，一个 NIXL 读操作挂起超过 TTL（默认 3600 秒）。`_engine_last_active` 时间戳在读取发起时打上，读取期间不刷新，所以引擎看起来已经空闲。如果此时 `_evict_stale_engines` 驱逐了这个引擎，会调用 `_cleanup_remote_engine` 释放 `dst_xfer_side_handles` 并移除 remote agent。但正在进行的 DMA 还在使用这些资源，释放后会导致传输失败甚至崩溃。`busy` 集合显式保护了这种情况，确保有进行中传输的引擎不会被驱逐。
 
 至此，我们已经看清 KV Connector 如何在 prefill 与 decode 实例之间建立可靠的数据通道，以及它如何用租约、心跳和失败恢复机制守住状态一致性。但跨实例传输只是 PD 分离的一半故事——当 KV Cache 抵达 decode 实例后，推理引擎仍需在单实例内部高效执行每一步前向计算。而 Python 调度与内核启动开销，正是制约单步延迟的下一道瓶颈。下一章将转向编译加速与 CUDA Graph，看 vLLM 如何用 torch.compile 和 piecewise backend 消除这些开销，并让 CUDA Graph 与动态批处理形状协调共存。

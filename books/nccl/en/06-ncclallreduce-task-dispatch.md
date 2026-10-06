@@ -15,7 +15,7 @@
 
 `ncclInfo` 是贯穿整个 enqueue 流程的核心载体。它的定义在 `src/include/info.h`：
 
-[FACT:src/include/info.h:17-44]
+[FACT:src/include/info.h:17-44](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/info.h#L17-L44)
 
 这个结构体有 20+ 个字段，我们可以按功能分成四组：
 
@@ -27,7 +27,7 @@
 | 单边操作 | `peerWinOffset`, `peerWin`, `sigIdx`, `ctx`, `flags`, `nDesc`, `signalDescs` | RMA 专用 |
 | 用户配置 | `collConfig` | 从用户 config 拷贝的私有副本 |
 
-注意 `collConfig` 的注释：**"A config copied from config passed by user so older user config can be safely accessed during synchronous host scheduling (never at launch/replay)"** [FACT:src/include/info.h:41-43]。这是一个关键设计——用户传入的 config 指针可能在 `ncclGroupEnd` 之前就被销毁，所以 NCCL 在 `ncclInfo` 里做了一份拷贝。
+注意 `collConfig` 的注释：**"A config copied from config passed by user so older user config can be safely accessed during synchronous host scheduling (never at launch/replay)"** [FACT:src/include/info.h:41-43](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/info.h#L41-L43)。这是一个关键设计——用户传入的 config 指针可能在 `ncclGroupEnd` 之前就被销毁，所以 NCCL 在 `ncclInfo` 里做了一份拷贝。
 
 ### Step-by-Step：ncclAllReduce 的调用链
 
@@ -35,7 +35,7 @@
 
 **第 1 步：用户调用 ncclAllReduce。** 入口在 `src/collectives.cc`：
 
-[FACT:src/collectives.cc:206-211]
+[FACT:src/collectives.cc:206-211](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/collectives.cc#L206-L211)
 
 这里做了三件事：
 1. `NVTX3_FUNC_WITH_PARAMS` 打 NVTX 标记（用于 Nsight 等工具可视化）
@@ -44,7 +44,7 @@
 
 **第 2 步：ncclAllReduceConfigImpl 构造 ncclInfo。** 这是关键的一步：
 
-[FACT:src/collectives.cc:192-202]
+[FACT:src/collectives.cc:192-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/collectives.cc#L192-L202)
 
 注意这里用了 C 风格的聚合初始化：
 
@@ -56,7 +56,7 @@ struct ncclInfo info = {ncclFuncAllReduce, "AllReduce",
 
 字段按 `ncclInfo` 的声明顺序一一对应。`ALLREDUCE_CHUNKSTEPS` 和 `ALLREDUCE_SLICESTEPS` 定义在 `src/include/collectives.h`：
 
-[FACT:src/include/collectives.h:19-20]
+[FACT:src/include/collectives.h:19-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L19-L20)
 
 `NCCL_STEPS` 是环形缓冲区里的步数（通常为 8 或 16），所以 AllReduce 的 chunkSteps 是 `NCCL_STEPS/2`，sliceSteps 是 `NCCL_STEPS/4`。这意味着一个 chunk 包含 2 个 slice。
 
@@ -92,13 +92,13 @@ ncclAllReduceConfig(..., &config);
 
 ### Step-by-Step：ncclEnqueueCheck 的执行流程
 
-[FACT:src/enqueue/enqueue.cc:3478-3527]
+[FACT:src/enqueue/enqueue.cc:3478-3527](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3478-L3527)
 
 我们逐步拆解：
 
 **第 1 步：CommCheck 校验通信域。** `CommCheck(info->comm, info->opName, "comm")` 检查 comm 指针是否非空、是否已初始化。如果 comm 被 revoke（比如某个 rank 出错），直接返回错误：
 
-[FACT:src/enqueue/enqueue.cc:3480-3485]
+[FACT:src/enqueue/enqueue.cc:3480-3485](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3480-L3485)
 
 **第 2 步：处理 profiler 深度。** 如果已经在 group 内部（`profilerGroupDepth > 0`），递增深度计数。这是为了正确处理隐式的 `ncclGroupStartInternal`/`ncclGroupEndInternal` 调用。
 
@@ -108,13 +108,13 @@ ncclAllReduceConfig(..., &config);
 
 **第 5 步：ArgsCheck 参数校验。** 这是最复杂的校验步骤：
 
-[FACT:src/enqueue/enqueue.cc:3497-3503]
+[FACT:src/enqueue/enqueue.cc:3497-3503](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3497-L3503)
 
 注意 `checkMode` 的处理：如果是 `ncclCheckModeDebugGlobal`，`ArgsCheck` 会把 info 入队，等 `ncclGroupEnd` 时做全局校验（比如检查所有 rank 的 count 是否一致）。
 
 **第 6 步：调用 taskAppend。** 这是核心转换步骤：
 
-[FACT:src/enqueue/enqueue.cc:3513]
+[FACT:src/enqueue/enqueue.cc:3513](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3513)
 
 **第 7 步：递增 opCount。** 每次成功入队后，`comm->opCount++`。这个计数器用于匹配 send/recv 操作，也是 profiler 的时间线依据。
 
@@ -130,7 +130,7 @@ ncclAllReduceConfig(..., &config);
 
 `ncclEnqueueCheck` 的错误处理有一个精巧的设计：
 
-[FACT:src/enqueue/enqueue.cc:3524-3526]
+[FACT:src/enqueue/enqueue.cc:3524-3526](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3524-L3526)
 
 如果 `taskAppend` 失败，且 comm 是非阻塞模式，会调用 `ncclCommSetAsyncError` 记录错误。这样后续的 API 调用会立即返回错误，而不是继续尝试。这是异步错误传播机制。
 
@@ -146,45 +146,45 @@ ncclAllReduceConfig(..., &config);
 
 ### Step-by-Step：taskAppend 的分发逻辑
 
-[FACT:src/enqueue/enqueue.cc:3337-3476]
+[FACT:src/enqueue/enqueue.cc:3337-3476](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3337-L3476)
 
 **第 1 步：判断是否启用新架构。** `ncclParamEnqueueRearchEnable()` 是一个环境变量开关（默认 0）。如果启用，走 `rawTaskAppend` 路径——这是 NCCL 正在开发的新任务模型。
 
 **第 2 步：P2P 分发。** 如果是 Send/Recv，调用 `p2pTaskAppend`：
 
-[FACT:src/enqueue/enqueue.cc:3343-3345]
+[FACT:src/enqueue/enqueue.cc:3343-3345](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3343-L3345)
 
 **第 3 步：RMA 分发。** 如果是 PutSignal/Signal/WaitSignal，调用 `rmaTaskAppend`：
 
-[FACT:src/enqueue/enqueue.cc:3346-3347]
+[FACT:src/enqueue/enqueue.cc:3346-3347](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3346-L3347)
 
 **第 4 步：空集合通信提前返回。** `if (info->count == 0) return ncclSuccess;`——count 为 0 的集合通信直接丢弃。
 
 **第 5 步：算法选择校验。** `ncclCollConfigGetAlgMask` 校验用户传入的算法选择是否合法：
 
-[FACT:src/enqueue/enqueue.cc:3357-3358]
+[FACT:src/enqueue/enqueue.cc:3357-3358](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3357-L3358)
 
 **第 6 步：FP8 类型检查。** FP8 归约需要 sm90+：
 
-[FACT:src/enqueue/enqueue.cc:3360-3366]
+[FACT:src/enqueue/enqueue.cc:3360-3366](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3360-L3366)
 
 **第 7 步：归约操作转换。** `hostToDevRedOp` 把 host 侧的 `ncclRedOp_t` 转换成设备侧的 `ncclDevRedOpFull`：
 
-[FACT:src/enqueue/enqueue.cc:3370-3371]
+[FACT:src/enqueue/enqueue.cc:3370-3371](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3370-L3371)
 
 **第 8 步：单 rank 提前返回。** 如果 `comm->nRanks == 1`，直接调用 `ncclLaunchOneRank` 执行本地归约，不需要生成任务：
 
-[FACT:src/enqueue/enqueue.cc:3373-3377]
+[FACT:src/enqueue/enqueue.cc:3373-3377](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3373-L3377)
 
 **第 9 步：多 rank 路径。** 这是最复杂的分支，包含 CE 路由、AllToAll/Gather/Scatter 降级、以及普通集合通信：
 
-[FACT:src/enqueue/enqueue.cc:3378-3470]
+[FACT:src/enqueue/enqueue.cc:3378-3470](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3378-L3470)
 
 ### 数据结构：ncclTaskColl 的字段
 
 `collTaskAppend` 是生成 `ncclTaskColl` 的地方。我们看它的核心逻辑：
 
-[FACT:src/enqueue/enqueue.cc:2757-2851]
+[FACT:src/enqueue/enqueue.cc:2757-2851](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2757-L2851)
 
 关键字段赋值：
 
@@ -202,23 +202,23 @@ ncclAllReduceConfig(..., &config);
 
 注意 `trafficBytes` 的计算：
 
-[FACT:src/enqueue/enqueue.cc:2813]
+[FACT:src/enqueue/enqueue.cc:2813](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2813)
 
 `ncclFuncTrafficPerByte` 返回每种集合通信的流量倍数：
 
-[FACT:src/enqueue/enqueue.cc:123-134]
+[FACT:src/enqueue/enqueue.cc:123-134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L123-L134)
 
 AllReduce 返回 2（因为要 reduce + broadcast），AllGather/ReduceScatter 返回 nRanks，其他返回 1。
 
 ### 设计思考：为什么 AllGather/Broadcast 要转成 int8？
 
-[FACT:src/enqueue/enqueue.cc:2808-2812]
+[FACT:src/enqueue/enqueue.cc:2808-2812](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2808-L2812)
 
 AllGather 和 Broadcast 把 count 乘以 elementSize，然后把 datatype 改成 `ncclInt8`。这是一个优化：**这两种操作不涉及归约，所以不需要关心数据类型，统一按字节处理可以简化 kernel 逻辑**。
 
 ### 生产踩坑：CTAPolicy 的解析顺序
 
-[FACT:src/enqueue/enqueue.cc:3390-3397]
+[FACT:src/enqueue/enqueue.cc:3390-3397](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3390-L3397)
 
 CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而且 `NCCL_CTA_POLICY_ZERO` 优先于 `NCCL_CTA_POLICY_EFFICIENCY`。如果用户同时设置了这两个标志，ZERO 会生效。
 
@@ -236,31 +236,31 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### Step-by-Step：ncclPrepareTasks 的分桶逻辑
 
-[FACT:src/enqueue/enqueue.cc:423-642]
+[FACT:src/enqueue/enqueue.cc:423-642](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L423-L642)
 
 **第 1 步：Broadcast 任务转换。** 如果只有一个 broadcast peer，把 broadcast 任务转成 coll 任务：
 
-[FACT:src/enqueue/enqueue.cc:430-461]
+[FACT:src/enqueue/enqueue.cc:430-461](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L430-L461)
 
 注意这里把 `bcastTask` 的字段拷贝到新的 `ncclTaskColl`，并计算 `trafficBytes`。然后从 `memPool_ncclTaskBcast` 释放原任务。
 
 **第 2 步：按 (func, op, datatype) 分桶。** 任务从 sorter 出来是按 size 降序的，然后被分到 `tasksByFnOpTy` 数组：
 
-[FACT:src/enqueue/enqueue.cc:464-487]
+[FACT:src/enqueue/enqueue.cc:464-487](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L464-L487)
 
 索引计算：`((int)task->func * ncclNumDevRedOps + (int)task->opDev.op) * ncclNumTypes + (int)task->datatype`。这是一个三维数组的线性化。
 
 **第 3 步：聚合与算法选择。** 对每个桶，聚合大小相近的任务（4 倍以内），然后调用 `ncclGetAlgoInfo`：
 
-[FACT:src/enqueue/enqueue.cc:503-547]
+[FACT:src/enqueue/enqueue.cc:503-547](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L503-L547)
 
 **第 4 步：按 (collnet, nvls) 分桶。** 根据算法类型，把任务分到 `collBins[2][2]`：
 
-[FACT:src/enqueue/enqueue.cc:517-544]
+[FACT:src/enqueue/enqueue.cc:517-544](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L517-L544)
 
 **第 5 步：拼接最终队列。** 把四个桶拼接成 `planner->collTaskQueue`：
 
-[FACT:src/enqueue/enqueue.cc:553-557]
+[FACT:src/enqueue/enqueue.cc:553-557](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L553-L557)
 
 ### 数据结构：ncclTaskCollSorter
 
@@ -270,19 +270,19 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### 并发控制：runtimeConn 与连接建立
 
-[FACT:src/enqueue/enqueue.cc:572-583]
+[FACT:src/enqueue/enqueue.cc:572-583](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L572-L583)
 
 如果 `comm->runtimeConn` 为真（运行时连接模式），且某个算法的 channel 还没初始化，就标记 `algoNeedConnect`。这会在后续触发连接建立。
 
 ### 生产踩坑：聚合的边界条件
 
-[FACT:src/enqueue/enqueue.cc:507-508]
+[FACT:src/enqueue/enqueue.cc:507-508](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L507-L508)
 
 聚合条件是 `aggEnd->trafficBytes < 4 * aggBeg->trafficBytes`，且两个任务都不设置 `aggIsolate`。如果用户设置了 per-call config（比如 `maxCTAs`），`aggIsolate` 会被设为 true，这个任务就不会被聚合。
 
 一个真实的踩坑场景：用户为某个 AllReduce 设置了 `maxCTAs=4`，期望它只用 4 个 CTA。但由于聚合逻辑，这个任务可能和相邻任务合并，导致实际使用的 CTA 数量不符合预期。解决方案是设置 `aggIsolate`——NCCL 在 `collTaskAppend` 里已经处理了这一点：
 
-[FACT:src/enqueue/enqueue.cc:2821-2822]
+[FACT:src/enqueue/enqueue.cc:2821-2822](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2821-L2822)
 
 ---
 
@@ -296,27 +296,27 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### Step-by-Step：channel 切分算法
 
-[FACT:src/enqueue/enqueue.cc:644-947]
+[FACT:src/enqueue/enqueue.cc:644-947](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L644-L947)
 
 **第 1 步：预算估算。** 先估算能放进这个 plan 的任务数量：
 
-[FACT:src/enqueue/enqueue.cc:648-689]
+[FACT:src/enqueue/enqueue.cc:648-689](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L648-L689)
 
 `ncclTestBudget` 检查工作字节数是否超出预算：
 
-[FACT:src/enqueue/enqueue.cc:343-349]
+[FACT:src/enqueue/enqueue.cc:343-349](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L343-L349)
 
 **第 2 步：计算每个 channel 的流量。** 根据 kind（collnet/nvls）计算 `trafficPerChannel`：
 
-[FACT:src/enqueue/enqueue.cc:701-707]
+[FACT:src/enqueue/enqueue.cc:701-707](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L701-L707)
 
 **第 3 步：Collnet 路径。** 如果是 collnet 算法，channel 分配比较简单：
 
-[FACT:src/enqueue/enqueue.cc:709-739]
+[FACT:src/enqueue/enqueue.cc:709-739](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L709-L739)
 
 **第 4 步：普通路径的 cell 切分。** 这是最复杂的部分。NCCL 把数据切成 "cell"，每个 cell 是一个最小传输单元：
 
-[FACT:src/enqueue/enqueue.cc:740-845]
+[FACT:src/enqueue/enqueue.cc:740-845](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L740-L845)
 
 关键变量：
 - `cellSize`：每个 cell 的字节数，至少 `MinTrafficPerChannel`（32KB）
@@ -326,11 +326,11 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 **第 5 步：计算 chunkGrains。** 对每个 channel 段调用 `calcCollChunking`：
 
-[FACT:src/enqueue/enqueue.cc:811-825]
+[FACT:src/enqueue/enqueue.cc:811-825](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L811-L825)
 
 **第 6 步：生成 proxyOp。** 为每个 channel 生成 proxy 操作：
 
-[FACT:src/enqueue/enqueue.cc:844-894]
+[FACT:src/enqueue/enqueue.cc:844-894](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L844-L894)
 
 ### 数据结构：ncclDevWorkColl
 
@@ -346,13 +346,13 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### 并发控制：channelMask 的位运算
 
-[FACT:src/enqueue/enqueue.cc:897]
+[FACT:src/enqueue/enqueue.cc:897](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L897)
 
 这行代码用位运算设置 channelMask：`(2ull << channelHi) - (1ull << channelLo)`。比如 channelLo=2, channelHi=5，结果是 `(2<<5) - (1<<2) = 64 - 4 = 60 = 0b111100`，即 bit 2-5 被设置。
 
 ### 生产踩坑：预算溢出
 
-[FACT:src/enqueue/enqueue.cc:792-794]
+[FACT:src/enqueue/enqueue.cc:792-794](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L792-L794)
 
 如果预算不够，直接返回 `ncclSuccess`，让外层循环创建新的 plan。这是一个优雅的降级策略——**不报错，只是分批处理**。
 
@@ -368,23 +368,23 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### Step-by-Step：finishPlan 的打包逻辑
 
-[FACT:src/enqueue/enqueue.cc:236-330]
+[FACT:src/enqueue/enqueue.cc:236-330](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L236-L330)
 
 **第 1 步：决定存储类型。** 如果所有工作都能放进 kernel args，用 `ncclDevWorkStorageTypeArgs`：
 
-[FACT:src/enqueue/enqueue.cc:244-250]
+[FACT:src/enqueue/enqueue.cc:244-250](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L244-L250)
 
 **第 2 步：分配 kernelArgs。** 从内存栈分配：
 
-[FACT:src/enqueue/enqueue.cc:251-255]
+[FACT:src/enqueue/enqueue.cc:251-255](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L251-L255)
 
 **第 3 步：Round-robin 放置 batch。** 每个 channel 的第一个 batch 必须放在 `batchZero[blockIdx.x]`：
 
-[FACT:src/enqueue/enqueue.cc:257-280]
+[FACT:src/enqueue/enqueue.cc:257-280](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L257-L280)
 
 **第 4 步：合并 proxyOp 队列。** 按 opCount 归并排序：
 
-[FACT:src/enqueue/enqueue.cc:282-329]
+[FACT:src/enqueue/enqueue.cc:282-329](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L282-L329)
 
 ### 数据结构：ncclDevKernelArgs
 
@@ -397,7 +397,7 @@ CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而
 
 ### 生产踩坑：batch 顺序
 
-[FACT:src/enqueue/enqueue.cc:257-259]
+[FACT:src/enqueue/enqueue.cc:257-259](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L257-L259)
 
 注释说得很清楚："The first batch for each channel must be located at batchZero[blockIdx.x]"。如果这个顺序错了，kernel 会读到错误的 batch，导致数据损坏。
 

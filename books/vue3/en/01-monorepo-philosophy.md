@@ -14,7 +14,7 @@
 
 workspace 的边界由 `pnpm-workspace.yaml` 定义。它只有三行有效声明：
 
-[FACT:pnpm-workspace.yaml:1-3]
+[FACT:pnpm-workspace.yaml:1-3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L1-L3)
 
 ```yaml
 packages:
@@ -26,7 +26,7 @@ packages:
 
 紧接着的 `catalog:` 段是 pnpm 的**依赖版本目录**机制：
 
-[FACT:pnpm-workspace.yaml:5-13]
+[FACT:pnpm-workspace.yaml:5-13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L5-L13)
 
 ```yaml
 catalog:
@@ -40,7 +40,7 @@ catalog:
   '@vitejs/plugin-vue': ^6.0.9
 ```
 
-根 `package.json` 中对应写的是 `"@babel/parser": "catalog:"` [FACT:package.json:65-65]。`catalog:` 是一个占位符，pnpm 在安装时把它替换为 catalog 段中声明的版本。这样做的收益是：`@babel/parser` 的版本只在 `pnpm-workspace.yaml` 一处维护，所有引用它的包自动对齐，杜绝了「A 包用 7.28、B 包用 7.29」的版本漂移。
+根 `package.json` 中对应写的是 `"@babel/parser": "catalog:"` [FACT:package.json:65-65](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L65-L65)。`catalog:` 是一个占位符，pnpm 在安装时把它替换为 catalog 段中声明的版本。这样做的收益是：`@babel/parser` 的版本只在 `pnpm-workspace.yaml` 一处维护，所有引用它的包自动对齐，杜绝了「A 包用 7.28、B 包用 7.29」的版本漂移。
 
 ## 场景驱动 Walkthrough：一次 `pnpm install` 之后发生了什么
 
@@ -48,7 +48,7 @@ catalog:
 
 **第一步：preinstall 门禁。** pnpm 在安装前会触发根 `package.json` 的 `preinstall` 脚本：
 
-[FACT:package.json:45-45]
+[FACT:package.json:45-45](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L45-L45)
 
 ```json
 "preinstall": "npx only-allow pnpm"
@@ -63,7 +63,7 @@ catalog:
 
 **第四步：postinstall 钩子。** 安装完成后触发：
 
-[FACT:package.json:46-46]
+[FACT:package.json:46-46](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L46-L46)
 
 ```json
 "postinstall": "simple-git-hooks"
@@ -71,7 +71,7 @@ catalog:
 
 `simple-git-hooks` 读取根 `package.json` 中的 `simple-git-hooks` 字段，把 Git 钩子写入 `.git/hooks/`：
 
-[FACT:package.json:48-51]
+[FACT:package.json:48-51](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L48-L51)
 
 ```json
 "simple-git-hooks": {
@@ -89,7 +89,7 @@ catalog:
 
 **`allowBuilds` 与供应链安全。** 注意这段配置：
 
-[FACT:pnpm-workspace.yaml:15-21]
+[FACT:pnpm-workspace.yaml:15-21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L15-L21)
 
 ```yaml
 allowBuilds:
@@ -105,7 +105,7 @@ pnpm 默认禁止依赖包执行安装脚本（postinstall），因为这是供�
 
 **`minimumReleaseAge: 1440` 的深意。** 这行配置要求新发布的依赖版本必须「满 24 小时」（1440 分钟）才允许被安装：
 
-[FACT:pnpm-workspace.yaml:33-33]
+[FACT:pnpm-workspace.yaml:33-33](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L33-L33)
 
 ```yaml
 minimumReleaseAge: 1440
@@ -114,7 +114,7 @@ minimumReleaseAge: 1440
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这是防御 npm 供应链投毒的冷却期机制。攻击者劫持某个包并发布恶意版本后，通常会在数小时内被发现并撤下。设置 24 小时冷却期，可以让 core 仓库避开这个窗口。而 `minimumReleaseAgeExclude` 则允许对特定安全补丁破例：
 
-[FACT:pnpm-workspace.yaml:36-38]
+[FACT:pnpm-workspace.yaml:36-38](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L36-L38)
 
 ```yaml
 minimumReleaseAgeExclude:
@@ -135,7 +135,7 @@ minimumReleaseAgeExclude:
 
 根 `tsconfig.json` 的 `compilerOptions` 是整个仓库类型系统的地基。挑出几个关键字段：
 
-[FACT:tsconfig.json:5-29]
+[FACT:tsconfig.json:5-29](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L5-L29)
 
 ```json
 "target": "es2016",
@@ -155,7 +155,7 @@ minimumReleaseAgeExclude:
 
 逐条解读：
 
-- `target: es2016`：输出语法降级到 ES2016。这与 Rollup 配置中 esbuild 的 `target` 相呼应（`isServerRenderer || isCJSBuild ? 'es2019' : 'es2016'` [FACT:rollup.config.js:337-337]）。
+- `target: es2016`：输出语法降级到 ES2016。这与 Rollup 配置中 esbuild 的 `target` 相呼应（`isServerRenderer || isCJSBuild ? 'es2019' : 'es2016'` [FACT:rollup.config.js:337-337](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L337-L337)）。
 - `moduleResolution: bundler`：采用打包器风格的模块解析，允许省略扩展名、支持 `exports` 字段。
 - `strict: true`：开启全部严格检查，包括 `strictNullChecks`、`noImplicitAny` 等。
 - `noUnusedLocals: true`：未使用的局部变量直接报错。这条规则配合 Tree-shaking 有实际意义——未使用的变量往往是死代码的信号。
@@ -167,11 +167,11 @@ minimumReleaseAgeExclude:
 
 ## 场景驱动 Walkthrough：一次 `pnpm check` 的类型检查
 
-`check` 脚本是 `tsc --incremental --noEmit` [FACT:package.json:15-15]。代入这个场景：
+`check` 脚本是 `tsc --incremental --noEmit` [FACT:package.json:15-15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L15-L15)。代入这个场景：
 
 **第一步：读取 include 范围。** tsconfig 的 `include` 决定了哪些文件参与检查：
 
-[FACT:tsconfig.json:31-39]
+[FACT:tsconfig.json:31-39](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L31-L39)
 
 ```json
 "include": [
@@ -185,11 +185,11 @@ minimumReleaseAgeExclude:
 ]
 ```
 
-注意 `scripts/*` 与 `rollup.*.js` 也在检查范围内。这意味着构建脚本本身也受类型约束——`rollup.config.js` 顶部的 `// @ts-check` [FACT:rollup.config.js:1-1] 配合 JSDoc 类型注解，让这个纯 JS 文件也能被 `tsc` 检查。
+注意 `scripts/*` 与 `rollup.*.js` 也在检查范围内。这意味着构建脚本本身也受类型约束——`rollup.config.js` 顶部的 `// @ts-check` [FACT:rollup.config.js:1-1](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L1-L1) 配合 JSDoc 类型注解，让这个纯 JS 文件也能被 `tsc` 检查。
 
 **第二步：应用 exclude 排除。**
 
-[FACT:tsconfig.json:40-40]
+[FACT:tsconfig.json:40-40](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L40-L40)
 
 ```json
 "exclude": ["packages-private/sfc-playground/src/vue-dev-proxy*"]
@@ -206,7 +206,7 @@ minimumReleaseAgeExclude:
 
 **`types` 字段的全局注入。**
 
-[FACT:tsconfig.json:21-21]
+[FACT:tsconfig.json:21-21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L21-L21)
 
 ```json
 "types": ["vitest/globals", "puppeteer", "node"]
@@ -225,7 +225,7 @@ Rollup 配置是 core 仓库的**总装车间**。它不关心某个包具体做
 
 配置文件的入口处就确立了「按包构建」的模型：
 
-[FACT:rollup.config.js:32-44]
+[FACT:rollup.config.js:32-44](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L32-L44)
 
 ```js
 if (!process.env.TARGET) {
@@ -250,7 +250,7 @@ const name = packageOptions.filename || path.basename(packageDir)
 
 格式到产物的映射由 `outputConfigs` 定义：
 
-[FACT:rollup.config.js:58-88]
+[FACT:rollup.config.js:58-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L58-L88)
 
 ```js
 const outputConfigs = {
@@ -272,7 +272,7 @@ const outputConfigs = {
 
 **第一步：确定格式列表。**
 
-[FACT:rollup.config.js:91-92]
+[FACT:rollup.config.js:91-92](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L91-L92)
 
 ```js
 const defaultFormats = ['esm-bundler', 'cjs']
@@ -287,7 +287,7 @@ const packageConfigs = process.env.PROD_ONLY
 
 **第二步：计算构建标志位。** `createConfig` 内部根据格式字符串推导出一组布尔标志：
 
-[FACT:rollup.config.js:131-142]
+[FACT:rollup.config.js:131-142](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L131-L142)
 
 ```js
 const isProductionBuild = process.env.__DEV__ === 'false' || /\.prod\.js$/.test(output.file)
@@ -307,7 +307,7 @@ const isBrowserBuild =
 
 **第三步：选择入口文件。**
 
-[FACT:rollup.config.js:159-168]
+[FACT:rollup.config.js:159-168](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L159-L168)
 
 ```js
 let entryFile = /runtime$/.test(format) ? `src/runtime.ts` : `src/index.ts`
@@ -323,7 +323,7 @@ if (isCompatPackage && (isBrowserESMBuild || isBundlerESMBuild)) {
 
 **第四步：生成 define 替换表。** `resolveDefine` 把源码中的 `__DEV__`、`__BROWSER__` 等编译期常量替换为字面量：
 
-[FACT:rollup.config.js:170-201]
+[FACT:rollup.config.js:170-201](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L170-L201)
 
 ```js
 const replacements = {
@@ -348,7 +348,7 @@ const replacements = {
 
 **第五步：允许环境变量覆盖。**
 
-[FACT:rollup.config.js:208-216]
+[FACT:rollup.config.js:208-216](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L208-L216)
 
 ```js
 // allow inline overrides like
@@ -366,7 +366,7 @@ Object.keys(replacements).forEach(key => {
 
 **第六步：装配插件链。**
 
-[FACT:rollup.config.js:324-342]
+[FACT:rollup.config.js:324-342](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L324-L342)
 
 ```js
 plugins: [
@@ -390,7 +390,7 @@ plugins: [
 
 **第七步：生产构建追加。** 若 `NODE_ENV=production`：
 
-[FACT:rollup.config.js:97-114]
+[FACT:rollup.config.js:97-114](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L97-L114)
 
 ```js
 if (process.env.NODE_ENV === 'production') {
@@ -446,7 +446,7 @@ flowchart TD
 
 **`external` 的三分支策略。** `resolveExternal` 根据构建类型返回不同的外部化列表：
 
-[FACT:rollup.config.js:257-283]
+[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
 
 ```js
 function resolveExternal() {
@@ -471,7 +471,7 @@ function resolveExternal() {
 
 **`onwarn` 过滤循环依赖。**
 
-[FACT:rollup.config.js:344-348]
+[FACT:rollup.config.js:344-348](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L344-L348)
 
 ```js
 onwarn: (msg, warn) => {
@@ -485,7 +485,7 @@ onwarn: (msg, warn) => {
 
 **`treeshake.moduleSideEffects: false` 的激进假设。**
 
-[FACT:rollup.config.js:355-355]
+[FACT:rollup.config.js:355-355](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L355-L355)
 
 ```js
 treeshake: {
@@ -497,7 +497,7 @@ treeshake: {
 
 **swc-minify 的 `pure_getters` 陷阱。**
 
-[FACT:rollup.config.js:373-388]
+[FACT:rollup.config.js:373-388](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L373-L388)
 
 ```js
 async renderChunk(contents, _, { format }) {
@@ -521,11 +521,11 @@ async renderChunk(contents, _, { format }) {
 
 具体体现在三个层面：
 
-**第一，源码不直接发布。** `package.json` 的 `private: true` [FACT:package.json:2-2] 表明根包永不发布。每个子包的 `package.json` 中 `main`/`module`/`exports` 字段指向 `dist/` 下的产物，而非 `src/`。用户安装 `vue` 时拿到的是构建后的 `.js` 与 `.d.ts`，源码留在仓库里。
+**第一，源码不直接发布。** `package.json` 的 `private: true` [FACT:package.json:2-2](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L2-L2) 表明根包永不发布。每个子包的 `package.json` 中 `main`/`module`/`exports` 字段指向 `dist/` 下的产物，而非 `src/`。用户安装 `vue` 时拿到的是构建后的 `.js` 与 `.d.ts`，源码留在仓库里。
 
 **第二，产物格式由消费场景决定。** 七种格式不是随意罗列，而是对应七种真实的消费路径：Vite 用户拿 `esm-bundler`，CDN 用户拿 `global`，Node SSR 用户拿 `cjs`。格式的选择逻辑集中在 `rollup.config.js` 一处，子包只需在 `buildOptions.formats` 中声明需要哪些。
 
-**第三，类型与实现分离。** `build-dts` 脚本 `tsc -p tsconfig.build.json --noCheck && rollup -c rollup.dts.config.js` [FACT:package.json:9-9] 表明 `.d.ts` 生成是独立流水线。`isolatedDeclarations: true` 让声明文件生成可以跳过类型检查（`--noCheck`），因为类型已显式标注。
+**第三，类型与实现分离。** `build-dts` 脚本 `tsc -p tsconfig.build.json --noCheck && rollup -c rollup.dts.config.js` [FACT:package.json:9-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L9-L9) 表明 `.d.ts` 生成是独立流水线。`isolatedDeclarations: true` 让声明文件生成可以跳过类型检查（`--noCheck`），因为类型已显式标注。
 
 > **〔Design Inference & Architectural Trade-offs〕**
 > 这种解耦的深层动机是：**源码的组织方式服务于开发者，产物的组织方式服务于消费者，两者的最优解不同**。源码需要清晰的目录结构、完整的类型信息、可调试的 sourcemap；产物需要最小的体积、正确的模块格式、稳定的 API 表面。强行统一两者（例如直接发布 TS 源码）会同时损害两端的体验。
@@ -553,17 +553,17 @@ Q1: 若把 `pnpm-workspace.yaml` 中的 `minimumReleaseAge: 1440` 改为 `0`，�
 
 **参考解析**：
 
-`minimumReleaseAge: 1440` [FACT:pnpm-workspace.yaml:33-33] 要求新发布的依赖版本必须满 24 小时才允许安装。若改为 `0`，则任何刚发布的版本都可立即被拉入。
+`minimumReleaseAge: 1440` [FACT:pnpm-workspace.yaml:33-33](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L33-L33) 要求新发布的依赖版本必须满 24 小时才允许安装。若改为 `0`，则任何刚发布的版本都可立即被拉入。
 
 风险场景：攻击者劫持某个传递依赖（例如 `@babel/parser` 的某个 patch 版本），发布含恶意 postinstall 脚本的版本。在 24 小时冷却期内，社区通常会发现问题并撤下该版本；若冷却期为 0，core 仓库的 CI 可能在攻击窗口内自动升级并执行恶意脚本。
 
-`minimumReleaseAgeExclude` [FACT:pnpm-workspace.yaml:36-38] 的存在是因为冷却期机制会与安全补丁的紧迫性冲突。注释中的 `vitest@4.1.11` 是 Renovate 检测到的安全更新——这类更新需要立即生效，等待 24 小时反而延长了暴露窗口。因此需要一个显式的豁免清单，让安全更新绕过冷却期。这体现了「默认保守、例外显式」的安全设计原则。
+`minimumReleaseAgeExclude` [FACT:pnpm-workspace.yaml:36-38](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L36-L38) 的存在是因为冷却期机制会与安全补丁的紧迫性冲突。注释中的 `vitest@4.1.11` 是 Renovate 检测到的安全更新——这类更新需要立即生效，等待 24 小时反而延长了暴露窗口。因此需要一个显式的豁免清单，让安全更新绕过冷却期。这体现了「默认保守、例外显式」的安全设计原则。
 
 Q2: `rollup.config.js` 中 `resolveDefine` 对 `__FEATURE_OPTIONS_API__` 的处理是 `isBundlerESMBuild ? '__VUE_OPTIONS_API__' : 'true'`。如果错误地改成对所有格式都返回 `'true'`，会对最终用户产生什么影响？
 
 **参考解析**：
 
-[FACT:rollup.config.js:192-194]
+[FACT:rollup.config.js:192-194](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L192-L194)
 
 ```js
 __FEATURE_OPTIONS_API__: isBundlerESMBuild
@@ -581,7 +581,7 @@ Q3: `rollup.config.js` 的 `resolveExternal` 中，浏览器构建只返回 `tre
 
 **参考解析**：
 
-[FACT:rollup.config.js:257-283]
+[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
 
 浏览器构建（`isGlobalBuild || isBrowserESMBuild`）在 `!packageOptions.enableNonBrowserBranches` 时只返回 `treeShakenDeps`（`source-map-js`、`@babel/parser`、`estree-walker`、`entities/decode`）。这意味着 `foo-lib` 不在 external 列表中，
 

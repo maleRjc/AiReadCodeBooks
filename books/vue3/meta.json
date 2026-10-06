@@ -18,7 +18,7 @@
   ],
   "summary": "A comprehensive deep dive into the official vuejs/core repository, breaking down the monorepo architecture, compiler pipelines, reactivity subsystem, type testing framework, and production release automation.",
   "summaryZh": "本书以 Vue 官方 core 仓库为蓝本，围绕「一次代码提交如何变成可发布的 npm 包」这一主线，逐层剖析 monorepo 工程化架构、构建流水线、类型测试体系、Playground 调试工具链与发布自动化机制。",
-  "webReaderUrl": "https://aireadcode.com/books/vue3.html",
+  "webReaderUrl": "https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01",
   "chapters": [
     {
       "index": 1,
@@ -132,5 +132,9 @@
       "pathEn": "en/14-architecture-evolution-and-best-practices.md",
       "pathZh": "zh/14-architecture-evolution-and-best-practices.md"
     }
-  ]
+  ],
+  "commit": "4ab865a848a1da3d10fb674f857e5fff13094644",
+  "branch": "main",
+  "version": "v3.5.13",
+  "defaultFile": "packages/core/src/index.ts"
 }

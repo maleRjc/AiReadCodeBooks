@@ -10,7 +10,7 @@
 
 ## 数据结构与生命周期
 
-`inline-enums.js` 导出的 `scanEnums()` 返回一个 `removeCache` 闭包，它扫描源码中的 enum 定义，生成临时文件供 Rollup 消费 [FACT:scripts/build.js:30-34]。`build.js` 的 `run()` 用 `try/finally` 保证缓存清理 [FACT:scripts/build.js:81-112]：
+`inline-enums.js` 导出的 `scanEnums()` 返回一个 `removeCache` 闭包，它扫描源码中的 enum 定义，生成临时文件供 Rollup 消费 [FACT:scripts/build.js:30-34](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L30-L34)。`build.js` 的 `run()` 用 `try/finally` 保证缓存清理 [FACT:scripts/build.js:81-112](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L81-L112)：
 
 ```js
 const removeCache = scanEnums()
@@ -21,19 +21,19 @@ try {
 }
 ```
 
-`rollup.config.js` 在模块顶层调用 `inlineEnums()` 拿到 `[enumPlugin, enumDefines]` [FACT:rollup.config.js:47-50]，其中 `enumPlugin` 插入 plugins 数组 [FACT:rollup.config.js:331-331]，`enumDefines` 并入 replace 插件的替换表 [FACT:rollup.config.js:222-223]。
+`rollup.config.js` 在模块顶层调用 `inlineEnums()` 拿到 `[enumPlugin, enumDefines]` [FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)，其中 `enumPlugin` 插入 plugins 数组 [FACT:rollup.config.js:331-331](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L331-L331)，`enumDefines` 并入 replace 插件的替换表 [FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223)。
 
 ## Step-by-Step：一次构建中枚举的完整生命周期
 
-1. `build.js` 的 `run()` 首先调用 `scanEnums()`，扫描所有包的 enum 定义并写入临时缓存，返回 `removeCache` [FACT:scripts/build.js:87-87]。
+1. `build.js` 的 `run()` 首先调用 `scanEnums()`，扫描所有包的 enum 定义并写入临时缓存，返回 `removeCache` [FACT:scripts/build.js:87-87](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L87-L87)。
 
-2. `buildAll` 并发启动多个 Rollup 进程 [FACT:scripts/build.js:119-121]。
+2. `buildAll` 并发启动多个 Rollup 进程 [FACT:scripts/build.js:119-121](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L119-L121)。
 
-3. 每个 Rollup 进程在配置加载阶段执行 `inlineEnums()`，读取上一步生成的缓存，得到 `enumPlugin` 与 `enumDefines` [FACT:rollup.config.js:47-50]。
+3. 每个 Rollup 进程在配置加载阶段执行 `inlineEnums()`，读取上一步生成的缓存，得到 `enumPlugin` 与 `enumDefines` [FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)。
 
-4. `enumPlugin` 在 transform 阶段把源码中的 enum 引用替换为字面量；`enumDefines` 作为 replace 的补充，处理跨模块的常量替换 [FACT:rollup.config.js:222-223]。
+4. `enumPlugin` 在 transform 阶段把源码中的 enum 引用替换为字面量；`enumDefines` 作为 replace 的补充，处理跨模块的常量替换 [FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223)。
 
-5. 构建结束，`finally` 块调用 `removeCache()` 清理临时文件 [FACT:scripts/build.js:119-121]。
+5. 构建结束，`finally` 块调用 `removeCache()` 清理临时文件 [FACT:scripts/build.js:119-121](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L119-L121)。
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart LR
 
 ## 标志位的数据结构与默认值
 
-四个 skip 标志在 `parseArgs` 中声明 [FACT:scripts/release.js:39-50]，随后解构为局部变量 [FACT:scripts/release.js:64-66]：
+四个 skip 标志在 `parseArgs` 中声明 [FACT:scripts/release.js:39-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L39-L50)，随后解构为局部变量 [FACT:scripts/release.js:64-66](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L64-L66)：
 
 ```js
 let skipTests = args.skipTests
@@ -73,25 +73,25 @@ const skipPrompts = args.skipPrompts
 const skipGit = args.skipGit
 ```
 
-注意 `skipTests` 用 `let` 声明，因为它在 `runTestsIfNeeded()` 中会被动态改写 [FACT:scripts/release.js:281-317]。
+注意 `skipTests` 用 `let` 声明，因为它在 `runTestsIfNeeded()` 中会被动态改写 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)。
 
 ## Step-by-Step：一次 release 的完整决策流
 
-`main()` 的执行顺序 [FACT:scripts/release.js:143-279]：
+`main()` 的执行顺序 [FACT:scripts/release.js:143-279](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L143-L279)：
 
-1. **远程同步检查**：`isInSyncWithRemote()` 比对本地 HEAD 与远程分支 SHA，不一致时弹确认框 [FACT:scripts/release.js:337-363]。
+1. **远程同步检查**：`isInSyncWithRemote()` 比对本地 HEAD 与远程分支 SHA，不一致时弹确认框 [FACT:scripts/release.js:337-363](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L337-L363)。
 
-2. **版本选择**：无位置参数时弹出 `versionIncrements` 选择菜单 [FACT:scripts/release.js:152-176]。
+2. **版本选择**：无位置参数时弹出 `versionIncrements` 选择菜单 [FACT:scripts/release.js:152-176](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L152-L176)。
 
-3. **测试决策**：`runTestsIfNeeded()` 是 skip 逻辑最密集的地方 [FACT:scripts/release.js:281-317]。
+3. **测试决策**：`runTestsIfNeeded()` 是 skip 逻辑最密集的地方 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)。
 
-4. **版本更新**：`updateVersions()` 遍历所有包改写 `package.json` [FACT:scripts/release.js:377-398]。
+4. **版本更新**：`updateVersions()` 遍历所有包改写 `package.json` [FACT:scripts/release.js:377-398](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L377-L398)。
 
-5. **Changelog 生成**：调用 `pnpm run changelog` [FACT:scripts/release.js:211-212]。
+5. **Changelog 生成**：调用 `pnpm run changelog` [FACT:scripts/release.js:211-212](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L211-L212)。
 
-6. **Git 提交**：`skipGit` 为真时整段跳过 [FACT:scripts/release.js:231-240]。
+6. **Git 提交**：`skipGit` 为真时整段跳过 [FACT:scripts/release.js:231-240](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L231-L240)。
 
-7. **发布**：仅当 `args.publish` 为真时执行 `buildPackages()` + `publishPackages()` [FACT:scripts/release.js:243-246]。
+7. **发布**：仅当 `args.publish` 为真时执行 `buildPackages()` + `publishPackages()` [FACT:scripts/release.js:243-246](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L243-L246)。
 
 `runTestsIfNeeded()` 的分支逻辑值得单独展开：
 
@@ -118,11 +118,11 @@ flowchart TD
 > **〔设计推断与架构权衡〕**
 > `skipTests` 用 `let` 而非 `const` 的设计，是为了支持「CI 已通过则自动跳过本地测试」的优化路径。这在 CI 发布场景下节省了大量时间——GitHub Actions 的 `release.yml` 已经跑过完整测试，本地再跑一遍纯属浪费。
 
-**发布顺序的隐藏契约**：`sortPackagesForPublishing` 把 `vue` 排到最后 [FACT:scripts/release.js:85-85]，注释明确说明「用户不能在内部包可用之前安装新的入口包」。如果你修改了这个排序，用户 `npm install vue@next` 时可能拉到依赖尚未发布的版本，导致 `ERR_MODULE_NOT_FOUND`。
+**发布顺序的隐藏契约**：`sortPackagesForPublishing` 把 `vue` 排到最后 [FACT:scripts/release.js:85-85](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L85-L85)，注释明确说明「用户不能在内部包可用之前安装新的入口包」。如果你修改了这个排序，用户 `npm install vue@next` 时可能拉到依赖尚未发布的版本，导致 `ERR_MODULE_NOT_FOUND`。
 
-**幂等性保护**：`publishPackage` 在发布前调用 `isPackagePublished` 检查 registry [FACT:scripts/release.js:453-458]，发布失败时捕获 `previously published` 错误并降级为跳过 [FACT:scripts/release.js:480-488]。这让 release 脚本可以安全重试——网络中断后重新执行不会因为「包已存在」而整体失败。
+**幂等性保护**：`publishPackage` 在发布前调用 `isPackagePublished` 检查 registry [FACT:scripts/release.js:453-458](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L453-L458)，发布失败时捕获 `previously published` 错误并降级为跳过 [FACT:scripts/release.js:480-488](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L480-L488)。这让 release 脚本可以安全重试——网络中断后重新执行不会因为「包已存在」而整体失败。
 
-**失败回滚**：`fnToRun().catch()` 在 `versionUpdated` 为真时调用 `updateVersions(currentVersion)` 回滚版本号 [FACT:scripts/release.js:528-537]。但注意：这只回滚 `package.json` 中的版本字段，**不会回滚已经 `git commit` 的提交**。如果你在 `skipGit` 为假的情况下发布失败，需要手动 `git reset`。
+**失败回滚**：`fnToRun().catch()` 在 `versionUpdated` 为真时调用 `updateVersions(currentVersion)` 回滚版本号 [FACT:scripts/release.js:528-537](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L528-L537)。但注意：这只回滚 `package.json` 中的版本字段，**不会回滚已经 `git commit` 的提交**。如果你在 `skipGit` 为假的情况下发布失败，需要手动 `git reset`。
 
 ---
 
@@ -143,11 +143,11 @@ flowchart TD
 
 本章从源码出发，拆解了 Vue core 工程化体系的三个关键边界条件：
 
-1. **`packages-private` 与 `packages` 的物理隔离**由 workspace glob、`build.js` 目录探测、`release.js` 过滤三处共同保证 [FACT:pnpm-workspace.yaml:1-3][FACT:scripts/build.js:153-170][FACT:scripts/release.js:68-83]。
+1. **`packages-private` 与 `packages` 的物理隔离**由 workspace glob、`build.js` 目录探测、`release.js` 过滤三处共同保证 [FACT:pnpm-workspace.yaml:1-3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L1-L3)[FACT:scripts/build.js:153-170](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L153-L170)[FACT:scripts/release.js:68-83](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L68-L83)。
 
-2. **枚举内联的时序约束**由 `scanEnums()` / `removeCache()` 的 `try/finally` 结构强制保证，Rollup 配置在模块顶层消费缓存 [FACT:scripts/build.js:81-112][FACT:rollup.config.js:47-50]。
+2. **枚举内联的时序约束**由 `scanEnums()` / `removeCache()` 的 `try/finally` 结构强制保证，Rollup 配置在模块顶层消费缓存 [FACT:scripts/build.js:81-112](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L81-L112)[FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)。
 
-3. **`release.js` 的 skip 标志位矩阵**服务于 CI 发布、本地调试、紧急热修三种场景，`skipTests` 的动态改写和发布顺序排序是两个最容易被忽略的隐藏契约 [FACT:scripts/release.js:281-317][FACT:scripts/release.js:85-85]。
+3. **`release.js` 的 skip 标志位矩阵**服务于 CI 发布、本地调试、紧急热修三种场景，`skipTests` 的动态改写和发布顺序排序是两个最容易被忽略的隐藏契约 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)[FACT:scripts/release.js:85-85](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L85-L85)。
 
 # 本章思考与自测
 

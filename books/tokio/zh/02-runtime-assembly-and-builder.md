@@ -16,7 +16,7 @@ Tokio 的装配入口是 `Builder`。它本身是一个纯配置容器，所有�
 
 `Builder` 的字段可以按职责分成四组。第一组是**形态与开关**：`kind` 决定调度器形态，`enable_io` / `enable_time` 决定是否创建对应驱动。
 
-[FACT:tokio/src/runtime/builder.rs:55-68]
+[FACT:tokio/src/runtime/builder.rs:55-68](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L55-L68)
 
 ```rust
 pub struct Builder {
@@ -33,7 +33,7 @@ pub struct Builder {
 
 第二组是**线程池参数**：`worker_threads` 是 `Option<usize>`，`None` 表示「延迟到 build 时按 CPU 核数自动探测」；`max_blocking_threads` 默认 512。
 
-[FACT:tokio/src/runtime/builder.rs:73-79]
+[FACT:tokio/src/runtime/builder.rs:73-79](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L73-L79)
 
 ```rust
 worker_threads: Option,
@@ -42,7 +42,7 @@ max_blocking_threads: usize,
 
 第三组是**回调钩子**，全部是 `Option<Arc<dyn Fn ...>>`。注意它们用 `Arc` 而非 `Box`，因为这些回调要被克隆进每个 worker 线程的 `Config`。
 
-[FACT:tokio/src/runtime/builder.rs:87-97]
+[FACT:tokio/src/runtime/builder.rs:87-97](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L87-L97)
 
 ```rust
 pub(super) after_start: Option,
@@ -53,7 +53,7 @@ pub(super) after_unpark: Option,
 
 第四组是**调度启发式与随机种子**：`global_queue_interval`、`event_interval`、`disable_lifo_slot`、`seed_generator`。
 
-[FACT:tokio/src/runtime/builder.rs:116-134]
+[FACT:tokio/src/runtime/builder.rs:116-134](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L116-L134)
 
 ```rust
 pub(super) global_queue_interval: Option,
@@ -64,7 +64,7 @@ pub(super) seed_generator: RngSeedGenerator,
 
 这里有一个值得注意的设计：`Kind` 是一个 `Copy` 的小枚举，只有两个变体。
 
-[FACT:tokio/src/runtime/builder.rs:261-265]
+[FACT:tokio/src/runtime/builder.rs:261-265](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L261-L265)
 
 ```rust
 #[derive(Clone, Copy)]
@@ -81,7 +81,7 @@ pub(crate) enum Kind {
 
 `Builder::new` 是所有构造的公共入口。它把 `enable_io` 和 `enable_time` 都设为 `false`。
 
-[FACT:tokio/src/runtime/builder.rs:309-318]
+[FACT:tokio/src/runtime/builder.rs:309-318](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L309-L318)
 
 ```rust
 // I/O defaults to "off"
@@ -101,7 +101,7 @@ start_paused: false,
 
 `enable_all()` 的实现揭示了 feature 门控如何影响「全开」的语义。
 
-[FACT:tokio/src/runtime/builder.rs:398-419]
+[FACT:tokio/src/runtime/builder.rs:398-419](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L398-L419)
 
 ```rust
 pub fn enable_all(&mut self) -> &mut Self {
@@ -132,7 +132,7 @@ pub fn enable_all(&mut self) -> &mut Self {
 
 `build()` 是装配的起点，它按 `kind` 分流到两条完全不同的路径。
 
-[FACT:tokio/src/runtime/builder.rs:1146-1152]
+[FACT:tokio/src/runtime/builder.rs:1146-1152](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1146-L1152)
 
 ```rust
 pub fn build(&mut self) -> io::Result {
@@ -150,7 +150,7 @@ pub fn build(&mut self) -> io::Result {
 
 `build_current_thread_runtime` 本身很薄，它委托给 `build_current_thread_runtime_components`，然后把返回的三元组包进 `Runtime`。
 
-[FACT:tokio/src/runtime/builder.rs:1725-1736]
+[FACT:tokio/src/runtime/builder.rs:1725-1736](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1725-L1736)
 
 ```rust
 fn build_current_thread_runtime(&mut self) -> io::Result {
@@ -169,7 +169,7 @@ fn build_current_thread_runtime(&mut self) -> io::Result {
 
 真正的装配逻辑在 `build_current_thread_runtime_components`。它的执行顺序至关重要：
 
-[FACT:tokio/src/runtime/builder.rs:1760-1766]
+[FACT:tokio/src/runtime/builder.rs:1760-1766](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1760-L1766)
 
 ```rust
 let mut cfg = self.get_cfg();
@@ -187,7 +187,7 @@ let blocking_spawner = blocking_pool.spawner().clone();
 
 第三步生成两个独立的 RNG 种子生成器。
 
-[FACT:tokio/src/runtime/builder.rs:1768-1770]
+[FACT:tokio/src/runtime/builder.rs:1768-1770](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1768-L1770)
 
 ```rust
 let seed_generator_1 = self.seed_generator.next_generator();
@@ -199,7 +199,7 @@ let seed_generator_2 = self.seed_generator.next_generator();
 
 第四步是核心：把 driver、driver_handle、blocking_spawner、种子和 `Config` 一起交给 `CurrentThread::new`。
 
-[FACT:tokio/src/runtime/builder.rs:1776-1807]
+[FACT:tokio/src/runtime/builder.rs:1776-1807](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1776-L1807)
 
 ```rust
 let (scheduler, handle) = CurrentThread::new(
@@ -225,7 +225,7 @@ let (scheduler, handle) = CurrentThread::new(
 
 这里有一个关键细节：`enable_eager_driver_handoff` 被硬编码为 `false`。
 
-[FACT:tokio/src/runtime/builder.rs:1795-1798]
+[FACT:tokio/src/runtime/builder.rs:1795-1798](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1795-L1798)
 
 ```rust
 // This setting never makes sense for a current thread runtime,
@@ -239,7 +239,7 @@ enable_eager_driver_handoff: false,
 
 最后，`CurrentThread::new` 返回的 `handle` 被包进 `scheduler::Handle::CurrentThread`，再包进公开的 `Handle`。
 
-[FACT:tokio/src/runtime/builder.rs:1816-1822]
+[FACT:tokio/src/runtime/builder.rs:1816-1822](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1816-L1822)
 
 ```rust
 let handle = Handle {
@@ -253,7 +253,7 @@ Ok((scheduler, handle, blocking_pool))
 
 `build_threaded_runtime` 的骨架与 current_thread 类似，但有三处本质差异。第一处是 worker 线程数的确定：
 
-[FACT:tokio/src/runtime/builder.rs:2185]
+[FACT:tokio/src/runtime/builder.rs:2185](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2185)
 
 ```rust
 let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
@@ -263,7 +263,7 @@ let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
 
 第二处差异在 blocking pool 的容量计算：
 
-[FACT:tokio/src/runtime/builder.rs:2189-2192]
+[FACT:tokio/src/runtime/builder.rs:2189-2192](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2189-L2192)
 
 ```rust
 let blocking_pool =
@@ -273,7 +273,7 @@ let blocking_spawner = blocking_pool.spawner().clone();
 
 注意 `max_blocking_threads + worker_threads`。对比 current_thread 路径传入的是 `self.max_blocking_threads` 和 `0`。
 
-[FACT:tokio/src/runtime/builder.rs:1765]
+[FACT:tokio/src/runtime/builder.rs:1765](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1765)
 
 ```rust
 let blocking_pool = blocking::create_blocking_pool(self, self.max_blocking_threads, 0);
@@ -284,7 +284,7 @@ let blocking_pool = blocking::create_blocking_pool(self, self.max_blocking_threa
 
 第三处差异是 `MultiThread::new` 返回三元组而非二元组：
 
-[FACT:tokio/src/runtime/builder.rs:2198-2226]
+[FACT:tokio/src/runtime/builder.rs:2198-2226](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2198-L2226)
 
 ```rust
 let (scheduler, handle, launch) = MultiThread::new(
@@ -305,7 +305,7 @@ let (scheduler, handle, launch) = MultiThread::new(
 
 多出来的 `launch` 是一个「启动句柄」。`MultiThread::new` 只负责构造调度器结构，**并不立即启动 worker 线程**。真正的启动发生在后面：
 
-[FACT:tokio/src/runtime/builder.rs:2228-2234]
+[FACT:tokio/src/runtime/builder.rs:2228-2234](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2228-L2234)
 
 ```rust
 let handle = Handle { inner: scheduler::Handle::MultiThread(handle) };
@@ -361,7 +361,7 @@ flowchart TD
 
 装配完成后，`Runtime` 持有 `scheduler`、`handle`、`blocking_pool` 三件套。其中 `handle` 是共享的核心。它的内部是一个枚举：
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:29-41]
+[FACT:tokio/src/runtime/scheduler/mod.rs:29-41](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L29-L41)
 
 ```rust
 #[derive(Debug, Clone)]
@@ -380,7 +380,7 @@ pub(crate) enum Handle {
 
 注意两个变体都包着 `Arc`。这意味着 `Handle` 的克隆是廉价的引用计数递增，可以被自由地分发到任意线程。`Handle` 提供了统一的访问接口，把形态差异封装在 `match` 内部。例如 `driver()`：
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:53-64]
+[FACT:tokio/src/runtime/scheduler/mod.rs:53-64](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L53-L64)
 
 ```rust
 pub(crate) fn driver(&self) -> &driver::Handle {
@@ -399,7 +399,7 @@ pub(crate) fn driver(&self) -> &driver::Handle {
 
 `blocking_spawner()` 用了 `match_flavor!` 宏来消除重复：
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:96-98]
+[FACT:tokio/src/runtime/scheduler/mod.rs:96-98](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L96-L98)
 
 ```rust
 pub(crate) fn blocking_spawner(&self) -> &blocking::Spawner {
@@ -411,7 +411,7 @@ pub(crate) fn blocking_spawner(&self) -> &blocking::Spawner {
 
 公开的 `Handle` 是内部 `scheduler::Handle` 的薄包装：
 
-[FACT:tokio/src/runtime/handle.rs:13-15]
+[FACT:tokio/src/runtime/handle.rs:13-15](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/handle.rs#L13-L15)
 
 ```rust
 pub struct Handle {
@@ -421,7 +421,7 @@ pub struct Handle {
 
 用户拿到的 `Handle` 可以跨线程克隆、可以 `spawn`、可以 `block_on`。`spawn` 的实现展示了 `AutoBox` 的编译期分支：
 
-[FACT:tokio/src/runtime/handle.rs:197-208]
+[FACT:tokio/src/runtime/handle.rs:197-208](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/handle.rs#L197-L208)
 
 ```rust
 pub fn spawn(&self, future: F) -> JoinHandle
@@ -440,7 +440,7 @@ where
 
 `AutoBox::<F>::SHOULD_BOX` 是一个关联常量，由 `size_of::<F>()` 与阈值比较得出。
 
-[FACT:tokio/src/runtime/mod.rs:668-673]
+[FACT:tokio/src/runtime/mod.rs:668-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L668-L673)
 
 ```rust
 pub(crate) struct AutoBox(std::marker::PhantomData);
@@ -459,7 +459,7 @@ impl AutoBox {
 
 **current_thread 的 `local_tid` 分支**。`build_local` 走的是 `build_current_thread_local_runtime`，它把当前线程 ID 传进去：
 
-[FACT:tokio/src/runtime/builder.rs:1738-1751]
+[FACT:tokio/src/runtime/builder.rs:1738-1751](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1738-L1751)
 
 ```rust
 fn build_current_thread_local_runtime(&mut self) -> io::Result {
@@ -480,7 +480,7 @@ fn build_current_thread_local_runtime(&mut self) -> io::Result {
 
 这个 `tid` 被存进 `Handle`，后续 `can_spawn_local_on_local_runtime` 用它校验「spawn_local 是否在 owner 线程上调用」：
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:140-147]
+[FACT:tokio/src/runtime/scheduler/mod.rs:140-147](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L140-L147)
 
 ```rust
 pub(crate) fn can_spawn_local_on_local_runtime(&self) -> bool {
@@ -498,7 +498,7 @@ pub(crate) fn can_spawn_local_on_local_runtime(&self) -> bool {
 
 **生产踩坑一：`worker_threads(0)` 会 panic**。`worker_threads` 方法有断言：
 
-[FACT:tokio/src/runtime/builder.rs:582-586]
+[FACT:tokio/src/runtime/builder.rs:582-586](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L582-L586)
 
 ```rust
 pub fn worker_threads(&mut self, val: usize) -> &mut Self {
@@ -512,7 +512,7 @@ pub fn worker_threads(&mut self, val: usize) -> &mut Self {
 
 **生产踩坑二：`max_blocking_threads` 设太小会挂起**。文档明确警告：
 
-[FACT:tokio/src/runtime/builder.rs:600-601]
+[FACT:tokio/src/runtime/builder.rs:600-601](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L600-L601)
 
 ```rust
 /// It's recommended to not set this limit too low in order to avoid hanging on operations
@@ -524,7 +524,7 @@ pub fn worker_threads(&mut self, val: usize) -> &mut Self {
 
 **生产踩坑三：`UnhandledPanic::ShutdownRuntime` 只支持 current_thread**。
 
-[FACT:tokio/src/runtime/builder.rs:1374-1381]
+[FACT:tokio/src/runtime/builder.rs:1374-1381](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1374-L1381)
 
 ```rust
 pub fn unhandled_panic(&mut self, behavior: UnhandledPanic) -> &mut Self {
@@ -560,12 +560,12 @@ pub fn unhandled_panic(&mut self, behavior: UnhandledPanic) -> &mut Self {
 
 Q1: 如果把 `build_threaded_runtime` 中 `create_blocking_pool` 的容量参数从 `self.max_blocking_threads + worker_threads` 改成 `self.max_blocking_threads`，在什么场景下会导致阻塞任务饿死？为什么 current_thread 路径可以传 `self.max_blocking_threads`？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2189-2192]，multi_thread 路径传入 `self.max_blocking_threads + worker_threads`，而 current_thread 路径 [FACT:tokio/src/runtime/builder.rs:1765] 传入 `self.max_blocking_threads`。差异的根源在于：multi_thread 下，worker 线程本身也会执行阻塞任务（例如 `block_in_place` 会把 worker 线程临时转成阻塞线程），所以阻塞线程的总预算必须包含 worker 线程数。如果改成只传 `self.max_blocking_threads`，当 `max_blocking_threads` 设得较小（比如 1）且已有 worker 线程在 `block_in_place` 中占用预算时，新的 `spawn_blocking` 任务将无线程可用，堆积在无背压队列中，导致依赖这些阻塞任务的 async 任务永久挂起。current_thread 只有一个线程且不支持 `block_in_place` 的 worker 转换语义，所以不需要加上 worker 数。
+**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2189-2192](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2189-L2192)，multi_thread 路径传入 `self.max_blocking_threads + worker_threads`，而 current_thread 路径 [FACT:tokio/src/runtime/builder.rs:1765](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1765) 传入 `self.max_blocking_threads`。差异的根源在于：multi_thread 下，worker 线程本身也会执行阻塞任务（例如 `block_in_place` 会把 worker 线程临时转成阻塞线程），所以阻塞线程的总预算必须包含 worker 线程数。如果改成只传 `self.max_blocking_threads`，当 `max_blocking_threads` 设得较小（比如 1）且已有 worker 线程在 `block_in_place` 中占用预算时，新的 `spawn_blocking` 任务将无线程可用，堆积在无背压队列中，导致依赖这些阻塞任务的 async 任务永久挂起。current_thread 只有一个线程且不支持 `block_in_place` 的 worker 转换语义，所以不需要加上 worker 数。
 
 Q2: `MultiThread::new` 返回 `launch` 句柄，真正启动 worker 线程的是 `launch.launch()`。如果去掉 `handle.enter()` 这一行直接调用 `launch.launch()`，会发生什么？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2230-2232]，启动前有 `let _enter = handle.enter();` 然后才 `launch.launch()`。`handle.enter()` 的作用是设置线程本地上下文（thread-local），让当前线程「看起来」处于运行时内部。worker 线程启动后会立即开始 poll 任务，而任务代码可能调用 `Handle::current()`、`tokio::spawn` 等依赖上下文的 API。如果去掉 `_enter`，worker 线程在启动瞬间的上下文设置可能不完整（取决于 `launch` 内部是否自行设置），最坏情况下 worker 线程上执行的初始化代码调用 `Handle::current()` 会 panic（`CONTEXT_MISSING_ERROR`）。即使 `launch` 内部为每个 worker 设置了上下文，`_enter` 也保证了「启动动作本身」发生在正确的上下文中，避免启动过程中的竞态。
+**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2230-2232](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2230-L2232)，启动前有 `let _enter = handle.enter();` 然后才 `launch.launch()`。`handle.enter()` 的作用是设置线程本地上下文（thread-local），让当前线程「看起来」处于运行时内部。worker 线程启动后会立即开始 poll 任务，而任务代码可能调用 `Handle::current()`、`tokio::spawn` 等依赖上下文的 API。如果去掉 `_enter`，worker 线程在启动瞬间的上下文设置可能不完整（取决于 `launch` 内部是否自行设置），最坏情况下 worker 线程上执行的初始化代码调用 `Handle::current()` 会 panic（`CONTEXT_MISSING_ERROR`）。即使 `launch` 内部为每个 worker 设置了上下文，`_enter` 也保证了「启动动作本身」发生在正确的上下文中，避免启动过程中的竞态。
 
 Q3: `AutoBox::<F>::SHOULD_BOX` 用关联常量而非运行时 `if size_of::<F>() > THRESHOLD`。假设改成运行时判断，除了代码体积翻倍，还会在什么情况下导致性能退化？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-673] 的注释，运行时 `if` 会让 `spawn_named` 对每个 `T` 单态化两次（`T` 和 `Pin<Box<T>>` 各一次）。除了代码体积翻倍，性能退化体现在：1) 指令缓存（i-cache）压力增大，因为两套 harness 代码都要驻留；2) 编译器无法对「实际只走一个分支」做优化，运行时分支预测虽然通常准确，但分支本身和两套代码的寄存器分配差异会累积；3) 更隐蔽的是，`Pin<Box<T>>` 路径会强制堆分配，如果运行时判断因为某种原因（比如 `size_of` 在泛型上下文中未完全常量折叠）误判，小 future 也会被装箱，每次 spawn 多一次堆分配。关联常量让单态化收集器在编译期就剪掉未走的分支，零运行时开销。
+**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L657-L673) 的注释，运行时 `if` 会让 `spawn_named` 对每个 `T` 单态化两次（`T` 和 `Pin<Box<T>>` 各一次）。除了代码体积翻倍，性能退化体现在：1) 指令缓存（i-cache）压力增大，因为两套 harness 代码都要驻留；2) 编译器无法对「实际只走一个分支」做优化，运行时分支预测虽然通常准确，但分支本身和两套代码的寄存器分配差异会累积；3) 更隐蔽的是，`Pin<Box<T>>` 路径会强制堆分配，如果运行时判断因为某种原因（比如 `size_of` 在泛型上下文中未完全常量折叠）误判，小 future 也会被装箱，每次 spawn 多一次堆分配。关联常量让单态化收集器在编译期就剪掉未走的分支，零运行时开销。

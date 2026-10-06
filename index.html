@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AiReadCodeBooks · 开源专著书库大厅</title>
+  <meta name="description" content="AiReadCode 自动编撰的旗舰开源项目深度技术专著，真实代码行号永久锚定，双栏沉浸式交互阅读。">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/reader.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-container">
+      <a href="index.html" class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+            <path d="M12 3.5C8.4 3.5 6 6 6 9.5C6 12 7.8 13.8 8.8 15H15.2C16.2 13.8 18 12 18 9.5C18 6 15.6 3.5 12 3.5Z" stroke="#00e5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="9.5" y1="17.2" x2="14.5" y2="17.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
+            <line x1="10.2" y1="19.2" x2="13.8" y2="19.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M11 21C11.5 21.6 12.5 21.6 13 21" stroke="#00e5ff" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">AiReadCodeBooks</span>
+        <span class="badge-version">去中心化书库</span>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link active">书库大厅</a></li>
+        <li><a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="nav-link">GitHub 仓库</a></li>
+        <li><a href="https://github.com/maleRjc/AiReadCode" target="_blank" rel="noopener" class="nav-link">AiReadCode 引擎</a></li>
+      </ul>
+
+      <div class="header-actions">
+        <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">
+          <span>GitHub Star ★</span>
+        </a>
+        <button class="theme-toggle-btn" type="button" aria-label="切换深色/浅色模式">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="bookshelf-hero">
+      <h1 class="bookshelf-title">开源技术专著书库大厅</h1>
+      <p class="bookshelf-desc">
+        由 AiReadCode 扫描官方开源仓库全自动编撰，结合真实不可变 Commit 节点与 FACT 药丸行号溯源，提供纯静态、零服务依赖的极致双栏交互式在线阅读体验。
+      </p>
+    </section>
+
+    <div class="bookshelf-grid">
+
+      <div class="book-card">
+        <span class="book-card-badge">25 章全集 · 深度专著</span>
+        <h2 class="book-card-title">NCCL 源码解读：一个 AllReduce 的 GPU 旅程</h2>
+        <div class="book-card-repo">NVIDIA/nccl · ★ 6.2k · Commit @12df1a1</div>
+        <p class="book-card-desc">全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect...</p>
+        <div class="book-card-tags">
+          <span>AllReduce</span><span>Topology Discovery</span><span>Ring/Tree Algorithms</span><span>GPUDirect RDMA</span>
+        </div>
+        <a href="books/nccl/#ch-01" class="btn btn-primary btn-sm" style="margin-top: auto;">
+          <span>沉浸式双栏阅读 →</span>
+        </a>
+      </div>
+        
+
+      <div class="book-card">
+        <span class="book-card-badge">14 章全集 · 深度专著</span>
+        <h2 class="book-card-title">Tokio 异步底层机制与运行时剖析</h2>
+        <div class="book-card-repo">tokio-rs/tokio · ★ 28.5k · Commit @e800714</div>
+        <p class="book-card-desc">本书以「一个异步任务从诞生到消亡」为主线，逐层拆解 Tokio 作为 Rust 异步运行时的核心设计：Future/Waker 协作式调度、工作窃取调度器、I/O Reactor 驱动与分级时间轮。...</p>
+        <div class="book-card-tags">
+          <span>Future/Waker</span><span>Reactor</span><span>Work-Stealing</span><span>Cooperative Budget</span>
+        </div>
+        <a href="books/tokio/#ch-01" class="btn btn-primary btn-sm" style="margin-top: auto;">
+          <span>沉浸式双栏阅读 →</span>
+        </a>
+      </div>
+        
+
+      <div class="book-card">
+        <span class="book-card-badge">14 章全集 · 深度专著</span>
+        <h2 class="book-card-title">vLLM 高性能推理引擎核心实现</h2>
+        <div class="book-card-repo">vllm-project/vllm · ★ 35.2k · Commit @7ba3df6</div>
+        <p class="book-card-desc">本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。...</p>
+        <div class="book-card-tags">
+          <span>PagedAttention</span><span>Continuous Batching</span><span>KV Cache Virtualization</span><span>EngineCore</span>
+        </div>
+        <a href="books/vllm/#ch-01" class="btn btn-primary btn-sm" style="margin-top: auto;">
+          <span>沉浸式双栏阅读 →</span>
+        </a>
+      </div>
+        
+
+      <div class="book-card">
+        <span class="book-card-badge">14 章全集 · 深度专著</span>
+        <h2 class="book-card-title">Vue 3 源码与工程化全景架构</h2>
+        <div class="book-card-repo">vuejs/core · ★ 45.8k · Commit @4ab865a</div>
+        <p class="book-card-desc">本书以 Vue 官方 core 仓库为蓝本，围绕「一次代码提交如何变成可发布的 npm 包」这一主线，逐层剖析 monorepo 工程化架构、构建流水线、类型测试体系、Playground 调试工具链与发布自动化机制。...</p>
+        <div class="book-card-tags">
+          <span>Monorepo</span><span>SFC Compiler</span><span>Reactivity</span><span>Tree-shaking</span>
+        </div>
+        <a href="books/vue3/#ch-01" class="btn btn-primary btn-sm" style="margin-top: auto;">
+          <span>沉浸式双栏阅读 →</span>
+        </a>
+      </div>
+        
+    </div>
+  </main>
+
+  <script src="assets/reader.js"></script>
+</body>
+</html>

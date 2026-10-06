@@ -15,7 +15,7 @@
 
 NCCL 把 group 状态全部放在线程局部存储里，这是理解死锁的关键。
 
-[FACT:src/group.cc:34-34]
+[FACT:src/group.cc:34-34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L34-L34)
 
 ```cpp
 thread_local int ncclGroupDepth = 0; // depth of ncclGroupStart nesting
@@ -42,7 +42,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 第一步，检查是否真的在 group 里：
 
-[FACT:src/group.cc:1048-1052]
+[FACT:src/group.cc:1048-1052](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1048-L1052)
 
 ```cpp
   if (ncclGroupDepth == 0) {
@@ -56,7 +56,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 第二步，递减深度，判断是否是最外层：
 
-[FACT:src/group.cc:1061-1063]
+[FACT:src/group.cc:1061-1063](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1061-L1063)
 
 ```cpp
   if ((--ncclGroupDepth) > 0) goto exit;
@@ -68,7 +68,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 第三步，校验阻塞模式一致性。这是"阻塞与非阻塞混用"的检测点：
 
-[FACT:src/group.cc:1095-1101]
+[FACT:src/group.cc:1095-1101](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1095-L1101)
 
 ```cpp
   if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPreconnectHead != nullptr) {
@@ -84,7 +84,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 第四步，根据阻塞模式分叉。非阻塞走线程异步下发，阻塞走同步下发：
 
-[FACT:src/group.cc:1102-1134]
+[FACT:src/group.cc:1102-1134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1102-L1134)
 
 ```cpp
     if (ncclGroupBlocking == 0) {
@@ -114,7 +114,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 回到 `ncclAsyncLaunch`，看混用检测：
 
-[FACT:src/group.cc:55-64]
+[FACT:src/group.cc:55-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L55-L64)
 
 ```cpp
     /* check if there are blocking and nonblocking comms at the same time in group. */
@@ -139,7 +139,7 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 
 **场景三：CUDA graph capture 与 group 的交互。** 看 `doLaunches` 里的检测：
 
-[FACT:src/group.cc:448-455]
+[FACT:src/group.cc:448-455](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L448-L455)
 
 ```cpp
     if (capturingYes && capturingNo) {
@@ -184,7 +184,7 @@ flowchart TD
 
 NCCL 的参数校验不是"每次都全查"，而是分模式。核心是 `comm->checkMode`：
 
-[FACT:src/misc/argcheck.cc:227-251]
+[FACT:src/misc/argcheck.cc:227-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L227-L251)
 
 ```cpp
   if (info->comm->checkMode != ncclCheckModeDefault) {
@@ -228,7 +228,7 @@ NCCL 的参数校验不是"每次都全查"，而是分模式。核心是 `comm-
 
 第一层，指针是否有效：
 
-[FACT:src/misc/argcheck.cc:12-18]
+[FACT:src/misc/argcheck.cc:12-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L12-L18)
 
 ```cpp
 ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char* ptrname, const char* opname) {
@@ -244,7 +244,7 @@ ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char
 
 第二层，设备是否匹配：
 
-[FACT:src/misc/argcheck.cc:19-26]
+[FACT:src/misc/argcheck.cc:19-26](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L19-L26)
 
 ```cpp
 #if CUDART_VERSION >= 10000
@@ -261,7 +261,7 @@ ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char
 
 第三层，通信域对象完整性：
 
-[FACT:src/misc/argcheck.cc:38-45]
+[FACT:src/misc/argcheck.cc:38-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L38-L45)
 
 ```cpp
 ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* ptrname) {
@@ -280,7 +280,7 @@ ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* pt
 
 这是 NCCL 里最"重"的校验，只在 `ncclCheckModeDebugGlobal` 下触发。它检查的是——所有 rank 的对称内存注册状态是否一致。
 
-[FACT:src/misc/argcheck.cc:95-111]
+[FACT:src/misc/argcheck.cc:95-111](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L95-L111)
 
 ```cpp
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, bufInfo, sizeof(struct symBufInfo) * 2), ret, fail);
@@ -314,7 +314,7 @@ ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* pt
 
 **坑三：userRedOp 的生命周期。** 看这段：
 
-[FACT:src/misc/argcheck.cc:220-225]
+[FACT:src/misc/argcheck.cc:220-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L220-L225)
 
 ```cpp
   int opIx = int(ncclUserRedOpMangle(info->comm, info->op)) - int(ncclNumOps);
@@ -335,7 +335,7 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
 
 ### 数据结构：宏家族全貌
 
-[FACT:src/include/checks.h:148-166]
+[FACT:src/include/checks.h:148-166](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L148-L166)
 
 ```cpp
 #define NCCLCHECK(call) \
@@ -365,7 +365,7 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
 
 ### 清理路径：NCCLCHECKIGNORE 保留首个错误
 
-[FACT:src/include/checks.h:168-177]
+[FACT:src/include/checks.h:168-177](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L168-L177)
 
 ```cpp
 // Report failure but continue - useful for cleanup paths where we want to
@@ -384,7 +384,7 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
 
 ### 等待与中止：NCCLWAIT 的 abortFlag 检查
 
-[FACT:src/include/checks.h:196-205]
+[FACT:src/include/checks.h:196-205](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L196-L205)
 
 ```cpp
 #define NCCLWAIT(call, cond, abortFlagPtr) \
@@ -405,7 +405,7 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
 
 ### 线程创建与内存分配的安全宏
 
-[FACT:src/include/checks.h:237-256]
+[FACT:src/include/checks.h:237-256](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L237-L256)
 
 ```cpp
 #define STDTHREADCREATE_IMPL(var, func, error_action, ...) \
@@ -432,7 +432,7 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
 
 `std::thread` 构造失败会抛异常（比如线程数超限）。这个宏把异常转成 `ncclSystemError`，避免异常穿透 C API 边界。
 
-[FACT:src/include/checks.h:258-275]
+[FACT:src/include/checks.h:258-275](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L258-L275)
 
 ```cpp
 #define NEW_NOTHROW(var, x) \
@@ -461,7 +461,7 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 
 ### 数据结构：size + magic 双重校验
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:70-76]
+[FACT:contrib/nccl_ep/nccl_ep.cc:70-76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L70-L76)
 
 ```cpp
 // Size-based ABI versioning: every cross-boundary struct starts with a `size`
@@ -481,7 +481,7 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 
 ### Step-by-Step：EP_REQUIRE_STRUCT 的校验流程
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:77-80]
+[FACT:contrib/nccl_ep/nccl_ep.cc:77-80](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L77-L80)
 
 ```cpp
 #define EP_REQUIRE_STRUCT(ptr) \
@@ -492,7 +492,7 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 
 这个宏在 `ncclEpDispatch`、`ncclEpCombine` 等入口处调用：
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:2827-2830]
+[FACT:contrib/nccl_ep/nccl_ep.cc:2827-2830](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L2827-L2830)
 
 ```cpp
     EP_REQUIRE_STRUCT(inputs);
@@ -507,7 +507,7 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 
 这是最精妙的部分——如何在"调用方结构体可能更小"的情况下安全读取字段。
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:139-144]
+[FACT:contrib/nccl_ep/nccl_ep.cc:139-144](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L139-L144)
 
 ```cpp
 // Safe field reader for ncclEpLayoutInfo_t::recv_topk_idx_kind. Returns AUTO
@@ -527,7 +527,7 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
 
 ### 版本号检查：软警告而非硬拒绝
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1393-1400]
+[FACT:contrib/nccl_ep/nccl_ep.cc:1393-1400](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1393-L1400)
 
 ```cpp
     if (in_config->version != NCCL_EP_API_VERSION) {
@@ -550,7 +550,7 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
 
 **坑三：`EP_OPTIONAL_LAYOUT_INFO` 的范围检查。** 看这段：
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:114-123]
+[FACT:contrib/nccl_ep/nccl_ep.cc:114-123](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L114-L123)
 
 ```cpp
             if ((ptr)->size < kNcclEpLayoutInfoMinSize || (ptr)->size > sizeof(*(ptr))) { \
@@ -594,7 +594,7 @@ flowchart TD
 
 NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传递：
 
-[FACT:src/group.cc:49-52]
+[FACT:src/group.cc:49-52](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L49-L52)
 
 ```cpp
     job->abortFlag = comm->abortFlag;
@@ -605,7 +605,7 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
 
 每个 job 持有 comm 的 abortFlag 指针。当 group 检测到错误时：
 
-[FACT:src/group.cc:118-126]
+[FACT:src/group.cc:118-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L118-L126)
 
 ```cpp
         if (!job->destroyFlag &&
@@ -625,7 +625,7 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
 
 `nccl_ep` 用了更精细的超时——以 GPU 时钟周期为单位。
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1558-1591]
+[FACT:contrib/nccl_ep/nccl_ep.cc:1558-1591](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1558-L1591)
 
 ```cpp
     // Resolve timeout_cycles: env var > config field > compile-time default
@@ -660,7 +660,7 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
 
 ### 异步错误标志：host-pinned 内存
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1767-1778]
+[FACT:contrib/nccl_ep/nccl_ep.cc:1767-1778](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1767-L1778)
 
 ```cpp
     // Allocate mask buffer and async error flag for active-mask support
@@ -681,7 +681,7 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
 
 ### 读取异步错误：原子加载
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:4312-4321]
+[FACT:contrib/nccl_ep/nccl_ep.cc:4312-4321](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L4312-L4321)
 
 ```cpp
 ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
@@ -706,7 +706,7 @@ ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
 
 **坑三：`ncclEpMaskClean` 的前置条件。** 看这段：
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:4262-4266]
+[FACT:contrib/nccl_ep/nccl_ep.cc:4262-4266](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L4262-L4266)
 
 ```cpp
     EP_HOST_ASSERT(ep_group->config.algorithm == NCCL_EP_ALGO_LOW_LATENCY);
@@ -730,7 +730,7 @@ ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
 
 ## 本章思考与自测
 
-<details><summary>Q1: 如果把 `ncclGroupEndInternal` 中 `if ((--ncclGroupDepth) > 0) goto exit;`（[FACT:src/group.cc:1061]）改成 `if (ncclGroupDepth > 0) goto exit;`（不递减），会发生什么？在嵌套 group 场景下会有什么后果？</summary>
+<details><summary>Q1: 如果把 `ncclGroupEndInternal` 中 `if ((--ncclGroupDepth) > 0) goto exit;`（[FACT:src/group.cc:1061](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1061)）改成 `if (ncclGroupDepth > 0) goto exit;`（不递减），会发生什么？在嵌套 group 场景下会有什么后果？</summary>
 
 **参考解析**：
 
@@ -758,7 +758,7 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 
 </details>
 
-<details><summary>Q2: `CudaPtrCheck` 中 `attr.type == cudaMemoryTypeDevice && attr.device != comm->cudaDev`（[FACT:src/misc/argcheck.cc:20]）这个检查，如果去掉 `attr.type == cudaMemoryTypeDevice` 这个条件，会有什么问题？在什么场景下会误报？</summary>
+<details><summary>Q2: `CudaPtrCheck` 中 `attr.type == cudaMemoryTypeDevice && attr.device != comm->cudaDev`（[FACT:src/misc/argcheck.cc:20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L20)）这个检查，如果去掉 `attr.type == cudaMemoryTypeDevice` 这个条件，会有什么问题？在什么场景下会误报？</summary>
 
 **参考答案**：
 
@@ -778,7 +778,7 @@ NCCL 允许 host 内存作为通信缓冲区（通过 `cudaMemcpy` 中转），�
 
 </details>
 
-<details><summary>Q3: `layoutInfoRecvTopkIdxKind`（[FACT:contrib/nccl_ep/nccl_ep.cc:139-144]）用 `lip->size < field_end` 判断字段是否存在。如果新版本在结构体中间插入了一个字段（而非末尾），这个判断会怎样失效？为什么 ABI 设计规定新字段只能加在末尾？</summary>
+<details><summary>Q3: `layoutInfoRecvTopkIdxKind`（[FACT:contrib/nccl_ep/nccl_ep.cc:139-144](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L139-L144)）用 `lip->size < field_end` 判断字段是否存在。如果新版本在结构体中间插入了一个字段（而非末尾），这个判断会怎样失效？为什么 ABI 设计规定新字段只能加在末尾？</summary>
 
 **参考解析**：
 

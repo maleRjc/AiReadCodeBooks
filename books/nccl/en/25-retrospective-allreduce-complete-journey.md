@@ -15,7 +15,7 @@
 
 `commAlloc` 里最值得注意的是**共享资源引用计数**的设计。当子通信域（split/shrink 产生）复用父通信域资源时，不是拷贝一份，而是共享同一个 `ncclSharedResources` 并递增引用计数：
 
-[FACT:src/init.cc:533-555]
+[FACT:src/init.cc:533-555](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L533-L555)
 
 ```cpp
 if (parent == NULL || !parent->shareResources) {
@@ -40,7 +40,7 @@ if (parent == NULL || !parent->shareResources) {
 
 另一个关键点是 `commAlloc` 里对**通道的初始化**。所有通道先被标记为"未初始化"（`id = -1`），后续 `setupChannel` 才会真正填内容：
 
-[FACT:src/init.cc:607-608]
+[FACT:src/init.cc:607-608](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L607-L608)
 
 ```cpp
 // Mark channels as non initialized.
@@ -56,7 +56,7 @@ for (int c = 0; c < MAXCHANNELS; c++) comm->channels[c].id = -1;
 1. `ncclCommInitRank` 先调 `ncclInitEnv` 加载环境插件，再调 `ncclGroupStartInternal` 进入 group 语义（这是为了支持"一次 group 里初始化多个通信域"）。
 2. 接着调 `ncclCommInitRankDev`，它做参数校验、分配 `comm` 结构、解析 config，然后**把真正的初始化工作丢给一个异步 job**：
 
-[FACT:src/init.cc:2923-2929]
+[FACT:src/init.cc:2923-2929](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2923-L2929)
 
 ```cpp
 if (ncclParamEnqueueRearchEnable()) {
@@ -70,7 +70,7 @@ if (ncclParamEnqueueRearchEnable()) {
 
 3. `ncclCommInitRankFunc` 是初始化的主函数。它先设设备、查 GPU 属性、初始化 kernel：
 
-[FACT:src/init.cc:2119-2127]
+[FACT:src/init.cc:2119-2127](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2119-L2127)
 
 ```cpp
 timers[TIMER_INIT_TOTAL] = clockNano();
@@ -88,7 +88,7 @@ NCCLCHECKGOTO(ncclInitKernelsForDevice(cudaArch, maxSharedMem, &maxLocalSizeByte
 
 4. 然后根据是普通初始化还是 split/shrink/grow，走不同的 bootstrap 路径：
 
-[FACT:src/init.cc:2136-2191]
+[FACT:src/init.cc:2136-2191](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2136-L2191)
 
 ```cpp
 if (job->parent && !job->isGrow) {
@@ -106,7 +106,7 @@ if (job->parent && !job->isGrow) {
 
 - **AllGather1**：交换 `ncclPeerInfo`（每个 rank 的设备信息、host hash、pid hash、GPU UUID 等）：
 
-[FACT:src/init.cc:1236-1239]
+[FACT:src/init.cc:1236-1239](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1236-L1239)
 
 ```cpp
 NCCLCHECKGOTO(ncclCalloc(&comm->peerInfo, nranks + 1), ret, fail); // Extra rank to represent CollNet root
@@ -119,7 +119,7 @@ COMPILER_ATOMIC_STORE(&comm->peerInfoValid, true, std::memory_order_release);
 
 - **AllGather3**：交换拓扑计算结果（每个 rank 算出的 ring/tree 结构、带宽、通道数等），然后取所有 rank 的**最小值**来对齐：
 
-[FACT:src/init.cc:1687-1703]
+[FACT:src/init.cc:1687-1703](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1687-L1703)
 
 ```cpp
 for (int i = 0; i < nranks; i++) {
@@ -175,7 +175,7 @@ flowchart TD
 
 **踩坑点**：`initTransportsRank` 末尾有一个 intra-node barrier：
 
-[FACT:src/init.cc:1968-1971]
+[FACT:src/init.cc:1968-1971](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1968-L1971)
 
 ```cpp
 /* Local intra-node barrier */
@@ -201,7 +201,7 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm->bootstrap, comm->localRankToRank, 
 
 任务对象 `ncclTaskColl` 的关键字段在 `collTaskAppend` 里填充：
 
-[FACT:src/enqueue/enqueue.cc:2800-2847]
+[FACT:src/enqueue/enqueue.cc:2800-2847](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2800-L2847)
 
 ```cpp
 struct ncclTaskColl* t = ncclMemoryPoolAlloc<struct ncclTaskColl>(&comm->memPool_ncclTaskColl, &comm->memPermanent);
@@ -233,7 +233,7 @@ ncclTaskCollSorterInsert(&planner->collSorter, t, t->trafficBytes);
 
 2. **`trafficBytes` 的计算**：`ncclFuncTrafficPerByte` 返回每个字节需要传输几次。AllReduce 返回 2（reduce + broadcast），AllGather 返回 nRanks：
 
-[FACT:src/enqueue/enqueue.cc:123-134]
+[FACT:src/enqueue/enqueue.cc:123-134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L123-L134)
 
 ```cpp
 static inline int ncclFuncTrafficPerByte(ncclFunc_t func, int nRanks) {
@@ -256,7 +256,7 @@ static inline int ncclFuncTrafficPerByte(ncclFunc_t func, int nRanks) {
 
 1. `ncclEnqueueCheck` 先做通信域校验和 group 进入：
 
-[FACT:src/enqueue/enqueue.cc:3478-3495]
+[FACT:src/enqueue/enqueue.cc:3478-3495](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3478-L3495)
 
 ```cpp
 ncclResult_t ncclEnqueueCheck(struct ncclInfo* info) {
@@ -275,7 +275,7 @@ ncclResult_t ncclEnqueueCheck(struct ncclInfo* info) {
 
 2. 然后调 `taskAppend`，它根据操作类型分派：
 
-[FACT:src/enqueue/enqueue.cc:3337-3348]
+[FACT:src/enqueue/enqueue.cc:3337-3348](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3337-L3348)
 
 ```cpp
 static ncclResult_t taskAppend(struct ncclComm* comm, struct ncclInfo* info) {
@@ -321,7 +321,7 @@ flowchart LR
 
 **踩坑点**：`ncclPrepareTasks` 里有一个"聚合"逻辑，把大小相近（4 倍以内）的任务合并：
 
-[FACT:src/enqueue/enqueue.cc:506-512]
+[FACT:src/enqueue/enqueue.cc:506-512](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L506-L512)
 
 ```cpp
 // We aggregate operations that are within 4X size of each other.
@@ -344,7 +344,7 @@ while (aggEnd != nullptr && aggEnd->trafficBytes < 4 * aggBeg->trafficBytes && !
 
 算法选型的入口是 `ncclGetAlgoInfo`：
 
-[FACT:src/enqueue/enqueue.cc:2159-2185]
+[FACT:src/enqueue/enqueue.cc:2159-2185](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2159-L2185)
 
 ```cpp
 ncclResult_t ncclGetAlgoInfo(struct ncclComm* comm, struct ncclTaskColl* info, int collNetSupport, int nvlsSupport,
@@ -379,7 +379,7 @@ ncclResult_t ncclGetAlgoInfo(struct ncclComm* comm, struct ncclTaskColl* info, i
 
 然后调 `ncclTuningCompute` 得到最优结果：
 
-[FACT:src/enqueue/enqueue.cc:2213-2224]
+[FACT:src/enqueue/enqueue.cc:2213-2224](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2213-L2224)
 
 ```cpp
 } else {
@@ -433,7 +433,7 @@ flowchart TD
 
 **踩坑点**：`ncclGetAlgoInfo` 里有一个"重算"逻辑——如果用户指定了 `algMask` 但没有任何算法匹配，会先静默重算全量菜单，再判断是硬错误还是软回退：
 
-[FACT:src/enqueue/enqueue.cc:2192-2208]
+[FACT:src/enqueue/enqueue.cc:2192-2208](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2192-L2208)
 
 ```cpp
 NOWARN(ncclTuningCompute(&input, &bestTuning), NCCL_TUNING);
@@ -470,7 +470,7 @@ if (bestTuning.algo == NCCL_ALGO_UNDEF) {
 
 `finishPlan` 决定 work 数据的存储位置：
 
-[FACT:src/enqueue/enqueue.cc:244-255]
+[FACT:src/enqueue/enqueue.cc:244-255](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L244-L255)
 
 ```cpp
 // If we can fit everything into the kernel args we do so.
@@ -495,7 +495,7 @@ plan->kernelArgs->workStorageType = plan->workStorageType;
 
 1. 先估算这个 plan 能装多少任务：
 
-[FACT:src/enqueue/enqueue.cc:654-687]
+[FACT:src/enqueue/enqueue.cc:654-687](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L654-L687)
 
 ```cpp
 do {
@@ -519,7 +519,7 @@ plan_full:;
 
 2. 然后按流量把通道分配给任务。对于非 CollNet 任务，用"cell"为单位切分：
 
-[FACT:src/enqueue/enqueue.cc:742-759]
+[FACT:src/enqueue/enqueue.cc:742-759](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L742-L759)
 
 ```cpp
 int trafficPerByte = ncclFuncTrafficPerByte(task->func, comm->nRanks);
@@ -545,7 +545,7 @@ int nChannels = (cellsLo != 0 ? 1 : 0) + nMidChannels + (cellsHi != 0 ? 1 : 0);
 
 3. 最后调 `calcCollChunking` 计算每条通道的 chunk 大小：
 
-[FACT:src/enqueue/enqueue.cc:2228-2275]
+[FACT:src/enqueue/enqueue.cc:2228-2275](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2228-L2275)
 
 ```cpp
 static ncclResult_t calcCollChunking(struct ncclComm* comm, struct ncclTaskColl* info, int nChannels, size_t nBytes,
@@ -602,7 +602,7 @@ flowchart TD
 
 **踩坑点**：`ncclTestBudget` 的估算用了一个粗略公式 `nBatches = divUp(nPlanColls, 4)`——假设每 4 个集合操作产生一个 batch。这个估算可能不准，所以后面还有精确检查：
 
-[FACT:src/enqueue/enqueue.cc:711-714]
+[FACT:src/enqueue/enqueue.cc:711-714](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L711-L714)
 
 ```cpp
 // Ensure room for worst case of one new batch per channel
@@ -623,7 +623,7 @@ Kernel 启动就像把工单交给工厂。`ncclLaunchKernel` 把 `ncclKernelPla
 
 `ncclLaunchKernel` 的关键步骤：
 
-[FACT:src/enqueue/enqueue.cc:1886-1909]
+[FACT:src/enqueue/enqueue.cc:1886-1909](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1886-L1909)
 
 ```cpp
 ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan) {
@@ -648,7 +648,7 @@ ncclResult_t ncclLaunchKernel(struct ncclComm* comm, struct ncclKernelPlan* plan
 
 1. 先调 `uploadWork` 把 work 数据写到目标位置（args/fifo/persistent）：
 
-[FACT:src/enqueue/enqueue.cc:1365-1407]
+[FACT:src/enqueue/enqueue.cc:1365-1407](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1365-L1407)
 
 ```cpp
 static ncclResult_t uploadWork(struct ncclComm* comm, struct ncclKernelPlan* plan) {
@@ -678,7 +678,7 @@ static ncclResult_t uploadWork(struct ncclComm* comm, struct ncclKernelPlan* pla
 
 2. 然后构造 CUDA launch 属性。对于 sm90+，会设置 cluster 维度：
 
-[FACT:src/enqueue/enqueue.cc:1929-1936]
+[FACT:src/enqueue/enqueue.cc:1929-1936](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1929-L1936)
 
 ```cpp
 if (clusterSize) {
@@ -693,7 +693,7 @@ if (clusterSize) {
 
 3. 最后调 `cuLaunchKernelEx`：
 
-[FACT:src/enqueue/enqueue.cc:1992]
+[FACT:src/enqueue/enqueue.cc:1992](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1992)
 
 ```cpp
 CUCHECKGOTO(cuLaunchKernelEx(&launchConfig, fn, nullptr, extra), ret, do_return);
@@ -703,7 +703,7 @@ CUCHECKGOTO(cuLaunchKernelEx(&launchConfig, fn, nullptr, extra), ret, do_return)
 
 设备侧 kernel 收到工单后，根据算法调用对应的 `RunWorkColl` 特化。以 Ring AllReduce 为例：
 
-[FACT:src/device/all_reduce.h:14-83]
+[FACT:src/device/all_reduce.h:14-83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/all_reduce.h#L14-L83)
 
 ```cpp
 template <typename T, typename RedOp, typename Proto>
@@ -805,7 +805,7 @@ sequenceDiagram
 
 **踩坑点**：`uploadWork` 里对 persistent 模式的处理很复杂——它需要分配显存、拷贝数据、记录事件，还要在 CUDA Graph 捕获模式下正确工作：
 
-[FACT:src/enqueue/enqueue.cc:1445-1478]
+[FACT:src/enqueue/enqueue.cc:1445-1478](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1445-L1478)
 
 ```cpp
 CUDACHECKGOTO(cudaThreadExchangeStreamCaptureMode(&mode), result, fail);
@@ -840,7 +840,7 @@ CUDACHECKGOTO(cudaEventRecord(memcpyDone, deviceStream), result, fail);
 
 **源码依据**：`initTransportsRank` 末尾的 intra-node barrier 会等待所有本机 rank：
 
-[FACT:src/init.cc:1968-1971]
+[FACT:src/init.cc:1968-1971](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1968-L1971)
 
 ```cpp
 /* Local intra-node barrier */
@@ -853,7 +853,7 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm->bootstrap, comm->localRankToRank, 
 
 **原因**：`waitWorkFifoAvailable` 在等 FIFO 空间，但消费端（kernel）没有推进。
 
-[FACT:src/enqueue/enqueue.cc:1333-1349]
+[FACT:src/enqueue/enqueue.cc:1333-1349](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1333-L1349)
 
 ```cpp
 static ncclResult_t waitWorkFifoAvailable(struct ncclComm* comm, uint32_t desiredProduced) {
@@ -886,7 +886,7 @@ static ncclResult_t waitWorkFifoAvailable(struct ncclComm* comm, uint32_t desire
 
 **源码依据**：`uploadWork` 的 persistent 分支：
 
-[FACT:src/enqueue/enqueue.cc:1445]
+[FACT:src/enqueue/enqueue.cc:1445](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1445)
 
 ```cpp
 CUDACHECKGOTO(cudaThreadExchangeStreamCaptureMode(&mode), result, fail);

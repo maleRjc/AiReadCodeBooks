@@ -14,7 +14,7 @@ Tokio 的 `Mutex` 没有自己实现等待队列，而是**完全建立在信号
 
 `Mutex<T>` 的字段极简：
 
-[FACT:tokio/src/sync/mutex.rs:133-138]
+[FACT:tokio/src/sync/mutex.rs:133-138](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L133-L138)
 
 ```rust
 pub struct Mutex {
@@ -25,11 +25,11 @@ pub struct Mutex {
 }
 ```
 
-三个字段各司其职：`s` 是一个**许可数为 1 的信号量**，`c` 是 `UnsafeCell<T>` 包裹的受保护数据。注意这里的 `semaphore` 是 `batch_semaphore` 的别名 [FACT:tokio/src/sync/mutex.rs:3-3]，也就是底层实现，而非 `sync::Semaphore` 那层公开封装。
+三个字段各司其职：`s` 是一个**许可数为 1 的信号量**，`c` 是 `UnsafeCell<T>` 包裹的受保护数据。注意这里的 `semaphore` 是 `batch_semaphore` 的别名 [FACT:tokio/src/sync/mutex.rs:3-3](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L3-L3)，也就是底层实现，而非 `sync::Semaphore` 那层公开封装。
 
 `MutexGuard<'a, T>` 则只持有一个对 `Mutex` 的引用：
 
-[FACT:tokio/src/sync/mutex.rs:151-157]
+[FACT:tokio/src/sync/mutex.rs:151-157](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L151-L157)
 
 ```rust
 pub struct MutexGuard {
@@ -39,11 +39,11 @@ pub struct MutexGuard {
 }
 ```
 
-这里有个关键设计：`MutexGuard` **不持有信号量许可对象**，只持有 `&Mutex`。释放锁的动作发生在 `Drop` 里，直接调用 `self.lock.s.release(1)` [FACT:tokio/src/sync/mutex.rs:959-961]。这与 `SemaphorePermit` 持有 `permits: usize` 计数、在 Drop 时归还不同——Mutex 的许可数恒为 1，不需要计数。
+这里有个关键设计：`MutexGuard` **不持有信号量许可对象**，只持有 `&Mutex`。释放锁的动作发生在 `Drop` 里，直接调用 `self.lock.s.release(1)` [FACT:tokio/src/sync/mutex.rs:959-961](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L959-L961)。这与 `SemaphorePermit` 持有 `permits: usize` 计数、在 Drop 时归还不同——Mutex 的许可数恒为 1，不需要计数。
 
 `Send`/`Sync` 的边界值得单独看：
 
-[FACT:tokio/src/sync/mutex.rs:258-259]
+[FACT:tokio/src/sync/mutex.rs:258-259](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L258-L259)
 
 ```rust
 unsafe impl Send for Mutex where T: ?Sized + Send {}
@@ -56,11 +56,11 @@ unsafe impl Sync for Mutex where T: ?Sized + Send {}
 
 代入场景：任务 A 调用 `mutex.lock().await`，此时锁空闲。
 
-第一步，`lock()` 构造一个 async 块，内部先 `self.acquire().await`，成功后构造 `MutexGuard` [FACT:tokio/src/sync/mutex.rs:434-443]。
+第一步，`lock()` 构造一个 async 块，内部先 `self.acquire().await`，成功后构造 `MutexGuard` [FACT:tokio/src/sync/mutex.rs:434-443](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L434-L443)。
 
 第二步，`acquire()` 直接委托给信号量：
 
-[FACT:tokio/src/sync/mutex.rs:655-663]
+[FACT:tokio/src/sync/mutex.rs:655-663](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L655-L663)
 
 ```rust
 async fn acquire(&self) {
@@ -75,7 +75,7 @@ async fn acquire(&self) {
 
 第三步，若锁被占用，`s.acquire(1)` 返回 `Pending`，当前任务的 Waker 被登记进信号量的等待队列。**Waker 存在哪里？** 答案在 `batch_semaphore` 的等待队列里（本章源码材料未展开该文件，但其角色是：每个等待者持有一个 Waker，按 FIFO 排队）。
 
-第四步，持有锁的任务 B 释放锁时，`MutexGuard::drop` 调用 `s.release(1)` [FACT:tokio/src/sync/mutex.rs:965-975]，信号量把许可交给队首等待者并唤醒其 Waker，任务 A 被重新调度，`acquire` 返回 `Ok`，构造出 `MutexGuard`。
+第四步，持有锁的任务 B 释放锁时，`MutexGuard::drop` 调用 `s.release(1)` [FACT:tokio/src/sync/mutex.rs:965-975](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L965-L975)，信号量把许可交给队首等待者并唤醒其 Waker，任务 A 被重新调度，`acquire` 返回 `Ok`，构造出 `MutexGuard`。
 
 整个流程可以用下面的时序图刻画：
 
@@ -100,11 +100,11 @@ sequenceDiagram
 
 ## 设计思考：FIFO 公平性与取消安全
 
-文档明确声明 Tokio 的 Mutex 保证 FIFO [FACT:tokio/src/sync/mutex.rs:20-22]。这一公平性来自底层信号量的排队语义。公平的代价是：一次 `lock` 被取消（比如在 `select!` 中落败）会让你**失去队列中的位置** [FACT:tokio/src/sync/mutex.rs:415-419]。这不是 bug，而是 FIFO 队列的必然——取消意味着从队列中移除，重新 `lock` 就得重新排队。
+文档明确声明 Tokio 的 Mutex 保证 FIFO [FACT:tokio/src/sync/mutex.rs:20-22](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L20-L22)。这一公平性来自底层信号量的排队语义。公平的代价是：一次 `lock` 被取消（比如在 `select!` 中落败）会让你**失去队列中的位置** [FACT:tokio/src/sync/mutex.rs:415-419](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L415-L419)。这不是 bug，而是 FIFO 队列的必然——取消意味着从队列中移除，重新 `lock` 就得重新排队。
 
-另一个反直觉的设计是**不投毒**（no poisoning）。`std::sync::Mutex` 在持锁线程 panic 时会标记为 poisoned，后续 `lock` 返回 `Err`。Tokio 的 Mutex 不这么做：持锁者 panic 时锁会被正常释放 [FACT:tokio/src/sync/mutex.rs:122-125]。文档警告，如果 panic 被捕获，受保护数据可能处于不一致状态。这是异步场景下的务实取舍——panic 在异步任务里通常意味着任务终止，投毒机制反而增加复杂度。
+另一个反直觉的设计是**不投毒**（no poisoning）。`std::sync::Mutex` 在持锁线程 panic 时会标记为 poisoned，后续 `lock` 返回 `Err`。Tokio 的 Mutex 不这么做：持锁者 panic 时锁会被正常释放 [FACT:tokio/src/sync/mutex.rs:122-125](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L122-L125)。文档警告，如果 panic 被捕获，受保护数据可能处于不一致状态。这是异步场景下的务实取舍——panic 在异步任务里通常意味着任务终止，投毒机制反而增加复杂度。
 
-`MutexGuard::map` 系列方法值得一提。它允许把整个 `MutexGuard<T>` 降级为只保护某个子字段的 `MappedMutexGuard<U>`。实现上，它先用闭包算出子字段指针 `data`，再通过 `skip_drop` 把原 guard 拆解成不触发 Drop 的 `MutexGuardInner`，最后构造新的 guard [FACT:tokio/src/sync/mutex.rs:869-883]。`skip_drop` 用 `ManuallyDrop` + `ptr::read` 转移字段所有权，避免 `Drop` 被调用两次 [FACT:tokio/src/sync/mutex.rs:827-836]。这是 Rust 里「转移所有权但不触发析构」的经典手法。
+`MutexGuard::map` 系列方法值得一提。它允许把整个 `MutexGuard<T>` 降级为只保护某个子字段的 `MappedMutexGuard<U>`。实现上，它先用闭包算出子字段指针 `data`，再通过 `skip_drop` 把原 guard 拆解成不触发 Drop 的 `MutexGuardInner`，最后构造新的 guard [FACT:tokio/src/sync/mutex.rs:869-883](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L869-L883)。`skip_drop` 用 `ManuallyDrop` + `ptr::read` 转移字段所有权，避免 `Drop` 被调用两次 [FACT:tokio/src/sync/mutex.rs:827-836](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L827-L836)。这是 Rust 里「转移所有权但不触发析构」的经典手法。
 
 # Semaphore：许可计数与等待队列如何实现背压
 
@@ -116,7 +116,7 @@ sequenceDiagram
 
 公开的 `Semaphore` 只是底层 `batch_semaphore::Semaphore` 的薄封装：
 
-[FACT:tokio/src/sync/semaphore.rs:427-432]
+[FACT:tokio/src/sync/semaphore.rs:427-432](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L427-L432)
 
 ```rust
 pub struct Semaphore {
@@ -128,7 +128,7 @@ pub struct Semaphore {
 
 `SemaphorePermit<'a>` 持有信号量引用和许可计数：
 
-[FACT:tokio/src/sync/semaphore.rs:442-445]
+[FACT:tokio/src/sync/semaphore.rs:442-445](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L442-L445)
 
 ```rust
 pub struct SemaphorePermit {
@@ -137,22 +137,22 @@ pub struct SemaphorePermit {
 }
 ```
 
-`permits` 字段是理解 `forget`/`merge`/`split` 的关键。`forget` 把 `permits` 置零 [FACT:tokio/src/sync/semaphore.rs:1193-1195]，这样 Drop 时归还 0 个许可——等价于「永久消耗」这些许可。`split` 从当前许可里切出 n 个给新 permit [FACT:tokio/src/sync/semaphore.rs:1260-1271]。`merge` 把另一个 permit 的计数合并进来，并断言两者来自同一信号量 [FACT:tokio/src/sync/semaphore.rs:1230-1240]。
+`permits` 字段是理解 `forget`/`merge`/`split` 的关键。`forget` 把 `permits` 置零 [FACT:tokio/src/sync/semaphore.rs:1193-1195](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L1193-L1195)，这样 Drop 时归还 0 个许可——等价于「永久消耗」这些许可。`split` 从当前许可里切出 n 个给新 permit [FACT:tokio/src/sync/semaphore.rs:1260-1271](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L1260-L1271)。`merge` 把另一个 permit 的计数合并进来，并断言两者来自同一信号量 [FACT:tokio/src/sync/semaphore.rs:1230-1240](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L1230-L1240)。
 
 > **〔设计推断与架构权衡〕**
-> `MAX_PERMITS` 是 `usize::MAX >> 3` [FACT:tokio/src/sync/semaphore.rs:476-479]。为什么右移 3 位？ 底层 `batch_semaphore` 需要在高位比特里编码状态标志（如关闭标志），所以把可用许可数限制在低位，留出高位做标志位。这是把「计数 + 状态」压进单个 `usize` 的常见技巧。
+> `MAX_PERMITS` 是 `usize::MAX >> 3` [FACT:tokio/src/sync/semaphore.rs:476-479](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L476-L479)。为什么右移 3 位？ 底层 `batch_semaphore` 需要在高位比特里编码状态标志（如关闭标志），所以把可用许可数限制在低位，留出高位做标志位。这是把「计数 + 状态」压进单个 `usize` 的常见技巧。
 
 ## Step-by-Step：acquire 与 release 的许可流转
 
 场景：信号量初始 2 个许可，任务 A `acquire()`，任务 B `acquire_many(2)`。
 
-`acquire()` 委托给 `ll_sem.acquire(1)`，成功后构造 `SemaphorePermit { permits: 1 }` [FACT:tokio/src/sync/semaphore.rs:614-631]。`acquire_many(2)` 类似，但传 2 [FACT:tokio/src/sync/semaphore.rs:661-679]。
+`acquire()` 委托给 `ll_sem.acquire(1)`，成功后构造 `SemaphorePermit { permits: 1 }` [FACT:tokio/src/sync/semaphore.rs:614-631](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L614-L631)。`acquire_many(2)` 类似，但传 2 [FACT:tokio/src/sync/semaphore.rs:661-679](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L661-L679)。
 
-若许可不足，`ll_sem.acquire(n)` 返回 `Pending`，Waker 入队。这里有个公平性细节：文档指出，如果队首是一个 `acquire_many(5)` 而当前只剩 3 个许可，即使后面有个 `acquire(1)` 能立刻满足，它也必须等——因为队首的大车占着队 [FACT:tokio/src/sync/semaphore.rs:19-24]。这是严格 FIFO 的代价，避免了饥饿。
+若许可不足，`ll_sem.acquire(n)` 返回 `Pending`，Waker 入队。这里有个公平性细节：文档指出，如果队首是一个 `acquire_many(5)` 而当前只剩 3 个许可，即使后面有个 `acquire(1)` 能立刻满足，它也必须等——因为队首的大车占着队 [FACT:tokio/src/sync/semaphore.rs:19-24](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L19-L24)。这是严格 FIFO 的代价，避免了饥饿。
 
 释放路径在 Drop：
 
-[FACT:tokio/src/sync/semaphore.rs:1402-1404]
+[FACT:tokio/src/sync/semaphore.rs:1402-1404](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L1402-L1404)
 
 ```rust
 impl Drop for SemaphorePermit {
@@ -162,13 +162,13 @@ impl Drop for SemaphorePermit {
 }
 ```
 
-`add_permits` 委托给 `ll_sem.release(n)` [FACT:tokio/src/sync/semaphore.rs:568-570]，底层把许可还给等待队列，唤醒能凑够许可的等待者。
+`add_permits` 委托给 `ll_sem.release(n)` [FACT:tokio/src/sync/semaphore.rs:568-570](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L568-L570)，底层把许可还给等待队列，唤醒能凑够许可的等待者。
 
-内存序方面，文档给出了强保证：acquire、release、close 都是 `AcqRel` 操作，彼此全序，等价于单个原子变量上的 `AcqRel` [FACT:tokio/src/sync/semaphore.rs:35-42]。这意味着「先写数据再 release 许可」的写入，对「后 acquire 许可」的任务可见——信号量可以安全地在任务间传递数据。
+内存序方面，文档给出了强保证：acquire、release、close 都是 `AcqRel` 操作，彼此全序，等价于单个原子变量上的 `AcqRel` [FACT:tokio/src/sync/semaphore.rs:35-42](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L35-L42)。这意味着「先写数据再 release 许可」的写入，对「后 acquire 许可」的任务可见——信号量可以安全地在任务间传递数据。
 
 ## 设计思考：close 与背压
 
-`close()` 让所有等待者收到 `AcquireError`，且后续 `try_acquire` 返回 `Closed` [FACT:tokio/src/sync/semaphore.rs:1161-1163]。这是优雅关闭的基础：当接收端不再需要数据时，close 信号量能让所有阻塞的发送者立刻失败返回，而不是永远等待。
+`close()` 让所有等待者收到 `AcquireError`，且后续 `try_acquire` 返回 `Closed` [FACT:tokio/src/sync/semaphore.rs:1161-1163](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L1161-L1163)。这是优雅关闭的基础：当接收端不再需要数据时，close 信号量能让所有阻塞的发送者立刻失败返回，而不是永远等待。
 
 背压的本质在 mpsc 里体现得最清楚。下一节会看到，mpsc 的容量控制就是用一个许可数等于 buffer 大小的信号量实现的。
 
@@ -184,7 +184,7 @@ impl Drop for SemaphorePermit {
 
 `oneshot` 的 `Inner` 结构是理解其设计的核心：
 
-[FACT:tokio/src/sync/oneshot.rs:386-409]
+[FACT:tokio/src/sync/oneshot.rs:386-409](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L386-L409)
 
 ```rust
 struct Inner {
@@ -197,7 +197,7 @@ struct Inner {
 
 `state` 是一个 `AtomicUsize`，用位标志编码整个通道的状态。四个标志位定义在文件末尾：
 
-[FACT:tokio/src/sync/oneshot.rs:1488-1505]
+[FACT:tokio/src/sync/oneshot.rs:1488-1505](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1488-L1505)
 
 ```rust
 const RX_TASK_SET: usize = 0b00001;
@@ -206,13 +206,13 @@ const CLOSED: usize = 0b00100;
 const TX_TASK_SET: usize = 0b01000;
 ```
 
-`value` 是 `UnsafeCell<Option<T>>`，`tx_task` 和 `rx_task` 是 `Task` 类型，内部是 `UnsafeCell<MaybeUninit<Waker>>` [FACT:tokio/src/sync/oneshot.rs:411-411]。注意 `MaybeUninit`——Waker 可能未初始化，是否有效由 `state` 里的 `RX_TASK_SET`/`TX_TASK_SET` 位决定 [FACT:tokio/src/sync/oneshot.rs:396-399]。
+`value` 是 `UnsafeCell<Option<T>>`，`tx_task` 和 `rx_task` 是 `Task` 类型，内部是 `UnsafeCell<MaybeUninit<Waker>>` [FACT:tokio/src/sync/oneshot.rs:411-411](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L411-L411)。注意 `MaybeUninit`——Waker 可能未初始化，是否有效由 `state` 里的 `RX_TASK_SET`/`TX_TASK_SET` 位决定 [FACT:tokio/src/sync/oneshot.rs:396-399](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L396-L399)。
 
-**这个设计的精髓**：`VALUE_SENT` 位不仅表示「值已发送」，还决定了 `UnsafeCell` 的访问权归属。注释写得非常明确 [FACT:tokio/src/sync/oneshot.rs:1491-1496]：若 `VALUE_SENT` 置位，`UnsafeCell` 只能被接收方访问；若未置位，只能被发送方访问。这样就用一个原子位实现了无锁的所有权转移，避免了额外的锁。
+**这个设计的精髓**：`VALUE_SENT` 位不仅表示「值已发送」，还决定了 `UnsafeCell` 的访问权归属。注释写得非常明确 [FACT:tokio/src/sync/oneshot.rs:1491-1496](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1491-L1496)：若 `VALUE_SENT` 置位，`UnsafeCell` 只能被接收方访问；若未置位，只能被发送方访问。这样就用一个原子位实现了无锁的所有权转移，避免了额外的锁。
 
 `send` 的流程：
 
-[FACT:tokio/src/sync/oneshot.rs:622-646]
+[FACT:tokio/src/sync/oneshot.rs:622-646](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L622-L646)
 
 ```rust
 pub fn send(mut self, t: T) -> Result {
@@ -231,7 +231,7 @@ pub fn send(mut self, t: T) -> Result {
 
 先把值写入 `UnsafeCell`（此时 `VALUE_SENT` 未置位，接收方不会访问），再调用 `complete()` 尝试置位 `VALUE_SENT`。`complete()` 是一个 CAS 循环：
 
-[FACT:tokio/src/sync/oneshot.rs:1516-1549]
+[FACT:tokio/src/sync/oneshot.rs:1516-1549](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1516-L1549)
 
 ```rust
 fn set_complete(cell: &AtomicUsize) -> State {
@@ -251,11 +251,11 @@ fn set_complete(cell: &AtomicUsize) -> State {
 }
 ```
 
-为什么用 CAS 而非简单的 `fetch_or`？注释解释得很清楚 [FACT:tokio/src/sync/oneshot.rs:1517-1529]：如果通道已 `CLOSED`，就**不能**再置 `VALUE_SENT`。因为一旦置位，接收方会认为可以访问 `UnsafeCell`，而此时发送方正准备把值取回去（`consume_value`），两边同时访问就会数据竞争。所以 CAS 循环在发现 `CLOSED` 时提前 break，不置位。
+为什么用 CAS 而非简单的 `fetch_or`？注释解释得很清楚 [FACT:tokio/src/sync/oneshot.rs:1517-1529](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1517-L1529)：如果通道已 `CLOSED`，就**不能**再置 `VALUE_SENT`。因为一旦置位，接收方会认为可以访问 `UnsafeCell`，而此时发送方正准备把值取回去（`consume_value`），两边同时访问就会数据竞争。所以 CAS 循环在发现 `CLOSED` 时提前 break，不置位。
 
 `complete()` 返回后，如果成功置位且 `RX_TASK_SET` 已置位，就唤醒接收方：
 
-[FACT:tokio/src/sync/oneshot.rs:1300-1315]
+[FACT:tokio/src/sync/oneshot.rs:1300-1315](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1300-L1315)
 
 ```rust
 fn complete(&self) -> bool {
@@ -274,17 +274,17 @@ fn complete(&self) -> bool {
 
 接收方的 `poll_recv` 是状态机的核心：
 
-[FACT:tokio/src/sync/oneshot.rs:1317-1384]
+[FACT:tokio/src/sync/oneshot.rs:1317-1384](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1317-L1384)
 
-它先加载状态，若 `is_complete()` 则直接 `consume_value` 返回；若 `is_closed()` 返回 `Err`；否则进入「登记 Waker」分支。登记时先检查 `is_rx_task_set()`，若已设置且 `will_wake` 判断是同一个 Waker 就不重复设置；若不同则先 unset 再 set。这里有个微妙的竞态处理：unset 之后如果发现 `is_complete()` 变真了，要把标志位**重新 set 回去** [FACT:tokio/src/sync/oneshot.rs:1342-1344]，否则 Waker 会在 Drop 时泄漏（因为 Drop 依赖标志位判断是否要 drop Waker）。
+它先加载状态，若 `is_complete()` 则直接 `consume_value` 返回；若 `is_closed()` 返回 `Err`；否则进入「登记 Waker」分支。登记时先检查 `is_rx_task_set()`，若已设置且 `will_wake` 判断是同一个 Waker 就不重复设置；若不同则先 unset 再 set。这里有个微妙的竞态处理：unset 之后如果发现 `is_complete()` 变真了，要把标志位**重新 set 回去** [FACT:tokio/src/sync/oneshot.rs:1342-1344](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1342-L1344)，否则 Waker 会在 Drop 时泄漏（因为 Drop 依赖标志位判断是否要 drop Waker）。
 
-这个「unset 后重新 set」的模式在 `poll_closed` 里也出现 [FACT:tokio/src/sync/oneshot.rs:839-848]，是 oneshot 处理并发唤醒的标准手法。
+这个「unset 后重新 set」的模式在 `poll_closed` 里也出现 [FACT:tokio/src/sync/oneshot.rs:839-848](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L839-L848)，是 oneshot 处理并发唤醒的标准手法。
 
 ## mpsc::bounded：信号量驱动的背压
 
 mpsc 的容量控制完全交给信号量。`channel` 函数创建一个许可数等于 buffer 的信号量：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:159-171]
+[FACT:tokio/src/sync/mpsc/bounded.rs:159-171](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L159-L171)
 
 ```rust
 pub fn channel(buffer: usize) -> (Sender, Receiver) {
@@ -300,11 +300,11 @@ pub fn channel(buffer: usize) -> (Sender, Receiver) {
 }
 ```
 
-`Semaphore` 是 mpsc 内部的包装，同时持有底层信号量和 `bound`（最大容量）[FACT:tokio/src/sync/mpsc/bounded.rs:176-179]。`bound` 用于 `max_capacity` 查询，而 `available_permits` 给出当前容量 [FACT:tokio/src/sync/mpsc/bounded.rs:591-593]。
+`Semaphore` 是 mpsc 内部的包装，同时持有底层信号量和 `bound`（最大容量）[FACT:tokio/src/sync/mpsc/bounded.rs:176-179](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L176-L179)。`bound` 用于 `max_capacity` 查询，而 `available_permits` 给出当前容量 [FACT:tokio/src/sync/mpsc/bounded.rs:591-593](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L591-L593)。
 
 发送路径 `send` 先 `reserve` 再 `send`：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:816-824]
+[FACT:tokio/src/sync/mpsc/bounded.rs:816-824](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L816-L824)
 
 ```rust
 pub async fn send(&self, value: T) -> Result> {
@@ -318,9 +318,9 @@ pub async fn send(&self, value: T) -> Result> {
 }
 ```
 
-`reserve` 内部调用 `reserve_inner(1)`，后者先检查 `n > max_capacity` 直接返回错误，再 `acquire(n)` [FACT:tokio/src/sync/mpsc/bounded.rs:1272-1311]。这里有个精妙的 `WakeReceiverOnDrop` 守卫：
+`reserve` 内部调用 `reserve_inner(1)`，后者先检查 `n > max_capacity` 直接返回错误，再 `acquire(n)` [FACT:tokio/src/sync/mpsc/bounded.rs:1272-1311](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1272-L1311)。这里有个精妙的 `WakeReceiverOnDrop` 守卫：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:1286-1301]
+[FACT:tokio/src/sync/mpsc/bounded.rs:1286-1301](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1286-L1301)
 
 ```rust
 struct WakeReceiverOnDrop {
@@ -337,11 +337,11 @@ impl Drop for WakeReceiverOnDrop {
 }
 ```
 
-注释解释了动机 [FACT:tokio/src/sync/mpsc/bounded.rs:1279-1285]：如果 `reserve` 在拿到部分许可后被取消（比如 `select!` 落败），底层 `Acquire` 会在 Drop 时归还这些许可，但**不会**像 `Permit` 那样通知接收方。如果此时通道已关闭且空闲，接收方可能永远等不到「通道已关闭」的通知。这个守卫在 Drop 时补上这个唤醒。成功时用 `mem::forget(guard)` 取消守卫 [FACT:tokio/src/sync/mpsc/bounded.rs:1306-1306]，因为成功路径由 `Permit` 接管通知职责。
+注释解释了动机 [FACT:tokio/src/sync/mpsc/bounded.rs:1279-1285](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1279-L1285)：如果 `reserve` 在拿到部分许可后被取消（比如 `select!` 落败），底层 `Acquire` 会在 Drop 时归还这些许可，但**不会**像 `Permit` 那样通知接收方。如果此时通道已关闭且空闲，接收方可能永远等不到「通道已关闭」的通知。这个守卫在 Drop 时补上这个唤醒。成功时用 `mem::forget(guard)` 取消守卫 [FACT:tokio/src/sync/mpsc/bounded.rs:1306-1306](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1306-L1306)，因为成功路径由 `Permit` 接管通知职责。
 
 `Permit` 的 Drop 也做同样的事：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:1732-1745]
+[FACT:tokio/src/sync/mpsc/bounded.rs:1732-1745](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1732-L1745)
 
 ```rust
 impl Drop for Permit {
@@ -356,13 +356,13 @@ impl Drop for Permit {
 }
 ```
 
-`Permit::send` 则用 `mem::forget` 跳过 Drop，避免归还许可 [FACT:tokio/src/sync/mpsc/bounded.rs:1721-1728]。
+`Permit::send` 则用 `mem::forget` 跳过 Drop，避免归还许可 [FACT:tokio/src/sync/mpsc/bounded.rs:1721-1728](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1721-L1728)。
 
-接收路径 `recv` 用 `poll_fn` 包装 `chan.recv(cx)` [FACT:tokio/src/sync/mpsc/bounded.rs:243-246]。`poll_recv` 直接委托 [FACT:tokio/src/sync/mpsc/bounded.rs:650-652]。真正的等待队列逻辑在 `chan` 模块（本章未展开），但可以推断：接收方 Waker 存在 `chan::Rx` 里，当发送方 `send` 时唤醒。
+接收路径 `recv` 用 `poll_fn` 包装 `chan.recv(cx)` [FACT:tokio/src/sync/mpsc/bounded.rs:243-246](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L243-L246)。`poll_recv` 直接委托 [FACT:tokio/src/sync/mpsc/bounded.rs:650-652](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L650-L652)。真正的等待队列逻辑在 `chan` 模块（本章未展开），但可以推断：接收方 Waker 存在 `chan::Rx` 里，当发送方 `send` 时唤醒。
 
 `try_send` 展示了非阻塞路径：
 
-[FACT:tokio/src/sync/mpsc/bounded.rs:924-934]
+[FACT:tokio/src/sync/mpsc/bounded.rs:924-934](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L924-L934)
 
 ```rust
 pub fn try_send(&self, message: T) -> Result> {
@@ -380,23 +380,23 @@ pub fn try_send(&self, message: T) -> Result> {
 
 ## 设计思考：取消安全与消息丢失
 
-mpsc 文档反复强调取消安全 [FACT:tokio/src/sync/mpsc/bounded.rs:776-784]：`send` 在 `select!` 中落败时，**消息会被丢弃**。要避免丢失，必须用 `reserve` 拿到 `Permit` 再 `send`——因为 `Permit` 已经预留了容量，`send` 是同步的、不会被打断。
+mpsc 文档反复强调取消安全 [FACT:tokio/src/sync/mpsc/bounded.rs:776-784](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L776-L784)：`send` 在 `select!` 中落败时，**消息会被丢弃**。要避免丢失，必须用 `reserve` 拿到 `Permit` 再 `send`——因为 `Permit` 已经预留了容量，`send` 是同步的、不会被打断。
 
-`recv` 则是取消安全的 [FACT:tokio/src/sync/mpsc/bounded.rs:199-204]：若 `recv` 在 `select!` 中落败，保证没有消息被消费。这是因为 `recv` 的 `poll_recv` 只在真正取到消息时才返回 `Ready`，`Pending` 时不动队列。
+`recv` 则是取消安全的 [FACT:tokio/src/sync/mpsc/bounded.rs:199-204](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L199-L204)：若 `recv` 在 `select!` 中落败，保证没有消息被消费。这是因为 `recv` 的 `poll_recv` 只在真正取到消息时才返回 `Ready`，`Pending` 时不动队列。
 
-`oneshot` 的 `Receiver` 作为 Future 也是取消安全的 [FACT:tokio/src/sync/oneshot.rs:246-251]。但要注意：`oneshot` 的 `send` 是同步的，所以不存在「send 被取消」的问题——要么发出去，要么 `Err` 返回原值。
+`oneshot` 的 `Receiver` 作为 Future 也是取消安全的 [FACT:tokio/src/sync/oneshot.rs:246-251](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L246-L251)。但要注意：`oneshot` 的 `send` 是同步的，所以不存在「send 被取消」的问题——要么发出去，要么 `Err` 返回原值。
 
 # 设计思考与生产踩坑
 
-**坑一：用异步 Mutex 保护纯数据。** 文档明确建议 [FACT:tokio/src/sync/mutex.rs:26-36]：如果受保护的是纯数据（无 `.await` 需求），用 `std::sync::Mutex` 或 `parking_lot` 更快。异步 Mutex 的开销在于信号量的原子操作和可能的任务调度。只有当需要在持锁期间 `.await`（比如持锁访问数据库连接）时，才用异步 Mutex。
+**坑一：用异步 Mutex 保护纯数据。** 文档明确建议 [FACT:tokio/src/sync/mutex.rs:26-36](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L26-L36)：如果受保护的是纯数据（无 `.await` 需求），用 `std::sync::Mutex` 或 `parking_lot` 更快。异步 Mutex 的开销在于信号量的原子操作和可能的任务调度。只有当需要在持锁期间 `.await`（比如持锁访问数据库连接）时，才用异步 Mutex。
 
-**坑二：持锁跨 `.await` 导致死锁。** 这是异步 Mutex 最危险的陷阱。如果任务 A 持锁后 `.await` 一个需要任务 B 完成的事件，而任务 B 又在等这把锁，就死锁了。`std::sync::Mutex` 的 guard 不是 `Send`（在可移动任务中），编译器会阻止跨 `.await` 持有；但异步 Mutex 的 guard 是 `Send` [FACT:tokio/src/sync/mutex.rs:314-314]，编译器不拦你，需要自己保证不形成循环等待。
+**坑二：持锁跨 `.await` 导致死锁。** 这是异步 Mutex 最危险的陷阱。如果任务 A 持锁后 `.await` 一个需要任务 B 完成的事件，而任务 B 又在等这把锁，就死锁了。`std::sync::Mutex` 的 guard 不是 `Send`（在可移动任务中），编译器会阻止跨 `.await` 持有；但异步 Mutex 的 guard 是 `Send` [FACT:tokio/src/sync/mutex.rs:314-314](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L314-L314)，编译器不拦你，需要自己保证不形成循环等待。
 
-**坑三：`reserve` 后忘记 `send`。** `Permit` 的 Drop 会归还许可 [FACT:tokio/src/sync/mpsc/bounded.rs:1732-1745]，所以不会泄漏容量。但如果通道已关闭且空闲，Drop 会唤醒接收方——这个唤醒是必要的，否则接收方可能永远等不到关闭通知。
+**坑三：`reserve` 后忘记 `send`。** `Permit` 的 Drop 会归还许可 [FACT:tokio/src/sync/mpsc/bounded.rs:1732-1745](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1732-L1745)，所以不会泄漏容量。但如果通道已关闭且空闲，Drop 会唤醒接收方——这个唤醒是必要的，否则接收方可能永远等不到关闭通知。
 
-**坑四：`oneshot` 的 `poll` 可能虚假 `Pending`。** 文档说明 [FACT:tokio/src/sync/oneshot.rs:236-242]：即使消息已发送，`poll` 也可能返回 `Pending`。这不是 bug，而是并发竞态下的正常现象——调用者会被唤醒重试，消息不会丢失，只是延迟。
+**坑四：`oneshot` 的 `poll` 可能虚假 `Pending`。** 文档说明 [FACT:tokio/src/sync/oneshot.rs:236-242](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L236-L242)：即使消息已发送，`poll` 也可能返回 `Pending`。这不是 bug，而是并发竞态下的正常现象——调用者会被唤醒重试，消息不会丢失，只是延迟。
 
-**坑五：`forget_permits` 的语义。** `forget_permits(n)` 尝试减少 n 个许可，返回实际减少的数量 [FACT:tokio/src/sync/semaphore.rs:576-578]。它不会阻塞，也不会唤醒等待者——只是单纯地「吞掉」许可。用于动态收缩信号量容量。
+**坑五：`forget_permits` 的语义。** `forget_permits(n)` 尝试减少 n 个许可，返回实际减少的数量 [FACT:tokio/src/sync/semaphore.rs:576-578](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/semaphore.rs#L576-L578)。它不会阻塞，也不会唤醒等待者——只是单纯地「吞掉」许可。用于动态收缩信号量容量。
 
 # 本章小结
 
@@ -411,15 +411,15 @@ mpsc 文档反复强调取消安全 [FACT:tokio/src/sync/mpsc/bounded.rs:776-784
 
 Q: 如果把 `set_complete` 的 CAS 循环改成简单的 `fetch_or(VALUE_SENT)`，在什么并发场景下会触发数据竞争？
 
-**参考解析**：`set_complete` 用 CAS 循环而非 `fetch_or` 的原因在注释里写明 [FACT:tokio/src/sync/oneshot.rs:1517-1529]：必须在置 `VALUE_SENT` 前检查 `CLOSED`。如果改成无条件 `fetch_or`，考虑这个时序：接收方先调用 `close()` 置 `CLOSED` [FACT:tokio/src/sync/oneshot.rs:1569-1574]，发送方随后 `send` 写入值并 `fetch_or(VALUE_SENT)`。此时 `VALUE_SENT` 和 `CLOSED` 同时置位，接收方的 `poll_recv` 看到 `is_complete()` 为真，会调用 `consume_value` 取走值 [FACT:tokio/src/sync/oneshot.rs:1325-1330]；而发送方的 `complete()` 返回后，因为 `prev.is_closed()` 为真，会调用 `consume_value` 把值取回 [FACT:tokio/src/sync/oneshot.rs:1300-1315]。两边同时访问 `UnsafeCell`，数据竞争。CAS 循环在发现 `CLOSED` 时提前 break，不置 `VALUE_SENT`，从而保证「关闭后发送方独占访问权」这一不变量。
+**参考解析**：`set_complete` 用 CAS 循环而非 `fetch_or` 的原因在注释里写明 [FACT:tokio/src/sync/oneshot.rs:1517-1529](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1517-L1529)：必须在置 `VALUE_SENT` 前检查 `CLOSED`。如果改成无条件 `fetch_or`，考虑这个时序：接收方先调用 `close()` 置 `CLOSED` [FACT:tokio/src/sync/oneshot.rs:1569-1574](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1569-L1574)，发送方随后 `send` 写入值并 `fetch_or(VALUE_SENT)`。此时 `VALUE_SENT` 和 `CLOSED` 同时置位，接收方的 `poll_recv` 看到 `is_complete()` 为真，会调用 `consume_value` 取走值 [FACT:tokio/src/sync/oneshot.rs:1325-1330](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1325-L1330)；而发送方的 `complete()` 返回后，因为 `prev.is_closed()` 为真，会调用 `consume_value` 把值取回 [FACT:tokio/src/sync/oneshot.rs:1300-1315](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/oneshot.rs#L1300-L1315)。两边同时访问 `UnsafeCell`，数据竞争。CAS 循环在发现 `CLOSED` 时提前 break，不置 `VALUE_SENT`，从而保证「关闭后发送方独占访问权」这一不变量。
 
 Q: `reserve_inner` 里的 `WakeReceiverOnDrop` 守卫在成功路径上用 `mem::forget` 跳过，如果去掉这个 `forget` 会发生什么？
 
-**参考解析**：守卫的 Drop 逻辑是「若信号量已关闭且空闲则唤醒接收方」[FACT:tokio/src/sync/mpsc/bounded.rs:1290-1298]。成功路径上，`acquire(n)` 返回 `Ok`，调用者拿到许可并会构造 `Permit`，由 `Permit` 负责后续的通知职责。如果不去掉守卫，守卫在函数返回时 Drop，会额外检查一次「已关闭且空闲」——但此时许可已被 `reserve_inner` 的调用者持有，信号量并非空闲（`is_idle` 为假），所以实际上不会重复唤醒。但更关键的是语义清晰：成功路径的唤醒职责应完全由 `Permit` 承担，守卫只负责「取消/失败」路径的补偿。`mem::forget` 明确表达了「这条路径不需要守卫」的意图。如果去掉 `forget` 且恰好信号量处于「已关闭且空闲」的边界状态（比如 `acquire` 返回 `Ok` 但许可尚未被 `Permit` 接管），可能产生一次多余的唤醒——虽然不会导致错误，但会浪费一次调度。
+**参考解析**：守卫的 Drop 逻辑是「若信号量已关闭且空闲则唤醒接收方」[FACT:tokio/src/sync/mpsc/bounded.rs:1290-1298](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mpsc/bounded.rs#L1290-L1298)。成功路径上，`acquire(n)` 返回 `Ok`，调用者拿到许可并会构造 `Permit`，由 `Permit` 负责后续的通知职责。如果不去掉守卫，守卫在函数返回时 Drop，会额外检查一次「已关闭且空闲」——但此时许可已被 `reserve_inner` 的调用者持有，信号量并非空闲（`is_idle` 为假），所以实际上不会重复唤醒。但更关键的是语义清晰：成功路径的唤醒职责应完全由 `Permit` 承担，守卫只负责「取消/失败」路径的补偿。`mem::forget` 明确表达了「这条路径不需要守卫」的意图。如果去掉 `forget` 且恰好信号量处于「已关闭且空闲」的边界状态（比如 `acquire` 返回 `Ok` 但许可尚未被 `Permit` 接管），可能产生一次多余的唤醒——虽然不会导致错误，但会浪费一次调度。
 
 Q: 若把 `MutexGuard` 改成持有信号量许可对象（像 `SemaphorePermit` 那样），会引入什么问题？
 
-**参考解析**：当前 `MutexGuard` 只持有 `&Mutex`，Drop 时调用 `self.lock.s.release(1)` [FACT:tokio/src/sync/mutex.rs:959-961]。如果改成持有许可对象，会引入几个问题。其一，`MutexGuard::map` 系列方法需要把 guard 拆解成 `MappedMutexGuard`，只保护子字段 [FACT:tokio/src/sync/mutex.rs:869-883]。当前设计下，`MappedMutexGuard` 只需持有 `&Semaphore` 和子字段指针 [FACT:tokio/src/sync/mutex.rs:190-199]，Drop 时 `self.s.release(1)` [FACT:tokio/src/sync/mutex.rs:1252-1262]。如果 guard 持有许可对象，map 时就得转移许可对象的所有权，而 `MappedMutexGuard` 的字段布局会更复杂。其二，许可对象通常带 `permits: usize` 计数，对 Mutex 而言这个计数恒为 1，是冗余的。其三，`MutexGuard` 的 `Send`/`Sync` 边界已经通过 `unsafe impl` 精确控制 [FACT:tokio/src/sync/mutex.rs:260-263]，持有许可对象会引入额外的 trait 约束。当前「只持引用 + 手动 release」的设计更轻量，也更容易支持 `map`。
+**参考解析**：当前 `MutexGuard` 只持有 `&Mutex`，Drop 时调用 `self.lock.s.release(1)` [FACT:tokio/src/sync/mutex.rs:959-961](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L959-L961)。如果改成持有许可对象，会引入几个问题。其一，`MutexGuard::map` 系列方法需要把 guard 拆解成 `MappedMutexGuard`，只保护子字段 [FACT:tokio/src/sync/mutex.rs:869-883](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L869-L883)。当前设计下，`MappedMutexGuard` 只需持有 `&Semaphore` 和子字段指针 [FACT:tokio/src/sync/mutex.rs:190-199](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L190-L199)，Drop 时 `self.s.release(1)` [FACT:tokio/src/sync/mutex.rs:1252-1262](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L1252-L1262)。如果 guard 持有许可对象，map 时就得转移许可对象的所有权，而 `MappedMutexGuard` 的字段布局会更复杂。其二，许可对象通常带 `permits: usize` 计数，对 Mutex 而言这个计数恒为 1，是冗余的。其三，`MutexGuard` 的 `Send`/`Sync` 边界已经通过 `unsafe impl` 精确控制 [FACT:tokio/src/sync/mutex.rs:260-263](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/sync/mutex.rs#L260-L263)，持有许可对象会引入额外的 trait 约束。当前「只持引用 + 手动 release」的设计更轻量，也更容易支持 `map`。
 
 至此，我们已经看清 `tokio::sync` 如何用「等待者队列 + Waker 唤醒」这一统一模式，支撑起 Mutex、Semaphore 与各类通道的异步等待。但并非所有阻塞都能被异步化——有些操作（如文件系统调用、CPU 密集计算）本质上会阻塞线程。下一章我们将进入 `spawn_blocking` 线程池与 `block_on` 的边界，看看 Tokio 如何在异步运行时与同步阻塞之间架起桥梁。
 

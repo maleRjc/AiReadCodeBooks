@@ -18,7 +18,7 @@
   ],
   "summary": "A systemic architectural breakdown of Tokio, tracing the complete lifecycle of asynchronous tasks: Future/Waker cooperative polling, work-stealing scheduler, I/O reactor (epoll), and hierarchical timing wheels.",
   "summaryZh": "本书以「一个异步任务从诞生到消亡」为主线，逐层拆解 Tokio 作为 Rust 异步运行时的核心设计：Future/Waker 协作式调度、工作窃取调度器、I/O Reactor 驱动与分级时间轮。",
-  "webReaderUrl": "https://aireadcode.com/books/tokio.html",
+  "webReaderUrl": "https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01",
   "chapters": [
     {
       "index": 1,
@@ -132,5 +132,9 @@
       "pathEn": "en/14-runtime-evolution-and-tradeoffs.md",
       "pathZh": "zh/14-runtime-evolution-and-tradeoffs.md"
     }
-  ]
+  ],
+  "commit": "e800714ad714f1d996ddd56265b550d879349c0a",
+  "branch": "master",
+  "version": "v1.43.0",
+  "defaultFile": "tokio/src/future/mod.rs"
 }

@@ -4,7 +4,7 @@
 [![Stars](https://img.shields.io/badge/Stars-6.2k-yellow)](#)
 [![Chapters](https://img.shields.io/badge/Chapters-25-emerald)](#)
 [![Language](https://img.shields.io/badge/Language-C++%2FCUDA-purple)](#)
-[![Interactive Reader](https://img.shields.io/badge/Web%20Reader-aireadcode.com-cyan)](https://aireadcode.com/books/nccl.html)
+[![Interactive Reader](https://img.shields.io/badge/Web%20Reader-aireadcode.com-cyan)](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01)
 
 > A 25-chapter tour-de-force of NVIDIA NCCL: from topology graph discovery and algorithm tuning to multi-channel kernel scheduling, device-side LL/LL128/Simple protocols, and InfiniBand GPUDirect RDMA.
 
@@ -13,7 +13,7 @@
 ## 🌐 Language Navigation
 - **English Edition (Current)**: Table of Contents below.
 - **[中文版 (Chinese Edition)](README_zh.md)**: 访问全书中文目录与章节内容。
-- **[Interactive Live Reader](https://aireadcode.com/books/nccl.html)**: Read with dual-pane real-time code inspector and `[FACT]` verification anchors.
+- **[Interactive Live Reader](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01)**: Read with dual-pane real-time code inspector and `[FACT]` verification anchors.
 
 ---
 
@@ -51,7 +51,7 @@
 
 ## 🔍 How to Read
 1. **GitHub Markdown Reader**: Click any chapter link above to browse full source code walkthroughs directly in GitHub.
-2. **Interactive Dual-Pane Reader**: Visit [aireadcode.com/books/nccl.html](https://aireadcode.com/books/nccl.html) to view the synchronized code inspector.
+2. **Interactive Dual-Pane Reader**: Visit [malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) to view the synchronized code inspector.
 3. **Desktop App**: Open your own local clone with the [AiReadCode Desktop Client](https://aireadcode.com/#downloads) to generate architecture books for any repository.
 
 ## 📄 License

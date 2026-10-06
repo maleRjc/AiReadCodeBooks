@@ -14,7 +14,7 @@
 
 `ci.yml` 的触发配置值得逐行拆解。
 
-[FACT:.github/workflows/ci.yml:2-11]
+[FACT:.github/workflows/ci.yml:2-11](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/ci.yml#L2-L11)
 
 ```yaml
 on:
@@ -31,7 +31,7 @@ on:
 
 这里有两个关键设计。第一，`push` 事件监听所有分支（`'**'`），但用 `tags: ['!**']` 显式排除所有 tag 推送。为什么要排除 tag？因为 tag 推送由 `release.yml` 单独处理，如果 `ci.yml` 也响应 tag，会导致发布流程和 CI 流程重复触发，浪费 runner 资源甚至产生竞态。第二，`pull_request` 只监听 `main` 和 `minor` 两个分支——这是 Vue 的双分支策略：`main` 承载稳定版，`minor` 承载预发布版。
 
-[FACT:.github/workflows/ci.yml:22-22]
+[FACT:.github/workflows/ci.yml:22-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/ci.yml#L22-L22)
 
 ```yaml
 concurrency:
@@ -46,7 +46,7 @@ concurrency:
 
 ## 三重门禁的入口：test job 的条件判断
 
-[FACT:.github/workflows/ci.yml:22-22]
+[FACT:.github/workflows/ci.yml:22-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/ci.yml#L22-L22)
 
 ```yaml
 jobs:
@@ -66,7 +66,7 @@ jobs:
 
 ## 持续预发布：pkg-pr-new 的角色
 
-[FACT:.github/workflows/ci.yml:25-51]
+[FACT:.github/workflows/ci.yml:25-51](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/ci.yml#L25-L51)
 
 ```yaml
 continuous-release:
@@ -126,7 +126,7 @@ flowchart TD
 
 ## 触发条件：只认 tag
 
-[FACT:.github/workflows/release.yml:3-6]
+[FACT:.github/workflows/release.yml:3-6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L3-L6)
 
 ```yaml
 on:
@@ -139,7 +139,7 @@ on:
 
 ## 发布 job 的守卫条件
 
-[FACT:.github/workflows/release.yml:8-21]
+[FACT:.github/workflows/release.yml:8-21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L8-L21)
 
 ```yaml
 jobs:
@@ -169,7 +169,7 @@ jobs:
 
 ## 发布步骤的完整链路
 
-[FACT:.github/workflows/release.yml:37-46]
+[FACT:.github/workflows/release.yml:37-46](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L37-L46)
 
 ```yaml
 - name: Install deps
@@ -191,7 +191,7 @@ jobs:
 
 ## 创建 GitHub Release
 
-[FACT:.github/workflows/release.yml:48-57]
+[FACT:.github/workflows/release.yml:48-57](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L48-L57)
 
 ```yaml
 - name: Create GitHub release
@@ -238,7 +238,7 @@ sequenceDiagram
 
 `size-report.yml` 的触发方式很特殊——它不是由 push 或 PR 直接触发，而是由另一个 workflow 的完成事件触发。
 
-[FACT:.github/workflows/size-report.yml:3-7]
+[FACT:.github/workflows/size-report.yml:3-7](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L3-L7)
 
 ```yaml
 on:
@@ -250,7 +250,7 @@ on:
 
 `workflow_run` 事件监听名为 `size data` 的 workflow 完成。这是一个两阶段设计：`size-data.yml`（本章未提供源码）负责在 PR 上构建并测量体积，把结果作为 artifact 上传；`size-report.yml` 在 `size data` 完成后，下载 artifact，生成报告，并评论到 PR 上。
 
-[FACT:.github/workflows/size-report.yml:20-23]
+[FACT:.github/workflows/size-report.yml:20-23](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L20-L23)
 
 ```yaml
 if: >
@@ -263,7 +263,7 @@ if: >
 
 数据流转过程如下：
 
-[FACT:.github/workflows/size-report.yml:41-46]
+[FACT:.github/workflows/size-report.yml:41-46](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L41-L46)
 
 ```yaml
 - name: Download Size Data
@@ -276,7 +276,7 @@ if: >
 
 从上游 workflow run 下载 `size-data` artifact 到 `temp/size`。然后并行读取 PR 编号和 base 分支：
 
-[FACT:.github/workflows/size-report.yml:48-59]
+[FACT:.github/workflows/size-report.yml:48-59](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L48-L59)
 
 ```yaml
 - parallel:
@@ -296,7 +296,7 @@ if: >
 
 接着下载 base 分支的历史体积数据用于对比：
 
-[FACT:.github/workflows/size-report.yml:61-69]
+[FACT:.github/workflows/size-report.yml:61-69](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L61-L69)
 
 ```yaml
 - name: Download Previous Size Data
@@ -314,7 +314,7 @@ if: >
 
 最后生成报告并评论：
 
-[FACT:.github/workflows/size-report.yml:71-89]
+[FACT:.github/workflows/size-report.yml:71-89](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L71-L89)
 
 ```yaml
 - name: Prepare report
@@ -343,7 +343,7 @@ if: >
 
 `autofix.yml` 解决一个很实际的问题：贡献者提交的代码格式不符合 prettier/eslint 规范，CI 报错，贡献者需要手动跑 `pnpm lint --fix` 再提交。这个 workflow 把这一步自动化了。
 
-[FACT:.github/workflows/autofix.yml:3-8]
+[FACT:.github/workflows/autofix.yml:3-8](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/autofix.yml#L3-L8)
 
 ```yaml
 on:
@@ -356,7 +356,7 @@ concurrency:
 
 触发所有 PR，并发控制与 `ci.yml` 类似——同一个 PR 的新推送会取消旧的 autofix 运行。
 
-[FACT:.github/workflows/autofix.yml:35-41]
+[FACT:.github/workflows/autofix.yml:35-41](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/autofix.yml#L35-L41)
 
 ```yaml
 - name: Run eslint
@@ -421,15 +421,15 @@ flowchart LR
 
 Q1: 如果将 `ci.yml` 中 `cancel-in-progress` 的值改为恒为 `true`（即去掉 `github.event_name == 'pull_request'` 的条件），在什么场景下会导致问题？
 
-**参考解析**：`cancel-in-progress` 恒为 `true` 意味着 push 到 main 分支时，新的 push 会取消正在运行的旧 CI。考虑这个场景：main 分支上连续合并了两个 PR，第一个 PR 的 CI 正在运行（包含完整的 lint/typecheck/test），第二个 PR 的合并触发了新的 CI 运行。如果 `cancel-in-progress` 为 `true`，第一个 PR 的 CI 会被取消——但第一个 PR 的代码已经在 main 上了，它的 CI 结果对于判断 main 分支的健康状态至关重要。取消它意味着 main 分支上有一段代码从未被完整验证过。而 [FACT:.github/workflows/ci.yml:22-22] 的条件 `github.event_name == 'pull_request'` 正是为了避免这个问题：只有 PR 事件才取消旧运行，push 事件永远不取消。
+**参考解析**：`cancel-in-progress` 恒为 `true` 意味着 push 到 main 分支时，新的 push 会取消正在运行的旧 CI。考虑这个场景：main 分支上连续合并了两个 PR，第一个 PR 的 CI 正在运行（包含完整的 lint/typecheck/test），第二个 PR 的合并触发了新的 CI 运行。如果 `cancel-in-progress` 为 `true`，第一个 PR 的 CI 会被取消——但第一个 PR 的代码已经在 main 上了，它的 CI 结果对于判断 main 分支的健康状态至关重要。取消它意味着 main 分支上有一段代码从未被完整验证过。而 [FACT:.github/workflows/ci.yml:22-22](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/ci.yml#L22-L22) 的条件 `github.event_name == 'pull_request'` 正是为了避免这个问题：只有 PR 事件才取消旧运行，push 事件永远不取消。
 
 Q2: `release.yml` 中 `release` job 的 `if: github.repository == 'vuejs/core'` 和 `environment: Release` 分别防御什么场景？如果去掉其中一个会怎样？
 
-**参考解析**：`if: github.repository == 'vuejs/core'` [FACT:.github/workflows/release.yml:14] 防御的是 fork 场景。如果有人 fork 了 vuejs/core 并推送一个 `v3.99.0` tag，没有这个条件，workflow 会在 fork 仓库中运行 `pnpm release --publishOnly`。虽然 fork 仓库没有 npm token 无法真正发布，但会浪费 runner 资源并可能产生误导性的失败通知。`environment: Release` [FACT:.github/workflows/release.yml:21] 防御的是「tag 推送后自动发布」的风险——它允许配置人工审批，确保即使 tag 被推送，发布也需要维护者确认。如果去掉 `if` 条件，fork 会浪费资源；如果去掉 `environment`，任何有 tag 推送权限的人都能触发发布，没有最后的人工确认环节。两者是不同层次的防御，不能互相替代。
+**参考解析**：`if: github.repository == 'vuejs/core'` [FACT:.github/workflows/release.yml:14](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L14) 防御的是 fork 场景。如果有人 fork 了 vuejs/core 并推送一个 `v3.99.0` tag，没有这个条件，workflow 会在 fork 仓库中运行 `pnpm release --publishOnly`。虽然 fork 仓库没有 npm token 无法真正发布，但会浪费 runner 资源并可能产生误导性的失败通知。`environment: Release` [FACT:.github/workflows/release.yml:21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L21) 防御的是「tag 推送后自动发布」的风险——它允许配置人工审批，确保即使 tag 被推送，发布也需要维护者确认。如果去掉 `if` 条件，fork 会浪费资源；如果去掉 `environment`，任何有 tag 推送权限的人都能触发发布，没有最后的人工确认环节。两者是不同层次的防御，不能互相替代。
 
 Q3: `size-report.yml` 中 `if_no_artifact_found: warn` 的选择与 `release.yml` 中 `needs: [test]` 的选择，分别体现了怎样的失败方向设计哲学？如果互换这两个策略会发生什么？
 
-**参考解析**：`if_no_artifact_found: warn` [FACT:.github/workflows/size-report.yml:69] 选择「缺少历史数据时警告而非失败」，因为体积报告是辅助信息，不是阻断条件。如果改为 `fail`，那么新分支或首次运行的 PR 会因为找不到 base 数据而失败，这显然不合理。`needs: [test]` [FACT:.github/workflows/release.yml:15] 选择「测试失败即阻断发布」，因为发布是不可逆操作，必须确保代码质量。如果互换——size-report 在缺少数据时失败，release 在测试失败时仍然发布——前者会导致大量误报阻断正常 PR，后者会导致未经测试的代码进入 npm。这体现了「辅助信息宽松、不可逆操作严格」的失败方向设计原则。
+**参考解析**：`if_no_artifact_found: warn` [FACT:.github/workflows/size-report.yml:69](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/size-report.yml#L69) 选择「缺少历史数据时警告而非失败」，因为体积报告是辅助信息，不是阻断条件。如果改为 `fail`，那么新分支或首次运行的 PR 会因为找不到 base 数据而失败，这显然不合理。`needs: [test]` [FACT:.github/workflows/release.yml:15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/.github/workflows/release.yml#L15) 选择「测试失败即阻断发布」，因为发布是不可逆操作，必须确保代码质量。如果互换——size-report 在缺少数据时失败，release 在测试失败时仍然发布——前者会导致大量误报阻断正常 PR，后者会导致未经测试的代码进入 npm。这体现了「辅助信息宽松、不可逆操作严格」的失败方向设计原则。
 
 ---
 

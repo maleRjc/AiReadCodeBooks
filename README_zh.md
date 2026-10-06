@@ -18,7 +18,7 @@
 ## 🌐 多语言与阅读入口
 - **中文原著入口 (当前)**: 查看中文专著目录、100本开源专著大纲矩阵与精读导引。
 - **[English Edition](README.md)**: Access English master catalog and translated monographs.
-- **[网页端双栏交互阅读器](https://aireadcode.com/books/)**: 体验与官方源码库联动的双栏高亮代码检视器。
+- **[网页端双栏交互阅读器](https://malerjc.github.io/AiReadCodeBooks/)**: 体验与官方源码库联动的双栏高亮代码检视器。
 - **[AiReadCode 桌面客户端](https://aireadcode.com/#downloads)**: 无论是大型开源项目还是私有企业代码，一键即可扫描成书。
 
 ---
@@ -29,10 +29,10 @@
 
 | 专著书名 | 赛道领域 | 技术栈 | GitHub Stars | 章节规模 | 在线交互阅读器 | GitHub Markdown 直达 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **[Vue 3 源码与工程化全景架构](books/vue3/)** | 前端底层与全栈运行时 | `TypeScript` | ★ 45.8k | 14 章系统专著 | [在线交互精读](https://aireadcode.com/books/vue3.html) | [中文章节入口](books/vue3/zh/01-monorepo-philosophy.md) · [English](books/vue3/en/01-monorepo-philosophy.md) |
-| **[Tokio 异步底层机制与运行时剖析](books/tokio/)** | 系统级开发与高性能基础设施 | `Rust` | ★ 28.5k | 14 章系统专著 | [在线交互精读](https://aireadcode.com/books/tokio.html) | [中文章节入口](books/tokio/zh/01-async-philosophy-future-waker.md) · [English](books/tokio/en/01-async-philosophy-future-waker.md) |
-| **[vLLM 高性能推理引擎核心实现](books/vllm/)** | AI Infra 与大模型系统工程 | `Python/C++/CUDA` | ★ 35.2k | 14 章系统专著 | [在线交互精读](https://aireadcode.com/books/vllm.html) | [中文章节入口](books/vllm/zh/01-design-philosophy-and-architecture.md) · [English](books/vllm/en/01-design-philosophy-and-architecture.md) |
-| **[NCCL 源码解读：一个 AllReduce 的 GPU 旅程](books/nccl/)** | AI Infra 与大模型系统工程 | `C++/CUDA` | ★ 6.2k | 25 章系统专著 | [在线交互精读](https://aireadcode.com/books/nccl.html) | [中文章节入口](books/nccl/zh/01-allreduce-external-behavior.md) · [English](books/nccl/en/01-allreduce-external-behavior.md) |
+| **[Vue 3 源码与工程化全景架构](books/vue3/)** | 前端底层与全栈运行时 | `TypeScript` | ★ 45.8k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [中文章节入口](books/vue3/zh/01-monorepo-philosophy.md) · [English](books/vue3/en/01-monorepo-philosophy.md) |
+| **[Tokio 异步底层机制与运行时剖析](books/tokio/)** | 系统级开发与高性能基础设施 | `Rust` | ★ 28.5k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [中文章节入口](books/tokio/zh/01-async-philosophy-future-waker.md) · [English](books/tokio/en/01-async-philosophy-future-waker.md) |
+| **[vLLM 高性能推理引擎核心实现](books/vllm/)** | AI Infra 与大模型系统工程 | `Python/C++/CUDA` | ★ 35.2k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [中文章节入口](books/vllm/zh/01-design-philosophy-and-architecture.md) · [English](books/vllm/en/01-design-philosophy-and-architecture.md) |
+| **[NCCL 源码解读：一个 AllReduce 的 GPU 旅程](books/nccl/)** | AI Infra 与大模型系统工程 | `C++/CUDA` | ★ 6.2k | 25 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [中文章节入口](books/nccl/zh/01-allreduce-external-behavior.md) · [English](books/nccl/en/01-allreduce-external-behavior.md) |
 
 ---
 

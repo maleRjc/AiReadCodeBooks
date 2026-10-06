@@ -8,17 +8,17 @@
 
 ## 环境变量校验与包定位
 
-[FACT:rollup.config.js:27-29]
+[FACT:rollup.config.js:27-29](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L27-L29)
 
 如果 `TARGET` 未设置，直接抛错。这是防御性编程：Rollup 配置可能被直接调用（如 `rollup -c`），此时没有 `build.js` 注入环境变量，必须快速失败。
 
-[FACT:rollup.config.js:32-44]
+[FACT:rollup.config.js:32-44](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L32-L44)
 
 这里重复了 `build.js` 中的私有包判断逻辑——因为 `rollup.config.js` 是独立进程，无法共享 `build.js` 的内存状态。`resolve` 函数把相对路径解析为包目录下的绝对路径，`pkg` 是目标包的 `package.json` 内容，`packageOptions` 是其中的 `buildOptions` 字段，`name` 是产物文件名前缀（优先用 `buildOptions.filename`，否则用目录名）。
 
 ## 格式映射表：`outputConfigs`
 
-[FACT:rollup.config.js:58-88]
+[FACT:rollup.config.js:58-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L58-L88)
 
 这张表定义了 7 种格式到输出配置的映射。关键观察：
 
@@ -29,13 +29,13 @@
 
 ## 格式选择：三层优先级
 
-[FACT:rollup.config.js:91-92]
+[FACT:rollup.config.js:91-92](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L91-L92)
 
 格式选择遵循三层优先级：命令行 `FORMATS` 环境变量 > 包的 `buildOptions.formats` > 默认 `['esm-bundler', 'cjs']`。`PROD_ONLY` 环境变量控制是否跳过基础配置——如果只构建生产版本，基础配置数组为空，后续只推入生产配置。
 
 ## 生产配置的追加逻辑
 
-[FACT:rollup.config.js:97-114]
+[FACT:rollup.config.js:97-114](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L97-L114)
 
 当 `NODE_ENV === 'production'` 时，对每个格式：
 
@@ -50,7 +50,7 @@
 
 `createConfig` 是最大的函数，它接收格式和输出配置，返回完整的 Rollup 配置对象。
 
-[FACT:rollup.config.js:125-142]
+[FACT:rollup.config.js:125-142](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L125-L142)
 
 开头是一系列布尔标志位的计算：
 
@@ -62,35 +62,35 @@
 
 这些标志位在后续的 `resolveDefine`、`resolveReplace`、`resolveExternal` 中被反复使用，是配置差异化的核心依据。
 
-[FACT:rollup.config.js:144-157]
+[FACT:rollup.config.js:144-157](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L144-L157)
 
 输出配置的基础设置：banner 版权头、`exports` 模式（compat 包用 `auto`，其余用 `named`）、CJS 构建启用 `esModule` 互操作、sourcemap 由环境变量控制、`externalLiveBindings: false` 和 `reexportProtoFromExternal: false` 是 Rollup 4 的兼容性设置。全局构建额外设置 `output.name`，即挂载到 `window` 上的变量名。
 
 ## 入口文件选择
 
-[FACT:rollup.config.js:159-168]
+[FACT:rollup.config.js:159-168](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L159-L168)
 
 默认入口是 `src/index.ts`，但 `runtime` 后缀的格式用 `src/runtime.ts`。compat 包的 ESM 构建需要同时导出 default 和 named，所以用单独的 `esm-index.ts` / `esm-runtime.ts` 入口。
 
 ## 宏定义：`resolveDefine`
 
-[FACT:rollup.config.js:170-218]
+[FACT:rollup.config.js:170-218](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L170-L218)
 
 `resolveDefine` 返回一个替换表，把源码中的 `__COMMIT__`、`__VERSION__`、`__BROWSER__` 等宏替换为字面量。这些宏在源码中用于条件编译——例如 `if (__DEV__) { ... }` 在生产构建中会被替换为 `if (false) { ... }`，进而被 Tree-shaking 移除。
 
 关键设计：`__FEATURE_OPTIONS_API__`、`__FEATURE_PROD_DEVTOOLS__` 等特性开关在 `esm-bundler` 构建中保留为 `__VUE_OPTIONS_API__` 这样的标识符，让最终用户可以通过打包器配置覆盖；而在其他构建中直接硬编码为 `true` 或 `false`。
 
-[FACT:rollup.config.js:203-206]
+[FACT:rollup.config.js:203-206](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L203-L206)
 
 非 `esm-bundler` 构建硬编码 `__DEV__`，因为它们的 dev/prod 分支在构建时就已确定。
 
-[FACT:rollup.config.js:210-216]
+[FACT:rollup.config.js:210-216](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L210-L216)
 
 最后一步允许环境变量覆盖任何宏定义，支持 `__RUNTIME_COMPILE__=true pnpm build runtime-core` 这样的内联覆盖。
 
 ## 替换插件：`resolveReplace`
 
-[FACT:rollup.config.js:222-255]
+[FACT:rollup.config.js:222-255](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L255)
 
 `resolveReplace` 在 `resolveDefine` 之外处理 esbuild 无法处理的替换：
 
@@ -101,13 +101,13 @@
 
 ## 外部依赖：`resolveExternal`
 
-[FACT:rollup.config.js:257-283]
+[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
 
 这是上一章结尾思考题的核心。浏览器构建只返回 `treeShakenDeps` 作为 external——这些依赖虽然被 import，但在浏览器分支中不会被实际执行，列在这里只是为了抑制 Rollup 的警告。Node/ESM-bundler 构建则 externalize 所有 `dependencies` 和 `peerDependencies`，以及 `path`、`url`、`stream` 等 Node 内置模块。
 
 ## 最终配置对象
 
-[FACT:rollup.config.js:319-352]
+[FACT:rollup.config.js:319-352](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L319-L352)
 
 返回的配置对象包含：
 
@@ -146,7 +146,7 @@ flowchart LR
 
 `build.js` 通过 `exec` 启动 Rollup 子进程：
 
-[FACT:scripts/utils.js:64-114]
+[FACT:scripts/utils.js:64-114](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/utils.js#L64-L114)
 
 `exec` 封装了 `spawn`，返回一个 Promise。关键设计：
 
@@ -160,21 +160,21 @@ flowchart LR
 
 ## 体积检查：`checkAllSizes`
 
-[FACT:scripts/build.js:206-215]
+[FACT:scripts/build.js:206-215](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L206-L215)
 
 体积检查有两个跳过条件：`devOnly` 为真，或指定了格式但不含 `global`。因为体积检查只针对全局构建产物——那是最终用户直接引入的文件，体积最敏感。
 
-[FACT:scripts/build.js:222-228]
+[FACT:scripts/build.js:222-228](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L222-L228)
 
 `checkSize` 检查两个文件：`${target}.global.prod.js` 和 `${target}.runtime.global.prod.js`（后者仅在未指定格式或指定了 `global-runtime` 时检查）。
 
-[FACT:scripts/build.js:235-264]
+[FACT:scripts/build.js:235-264](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L235-L264)
 
 `checkFileSize` 读取文件，用 `gzipSync` 和 `brotliCompressSync` 计算压缩后大小，用 `prettyBytes` 格式化输出。如果 `writeSize` 为真，把结果写入 `temp/size/${fileName}.json`——这是 CI 中体积预算检查的数据来源。
 
 ## 类型声明构建
 
-[FACT:scripts/build.js:94-108]
+[FACT:scripts/build.js:94-108](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L94-L108)
 
 如果 `buildTypes` 为真，调用 `pnpm run build-dts`，并通过 `--environment TARGETS:...` 传递目标列表。这确保只为实际构建的包生成类型声明。
 
@@ -216,17 +216,17 @@ Q1: 在 `build.js` 的 `build` 函数中，`if (!formats && fs.existsSync(...))`
 
 **参考解析**：
 
-[FACT:scripts/build.js:172-175]
+[FACT:scripts/build.js:172-175](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L172-L175)
 
-`pnpm build-all-cjs` 对应 `node scripts/build.js vue runtime compiler reactivity shared -af cjs`（见 [FACT:package.json:40]）。它指定了 `-f cjs`，所以 `formats` 为 `'cjs'`，`!formats` 为假，当前逻辑不会删除 `dist`。
+`pnpm build-all-cjs` 对应 `node scripts/build.js vue runtime compiler reactivity shared -af cjs`（见 [FACT:package.json:40](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L40)）。它指定了 `-f cjs`，所以 `formats` 为 `'cjs'`，`!formats` 为假，当前逻辑不会删除 `dist`。
 
-如果去掉 `!formats`，每次构建都会删除 `dist`。但 `build-all-cjs` 只构建 `cjs` 格式，删除后 `dist` 中只剩 `cjs` 产物，之前构建的 `esm-bundler`、`global` 等格式全部丢失。更严重的是，`build-runtime-esm`、`build-browser-esm` 等脚本会依次执行（见 [FACT:package.json:39] 的 `build-sfc-playground` 脚本），每个脚本都会删除前一个脚本的产物，导致最终 `dist` 中只有最后一个脚本的格式。这会破坏 SFC Playground 的构建——它需要同时存在多种格式的产物。
+如果去掉 `!formats`，每次构建都会删除 `dist`。但 `build-all-cjs` 只构建 `cjs` 格式，删除后 `dist` 中只剩 `cjs` 产物，之前构建的 `esm-bundler`、`global` 等格式全部丢失。更严重的是，`build-runtime-esm`、`build-browser-esm` 等脚本会依次执行（见 [FACT:package.json:39](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L39) 的 `build-sfc-playground` 脚本），每个脚本都会删除前一个脚本的产物，导致最终 `dist` 中只有最后一个脚本的格式。这会破坏 SFC Playground 的构建——它需要同时存在多种格式的产物。
 
 Q2: `runParallel` 中 `if (maxConcurrency <= source.length)` 这个条件的作用是什么？如果去掉它，在构建单个包（`targets.length === 1`）时会发生什么？
 
 **参考解析**：
 
-[FACT:scripts/build.js:131-151]
+[FACT:scripts/build.js:131-151](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L131-L151)
 
 这个条件控制是否启用并发限流。当 `maxConcurrency > source.length` 时，不需要限流——所有任务可以同时启动。如果去掉这个条件，即使只有一个任务，也会创建 `executing` 数组并执行 `await Promise.race(executing)`。
 
@@ -238,11 +238,11 @@ Q3: `resolveExternal` 中，浏览器构建返回 `treeShakenDeps` 作为 extern
 
 **参考解析**：
 
-[FACT:rollup.config.js:257-283]
+[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
 
 `treeShakenDeps` 包含 `source-map-js`、`@babel/parser`、`estree-walker`、`entities/decode`。这些是 `compiler-sfc` 等包的依赖，在浏览器构建中通过 `__BROWSER__` 宏被条件编译排除。
 
-如果从 external 中移除，Rollup 会尝试解析并打包这些依赖。由于 `treeshake.moduleSideEffects: false`（[FACT:rollup.config.js:355-355]），且这些依赖的导入语句位于 `if (!__BROWSER__)` 分支中，esbuild 的 define 会把 `__BROWSER__` 替换为 `true`，导致分支被标记为死代码。Rollup 的 Tree-shaking 会移除这些导入，最终产物中不会包含这些依赖的代码。
+如果从 external 中移除，Rollup 会尝试解析并打包这些依赖。由于 `treeshake.moduleSideEffects: false`（[FACT:rollup.config.js:355-355](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L355-L355)），且这些依赖的导入语句位于 `if (!__BROWSER__)` 分支中，esbuild 的 define 会把 `__BROWSER__` 替换为 `true`，导致分支被标记为死代码。Rollup 的 Tree-shaking 会移除这些导入，最终产物中不会包含这些依赖的代码。
 
 但问题在于：Rollup 在 Tree-shaking 之前需要先解析模块。如果这些依赖没有安装（例如在精简的 CI 环境中），Rollup 会报「无法解析模块」的错误。把它们列为 external 是一种防御措施——即使依赖不存在，Rollup 也不会尝试解析，只是发出警告（而 `onwarn` 会过滤掉非循环依赖的警告）。
 

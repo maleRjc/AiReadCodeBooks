@@ -14,7 +14,7 @@
 
 先看当前工具链的静态快照。`package.json` 的 `devDependencies` 是一份精确的「装配台清单」：
 
-[FACT:package.json:103-106]
+[FACT:package.json:103-106](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L103-L106)
 
 ```
     "rollup": "^4.63.3",
@@ -27,7 +27,7 @@
 
 再看构建脚本的入口编排：
 
-[FACT:package.json:8-9]
+[FACT:package.json:8-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L8-L9)
 
 ```
     "build": "node scripts/build.js",
@@ -42,7 +42,7 @@
 
 第一条，3.4.32 的 minify 配置对齐：
 
-[FACT:changelogs/CHANGELOG-3.4.md:84]
+[FACT:changelogs/CHANGELOG-3.4.md:84](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L84)
 
 ```
 * **build:** use consistent minify options from previous terser config ([789675f](https://github.com/vuejs/core/commit/789675f65d2b72cf979ba6a29bd323f716154a4b))
@@ -52,7 +52,7 @@
 
 第二条，3.4.38 的 entities 版本回退：
 
-[FACT:changelogs/CHANGELOG-3.4.md:6]
+[FACT:changelogs/CHANGELOG-3.4.md:6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L6)
 
 ```
 * **build:** revert entities to 4.5 to avoid runtime resolution errors ([f349af7](https://github.com/vuejs/core/commit/f349af7b65b9f8605d8b7bafcc06c25ab1f2daf0)), closes [#11603](https://github.com/vuejs/core/issues/11603)
@@ -62,7 +62,7 @@
 
 第三条，3.4.29 的 server-renderer cjs 构建污染：
 
-[FACT:changelogs/CHANGELOG-3.4.md:155]
+[FACT:changelogs/CHANGELOG-3.4.md:155](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L155)
 
 ```
 * **build:** fix accidental inclusion of runtime-core in server-renderer cjs build ([11cc12b](https://github.com/vuejs/core/commit/11cc12b915edfe0e4d3175e57464f73bc2c1cb04)), closes [#11137](https://github.com/vuejs/core/issues/11137)
@@ -102,7 +102,7 @@ flowchart TD
 
 **为什么迁移不会一蹴而就？** 看 `package.json` 的 `engines` 字段：
 
-[FACT:package.json:61-63]
+[FACT:package.json:61-63](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L61-L63)
 
 ```
   "engines": {
@@ -127,7 +127,7 @@ Node 20 是硬性下限。Rolldown 作为 Rust 原生模块，需要对应的 N-
 
 `package.json` 的 `scripts` 里，测试相关的条目清晰地分成两组：
 
-[FACT:package.json:19-24]
+[FACT:package.json:19-24](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L19-L24)
 
 ```
     "test": "vitest",
@@ -148,7 +148,7 @@ Node 20 是硬性下限。Rolldown 作为 Rust 原生模块，需要对应的 N-
 
 3.4.37 的 ref 类型回退：
 
-[FACT:changelogs/CHANGELOG-3.4.md:23-24]
+[FACT:changelogs/CHANGELOG-3.4.md:23-24](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L23-L24)
 
 ```
 * Revert "fix(types/ref): allow getter and setter types to be unrelated ([#11442](https://github.com/vuejs/core/issues/11442))" ([b1abac0](https://github.com/vuejs/core/commit/b1abac06cdb198bd72f8e614b1f68b92e1c78339))
@@ -157,13 +157,13 @@ Node 20 是硬性下限。Rolldown 作为 Rust 原生模块，需要对应的 N-
 
 两条连续的 Revert，回退了两个类型修复。注意 3.4.35 里这两个修复刚被合入：
 
-[FACT:changelogs/CHANGELOG-3.4.md:55]
+[FACT:changelogs/CHANGELOG-3.4.md:55](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L55)
 
 ```
 * **types/ref:** allow getter and setter types to be unrelated ([#11442](https://github.com/vuejs/core/issues/11442)) ([e0b2975](https://github.com/vuejs/core/commit/e0b2975ef65ae6a0be0aa0a0df43fb887c665251))
 ```
 
-[FACT:changelogs/CHANGELOG-3.4.md:30]
+[FACT:changelogs/CHANGELOG-3.4.md:30](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L30)
 
 ```
 * **types/ref:** correct type inference for nested refs ([#11536](https://github.com/vuejs/core/issues/11536)) ([536f623](https://github.com/vuejs/core/commit/536f62332c455ba82ef2979ba634b831f91928ba)), closes [#11532](https://github.com/vuejs/core/issues/11532) [#11537](https://github.com/vuejs/core/issues/11537)
@@ -203,7 +203,7 @@ flowchart LR
 
 **为什么 `dts-built-test` 必须独立于 `dts-test`？** 上一章已经讨论过，这里从演进视角补充：`dts-built-test` 验证的是**构建产物**（`rollup-plugin-dts` 打包后的 `.d.ts`），`dts-test` 验证的是**源码类型**。如果融合时把两者合并，就会丢失「构建产物是否与源码类型一致」这个关键检查点。3.4.38 的这条提交正好印证了构建产物类型的重要性：
 
-[FACT:changelogs/CHANGELOG-3.4.md:9]
+[FACT:changelogs/CHANGELOG-3.4.md:9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/changelogs/CHANGELOG-3.4.md#L9)
 
 ```
 * **types:** add fallback stub for DOM types when DOM lib is absent ([#11598](https://github.com/vuejs/core/issues/11598)) ([4db0085](https://github.com/vuejs/core/commit/4db0085de316e1b773f474597915f9071d6ae6c6))
@@ -228,7 +228,7 @@ flowchart LR
 
 第一类，依赖安装产物。`packageManager` 字段锁定了 pnpm 版本：
 
-[FACT:package.json:4]
+[FACT:package.json:4](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L4)
 
 ```
   "packageManager": "pnpm@12.4.2",
@@ -238,7 +238,7 @@ pnpm 的 `node_modules` 是符号链接结构，缓存的是 pnpm 的 content-ad
 
 第二类，构建产物。`clean` 脚本揭示了产物的物理位置：
 
-[FACT:package.json:10]
+[FACT:package.json:10](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L10)
 
 ```
     "clean": "rimraf --glob packages/*/dist temp .eslintcache",
@@ -248,7 +248,7 @@ pnpm 的 `node_modules` 是符号链接结构，缓存的是 pnpm 的 content-ad
 
 第三类，类型检查缓存。`check` 脚本用了 `--incremental`：
 
-[FACT:package.json:15]
+[FACT:package.json:15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L15)
 
 ```
     "check": "tsc --incremental --noEmit",
@@ -262,7 +262,7 @@ pnpm 的 `node_modules` 是符号链接结构，缓存的是 pnpm 的 content-ad
 
 从 `scripts` 里能推断出 CI 的执行序列（`simple-git-hooks` 的 `pre-commit` 是本地钩子，CI 会跑更完整的序列）：
 
-[FACT:package.json:48-51]
+[FACT:package.json:48-51](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L48-L51)
 
 ```
   "simple-git-hooks": {
@@ -316,7 +316,7 @@ flowchart TD
 
 **为什么 `size` 脚本要拆成多个子命令？** 看这三条：
 
-[FACT:package.json:11-14]
+[FACT:package.json:11-14](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L11-L14)
 
 ```
     "size": "run-s \"size-*\" && node scripts/usage-size.js",
@@ -329,7 +329,7 @@ flowchart TD
 
 **生产踩坑点**：CI 缓存最容易踩的坑是**缓存污染**——缓存了错误的产物，导致后续构建基于脏数据。`clean` 脚本的存在就是为了应对这种情况：
 
-[FACT:package.json:10]
+[FACT:package.json:10](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L10)
 
 ```
     "clean": "rimraf --glob packages/*/dist temp .eslintcache",

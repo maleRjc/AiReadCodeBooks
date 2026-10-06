@@ -8,7 +8,7 @@
 
 先看异步 API 路径的别名机制。
 
-[FACT:vllm/engine/async_llm_engine.py:7-7]
+[FACT:vllm/engine/async_llm_engine.py:7-7](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/engine/async_llm_engine.py#L7-L7)
 
 这个文件短得几乎不像一个模块——它只做了一件事：把 `AsyncLLMEngine` 别名指向 `vllm.v1.engine.async_llm.AsyncLLM`。这是一个典型的架构迁移痕迹。vLLM v0 时代的 `AsyncLLMEngine` 是一个庞大而复杂的类，v1 架构重写后，新的 `AsyncLLM` 承担了相同职责。为了不破坏既有用户代码，vLLM 保留了旧模块路径作为兼容层。
 
@@ -17,11 +17,11 @@
 
 再看离线路径的入口。
 
-[FACT:vllm/entrypoints/llm.py:344-346]
+[FACT:vllm/entrypoints/llm.py:344-346](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L344-L346)
 
 `LLM.__init__` 最终调用 `LLMEngine.from_engine_args`，传入 `UsageContext.LLM_CLASS`。这个 `UsageContext` 枚举是区分入口路径的关键——它让引擎知道自己是运行在离线批处理模式还是在线服务模式，从而调整日志、指标和资源管理策略。
 
-[FACT:vllm/entrypoints/llm.py:357-359]
+[FACT:vllm/entrypoints/llm.py:357-359](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L357-L359)
 
 注意这里 `self.renderer = self.llm_engine.renderer` 和 `self.input_processor = self.llm_engine.input_processor` 的赋值。离线 `LLM` 类并不自己实现 chat template 渲染，而是复用引擎内部的 `renderer`。这意味着 chat template 的解析逻辑在离线与在线路径上是同一份代码，只是调用时机不同。
 
@@ -73,23 +73,23 @@ flowchart LR
 
 先看追踪器的字段布局。
 
-[FACT:vllm/entrypoints/chat_utils.py:598-601]
+[FACT:vllm/entrypoints/chat_utils.py:598-601](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L598-L601)
 
 `_items_by_modality` 是一个 `defaultdict[str, list[_T]]`，按模态（image、audio、video 等）分组存储待处理的项。`_modality_order` 则专门为 `vision_chunk` 模态记录每个 chunk 的原始模态（image 还是 video），因为统一视觉 chunk 模型会把两者都映射到 `vision_chunk`，但后续处理需要知道原始类型。
 
-[FACT:vllm/entrypoints/chat_utils.py:613-615]
+[FACT:vllm/entrypoints/chat_utils.py:613-615](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L613-L615)
 
 `use_unified_vision_chunk_modality` 是一个 `cached_property`，从 HuggingFace 配置中读取 `use_unified_vision_chunk` 标志。使用 `cached_property` 而非普通属性，是因为这个检查在每次 `add` 调用时都会触发，缓存可以避免重复的 `getattr` 开销。
 
 追踪器的 `add` 方法是核心入口。
 
-[FACT:vllm/entrypoints/chat_utils.py:656-684]
+[FACT:vllm/entrypoints/chat_utils.py:656-684](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L656-L684)
 
 `add` 方法先调用 `_validate_add` 做校验，然后根据是否使用统一视觉 chunk 模态，把项存入不同的键下。注意 `prompt_embeds` 的特殊处理：它直接追加到 `_items_by_modality["prompt_embeds"]` 并返回 `None`，因为预计算嵌入不经过 HF processor，没有占位符字符串。
 
 `_validate_add` 中的校验逻辑值得细看。
 
-[FACT:vllm/entrypoints/chat_utils.py:686-721]
+[FACT:vllm/entrypoints/chat_utils.py:686-721](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L686-L721)
 
 这里有一个微妙的分支：当 `enable_mm_embeds=True` 且该模态的每 prompt 限制为 0 且原始模态以 `_embeds` 结尾时，跳过数量校验。这是为了允许嵌入输入绕过原始模态的数量限制——嵌入是预计算的，不占用原始模态的处理资源。
 
@@ -97,43 +97,43 @@ flowchart LR
 
 假设用户发送一个包含图片 URL 和文本的 chat 请求。`parse_chat_messages` 是同步路径的入口。
 
-[FACT:vllm/entrypoints/chat_utils.py:2161-2197]
+[FACT:vllm/entrypoints/chat_utils.py:2161-2197](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2161-L2197)
 
 `parse_chat_messages` 创建 `MultiModalItemTracker`，遍历每条消息调用 `_parse_chat_message_content`，最后调用 `_postprocess_messages` 处理工具调用参数，再通过 `mm_tracker.resolve_items()` 物化多模态数据。
 
 `_parse_chat_message_content` 负责单条消息的解析。
 
-[FACT:vllm/entrypoints/chat_utils.py:2007-2029]
+[FACT:vllm/entrypoints/chat_utils.py:2007-2029](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2007-L2029)
 
 它先规范化 content：`None` 变成空列表，字符串变成单个文本 part。然后调用 `_parse_chat_message_content_parts`，其中 `wrap_dicts` 参数由 `content_format == "openai"` 决定——这决定了输出是结构化字典列表还是拼接后的字符串。
 
 `_parse_chat_message_content_parts` 遍历每个 part。
 
-[FACT:vllm/entrypoints/chat_utils.py:1814-1853]
+[FACT:vllm/entrypoints/chat_utils.py:1814-1853](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1814-L1853)
 
 每个 part 经过 `_parse_chat_message_content_part` 处理。如果 `wrap_dicts=False`，最终会把文本和占位符拼接成单个字符串；如果 `wrap_dicts=True`，则返回结构化字典列表。
 
 `_parse_chat_message_content_part` 是分发的核心。
 
-[FACT:vllm/entrypoints/chat_utils.py:1875-1884]
+[FACT:vllm/entrypoints/chat_utils.py:1875-1884](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1875-L1884)
 
 对于纯文本 part，先做保留占位符检查，再根据 `wrap_dicts` 决定返回格式。对于结构化 part，调用 `_parse_chat_message_content_mm_part` 提取类型和内容。
 
-[FACT:vllm/entrypoints/chat_utils.py:1690-1723]
+[FACT:vllm/entrypoints/chat_utils.py:1690-1723](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1690-L1723)
 
 `_parse_chat_message_content_mm_part` 通过 `MM_PARSER_MAP` 查找对应的解析函数。注意 `uuid is None` 的条件——如果用户提供了 UUID，说明媒体数据可能不在请求体中（已通过其他方式上传），此时走下面的直接 URL 字段分支。
 
-[FACT:vllm/entrypoints/chat_utils.py:1731-1733]
+[FACT:vllm/entrypoints/chat_utils.py:1731-1733](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1731-L1733)
 
 当 `part_type is None` 或 `uuid is not None` 时，代码尝试从 part 中直接提取 URL 字段。这种「宽松解析」是为了兼容那些不严格遵循 OpenAI 格式的客户端。
 
 回到 `_parse_chat_message_content_part`，媒体类型的 part 会被分发到对应的 `mm_parser` 方法。
 
-[FACT:vllm/entrypoints/chat_utils.py:1923-1968]
+[FACT:vllm/entrypoints/chat_utils.py:1923-1968](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1923-L1968)
 
 每个媒体类型调用对应的 `parse_*` 方法，这些方法内部会调用 `tracker.add` 把项加入追踪器，并返回占位符字符串。最后根据 `interleave_strings` 决定返回占位符还是 `None`。
 
-[FACT:vllm/entrypoints/chat_utils.py:1984-1999]
+[FACT:vllm/entrypoints/chat_utils.py:1984-1999](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1984-L1999)
 
 `prompt_embeds` 的处理是特殊的：无论 `interleave_strings` 如何，都返回 `PROMPT_EMBEDS_PLACEHOLDER_TOKEN`。注释解释了原因——prompt_embeds 在 token 偏移处拼接，位置很重要，如果走 `missing_placeholders` 的前置填充逻辑会打乱顺序。
 
@@ -141,7 +141,7 @@ flowchart LR
 
 异步路径使用 `AsyncMultiModalItemTracker` 和 `AsyncMultiModalContentParser`。核心差异在 `resolve_items`。
 
-[FACT:vllm/entrypoints/chat_utils.py:906-952]
+[FACT:vllm/entrypoints/chat_utils.py:906-952](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L906-L952)
 
 异步版本用 `asyncio.gather` 并发等待所有模态项。注释明确指出：每个追踪项已经是独立的 awaitable，异步连接器会把阻塞的解码工作卸载到线程池，所以串行等待一个模态再等下一个会无谓地增加延迟。`return_exceptions=True` 让所有任务都完成或失败后再统一抛出，避免第一个失败就放弃仍在进行中的网络请求。
 
@@ -159,11 +159,11 @@ flowchart LR
 
 渲染完成后，请求被封装为 `EngineCoreRequest`，通过 `AsyncLLM.add_request()` 或 `LLMEngine.add_request()` 投递到 EngineCore 的输入队列。
 
-[FACT:vllm/entrypoints/llm.py:420-484]
+[FACT:vllm/entrypoints/llm.py:420-484](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L420-L484)
 
 离线 `LLM.generate` 方法展示了这条链路：它先校验 `runner_type`，获取默认采样参数，然后调用 `_run_completion`。`_run_completion` 内部会调用 renderer 渲染 prompt，再通过 `llm_engine` 投递请求。
 
-[FACT:vllm/entrypoints/llm.py:615-708]
+[FACT:vllm/entrypoints/llm.py:615-708](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L615-L708)
 
 `LLM.chat` 方法则展示了 chat 路径：它接收 `messages` 列表，调用 `_run_chat`，后者内部会调用 `parse_chat_messages` 和 renderer。
 
@@ -176,17 +176,17 @@ flowchart LR
 
 `_postprocess_messages` 中的工具调用参数处理是一个典型的生产环境陷阱。
 
-[FACT:vllm/entrypoints/chat_utils.py:2118-2158]
+[FACT:vllm/entrypoints/chat_utils.py:2118-2158](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2118-L2158)
 
 当 assistant 消息包含 `tool_calls` 时，`arguments` 字段可能是 JSON 字符串、字典或无效 JSON。代码尝试解析 JSON 字符串，如果失败则记录警告并强制转为空对象。注释解释了原因：格式错误的 `arguments` 存在于对话历史中，如果在这里让请求失败，后续每一轮都会失败，对话将无法恢复。这是一个深思熟虑的容错设计——宁可让模型看到空的工具参数，也不让整个对话卡死。
 
 另一个陷阱是保留占位符的注入防护。
 
-[FACT:vllm/entrypoints/chat_utils.py:1856-1872]
+[FACT:vllm/entrypoints/chat_utils.py:1856-1872](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1856-L1872)
 
 当 `enable_prompt_embeds` 开启时，`PROMPT_EMBEDS_PLACEHOLDER_TOKEN` 被注册为不可分割的特殊 token。如果用户文本中恰好包含这个字面序列，tokenizer 会把它编码为同一个 token ID，renderer 会误认为这是拼接点，允许调用者通过纯文本内容移动或注入拼接位置。`_reject_reserved_placeholder_in_text` 在文本 part 解析时拒绝这种输入，堵住了这个安全漏洞。
 
-[FACT:vllm/entrypoints/chat_utils.py:1889-1892]
+[FACT:vllm/entrypoints/chat_utils.py:1889-1892](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1889-L1892)
 
 注意这个检查在 `isinstance(part, str)` 分支和结构化文本分支中都有调用，确保所有文本路径都经过防护。
 
@@ -196,15 +196,15 @@ flowchart LR
 
 Q1: 在 `_parse_chat_message_content_mm_part` 中，如果去掉 `uuid is None` 这个条件（即改为 `if isinstance(part_type, str) and part_type in MM_PARSER_MAP:`），在什么场景下会导致问题？
 
-**参考解析**：`uuid is None` 条件的存在是为了处理「用户提供了 UUID 但媒体数据不在请求体中」的场景。当用户提供 UUID 时，媒体数据可能已经通过其他方式上传（如预先上传到媒体缓存），此时请求体中的 part 可能只包含 UUID 而不包含实际的 URL 或数据。如果去掉这个条件，代码会尝试通过 `MM_PARSER_MAP[part_type](part)` 解析，但 part 中可能没有对应的数据字段（如 `image_url` 为空），导致解析出 `None` 内容。更严重的是，后续的 `parse_image(None, uuid)` 会调用 `_connector.fetch_image(None)`，可能触发不必要的网络请求或异常。`uuid is not None` 分支则走直接字段提取路径，正确处理了「有 UUID 无数据」的情况。参见 [FACT:vllm/entrypoints/chat_utils.py:1713-1723] 和 [FACT:vllm/entrypoints/chat_utils.py:1731-1733]。
+**参考解析**：`uuid is None` 条件的存在是为了处理「用户提供了 UUID 但媒体数据不在请求体中」的场景。当用户提供 UUID 时，媒体数据可能已经通过其他方式上传（如预先上传到媒体缓存），此时请求体中的 part 可能只包含 UUID 而不包含实际的 URL 或数据。如果去掉这个条件，代码会尝试通过 `MM_PARSER_MAP[part_type](part)` 解析，但 part 中可能没有对应的数据字段（如 `image_url` 为空），导致解析出 `None` 内容。更严重的是，后续的 `parse_image(None, uuid)` 会调用 `_connector.fetch_image(None)`，可能触发不必要的网络请求或异常。`uuid is not None` 分支则走直接字段提取路径，正确处理了「有 UUID 无数据」的情况。参见 [FACT:vllm/entrypoints/chat_utils.py:1713-1723](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1713-L1723) 和 [FACT:vllm/entrypoints/chat_utils.py:1731-1733](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1731-L1733)。
 
 Q2: `AsyncMultiModalItemTracker.resolve_items` 使用 `asyncio.gather(..., return_exceptions=True)` 而非默认的 `return_exceptions=False`。如果改为 `False`，在什么并发场景下会导致资源泄漏？
 
-**参考解析**：`return_exceptions=False` 时，`asyncio.gather` 会在第一个异常抛出时立即返回，但其他仍在进行中的任务不会被取消——它们会继续在后台运行。这些任务可能持有网络连接、线程池工作项或文件句柄。如果这些任务最终失败，异常会被静默丢弃（因为 gather 已经返回），导致资源泄漏和难以排查的错误。`return_exceptions=True` 让所有任务都完成或失败后再统一检查，确保没有任务被遗弃。注释明确说明了这一点：「Gathering with return_exceptions=True lets every task finish (or itself fail) before we raise, instead of abandoning still-in-flight fetches (real network/thread-pool work) the moment the first one fails.」参见 [FACT:vllm/entrypoints/chat_utils.py:924-931]。
+**参考解析**：`return_exceptions=False` 时，`asyncio.gather` 会在第一个异常抛出时立即返回，但其他仍在进行中的任务不会被取消——它们会继续在后台运行。这些任务可能持有网络连接、线程池工作项或文件句柄。如果这些任务最终失败，异常会被静默丢弃（因为 gather 已经返回），导致资源泄漏和难以排查的错误。`return_exceptions=True` 让所有任务都完成或失败后再统一检查，确保没有任务被遗弃。注释明确说明了这一点：「Gathering with return_exceptions=True lets every task finish (or itself fail) before we raise, instead of abandoning still-in-flight fetches (real network/thread-pool work) the moment the first one fails.」参见 [FACT:vllm/entrypoints/chat_utils.py:924-931](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L924-L931)。
 
 Q3: `_postprocess_messages` 中，当 `arguments` 是无效 JSON 时，代码选择强制转为空对象而非抛出异常。如果改为抛出异常，在什么生产场景下会导致不可恢复的对话状态？
 
-**参考解析**：`arguments` 字段存在于对话历史中（assistant 消息的 `tool_calls`）。如果某轮对话中模型生成了格式错误的 `arguments`，这个错误会被保存在对话历史中。如果 `_postprocess_messages` 在解析历史时抛出异常，那么后续每一轮请求都会因为历史中的这个错误而失败——即使当前轮次的输入完全正确。用户将无法继续这个对话，只能放弃整个会话重新开始。强制转为空对象让对话可以继续，模型看到空的工具参数后会重新生成正确的调用。注释解释了这一点：「A malformed arguments string lives in conversation history, so failing the request here would fail every subsequent turn too and leave the conversation unrecoverable.」参见 [FACT:vllm/entrypoints/chat_utils.py:2124-2139]。
+**参考解析**：`arguments` 字段存在于对话历史中（assistant 消息的 `tool_calls`）。如果某轮对话中模型生成了格式错误的 `arguments`，这个错误会被保存在对话历史中。如果 `_postprocess_messages` 在解析历史时抛出异常，那么后续每一轮请求都会因为历史中的这个错误而失败——即使当前轮次的输入完全正确。用户将无法继续这个对话，只能放弃整个会话重新开始。强制转为空对象让对话可以继续，模型看到空的工具参数后会重新生成正确的调用。注释解释了这一点：「A malformed arguments string lives in conversation history, so failing the request here would fail every subsequent turn too and leave the conversation unrecoverable.」参见 [FACT:vllm/entrypoints/chat_utils.py:2124-2139](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2124-L2139)。
 
 下一章将进入调度器，看 EngineCore 如何用连续批处理与显存感知策略编排这些请求。
 

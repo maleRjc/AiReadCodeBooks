@@ -63,7 +63,7 @@ flowchart TD
 
 先看 `ncclDevKernelArgs` 的结构，它是 host 和 device 之间的"信封"：
 
-[FACT:src/include/device.h:514-522]
+[FACT:src/include/device.h:514-522](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/device.h#L514-L522)
 
 ```c
 struct alignas(16) ncclDevKernelArgs {
@@ -80,7 +80,7 @@ struct alignas(16) ncclDevKernelArgs {
 
 `ncclDevWorkBatch` 是 batch 描述符，它告诉设备侧"这个 channel 的 work 在哪里、有多少个"：
 
-[FACT:src/include/device.h:400-421]
+[FACT:src/include/device.h:400-421](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/device.h#L400-L421)
 
 ```c
 struct alignas(16) ncclDevWorkBatch {
@@ -104,7 +104,7 @@ struct alignas(16) ncclDevWorkBatch {
 
 **第一步：`finishPlan` 决定存储类型。**
 
-[FACT:src/enqueue/enqueue.cc:245-255]
+[FACT:src/enqueue/enqueue.cc:245-255](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L245-L255)
 
 ```c
 if (sizeof(ncclDevKernelArgs) + batchBytes + workBytes <= comm->workArgsBytes) {
@@ -126,7 +126,7 @@ plan->kernelArgs->workStorageType = plan->workStorageType;
 
 **第二步：把 batch 按 channel 轮流放入 kernel args。**
 
-[FACT:src/enqueue/enqueue.cc:257-280]
+[FACT:src/enqueue/enqueue.cc:257-280](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L257-L280)
 
 ```c
 uint64_t hasBatchMask = plan->channelMask;
@@ -158,7 +158,7 @@ while (hasBatchMask != 0) {
 
 **第三步：`uploadWork` 把 work 拷贝到目标缓冲区。**
 
-[FACT:src/enqueue/enqueue.cc:1365-1430]
+[FACT:src/enqueue/enqueue.cc:1365-1430](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1365-L1430)
 
 ```c
 static ncclResult_t uploadWork(struct ncclComm* comm, struct ncclKernelPlan* plan) {
@@ -223,7 +223,7 @@ static ncclResult_t uploadWork(struct ncclComm* comm, struct ncclKernelPlan* pla
 - `Fifo`：容量大（环形缓冲区），但设备侧读取要走全局内存。适合中等消息。
 - `Persistent`：用于 CUDA Graph 捕获场景。因为 graph 捕获时不能做 `cudaMemcpy`，所以需要预先分配持久化缓冲区，把 work 拷贝进去，然后让 kernel 从那里读。
 
-**踩坑点 1：FIFO 溢出导致死锁。** 如果 `waitWorkFifoAvailable` 没有检查 `abortFlag`，当 FIFO 满且消费者（GPU kernel）因为某种原因停止消费时，host 会永远自旋。源码里 [FACT:src/enqueue/enqueue.cc:1333-1349] 明确检查了 abort flag：
+**踩坑点 1：FIFO 溢出导致死锁。** 如果 `waitWorkFifoAvailable` 没有检查 `abortFlag`，当 FIFO 满且消费者（GPU kernel）因为某种原因停止消费时，host 会永远自旋。源码里 [FACT:src/enqueue/enqueue.cc:1333-1349](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1333-L1349) 明确检查了 abort flag：
 
 ```c
 if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire)) {
@@ -233,7 +233,7 @@ if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire)) {
 
 **踩坑点 2：`offsetBitset` 溢出。** `offsetBitset` 是 64 位的，最多支持 64 个 work 在一个 batch 里。如果超过 64 个，`1ull << (offset / workSize)` 会溢出。源码里通过 `NCCL_MAX_DEV_WORK_BATCH_BYTES` 限制了 batch 的大小（1024 字节），而最小的 work 结构体是 `ncclDevWorkColl`（约 80 字节），所以最多 12 个 work，不会溢出。
 
-**踩坑点 3：Persistent 模式下的内存泄漏。** 在 `uploadWork` 的 `Persistent` 分支里，`fifoBufHost` 是通过 `ncclOsAlignedAlloc` 分配的，需要在 `uploadWork_cleanup_fn` 里释放。如果 `cudaMemcpyAsync` 失败，`fail` 标签会检查 `cleanup` 是否为 null，如果为 null 就直接释放 `fifoBufHost`。这个错误恢复链在 [FACT:src/enqueue/enqueue.cc:1483-1485] 可以看到。
+**踩坑点 3：Persistent 模式下的内存泄漏。** 在 `uploadWork` 的 `Persistent` 分支里，`fifoBufHost` 是通过 `ncclOsAlignedAlloc` 分配的，需要在 `uploadWork_cleanup_fn` 里释放。如果 `cudaMemcpyAsync` 失败，`fail` 标签会检查 `cleanup` 是否为 null，如果为 null 就直接释放 `fifoBufHost`。这个错误恢复链在 [FACT:src/enqueue/enqueue.cc:1483-1485](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1483-L1485) 可以看到。
 
 ## Kernel 发射：从 CUlaunchConfig 到 cuLaunchKernelEx
 
@@ -247,7 +247,7 @@ if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire)) {
 
 `CUlaunchConfig` 是 CUDA 驱动 API 的启动配置结构体，NCCL 在栈上构造它：
 
-[FACT:src/enqueue/enqueue.cc:1916-1917]
+[FACT:src/enqueue/enqueue.cc:1916-1917](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1916-L1917)
 
 ```c
 CUlaunchConfig launchConfig = {0};
@@ -268,7 +268,7 @@ int attrs = 0;
 
 **第一步：计算 grid 和 block 维度。**
 
-[FACT:src/enqueue/enqueue.cc:1889-1893]
+[FACT:src/enqueue/enqueue.cc:1889-1893](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1889-L1893)
 
 ```c
 int nChannels = countOneBits(plan->channelMask);
@@ -284,7 +284,7 @@ int smem = plan->isSymColl ? plan->kernelDynSmem : ncclShmemDynamicSize(comm->cu
 
 **第二步：组装 kernel 参数。**
 
-[FACT:src/enqueue/enqueue.cc:1902-1903]
+[FACT:src/enqueue/enqueue.cc:1902-1903](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1902-L1903)
 
 ```c
 void* extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, plan->kernelArgs, CU_LAUNCH_PARAM_BUFFER_SIZE, &plan->kernelArgsSize,
@@ -295,7 +295,7 @@ void* extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, plan->kernelArgs, CU_LAUNCH_PAR
 
 **第三步：添加 launch attributes。**
 
-[FACT:src/enqueue/enqueue.cc:1929-1936]
+[FACT:src/enqueue/enqueue.cc:1929-1936](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1929-L1936)
 
 ```c
 if (clusterSize) {
@@ -313,7 +313,7 @@ CGA（Cooperative Group Array）是 sm90 引入的硬件特性，允许把多个
 
 **第四步：添加 launch completion event。**
 
-[FACT:src/enqueue/enqueue.cc:1944-1964]
+[FACT:src/enqueue/enqueue.cc:1944-1964](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1944-L1964)
 
 ```c
 #if CUDART_VERSION >= 12030
@@ -345,7 +345,7 @@ if (implicitOrder == ncclImplicitOrderLaunch) {
 
 **第五步：调用 `cuLaunchKernelEx`。**
 
-[FACT:src/enqueue/enqueue.cc:1978-1996]
+[FACT:src/enqueue/enqueue.cc:1978-1996](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1978-L1996)
 
 ```c
 launchConfig.gridDimX = grid.x;
@@ -371,7 +371,7 @@ if (relayUserLaunchCompletionEvent) {
 
 `cuLaunchKernelEx` 是 CUDA 12.0 引入的新 API，支持 launch attributes。对于老驱动（< 11.8），NCCL 会退回到 `cuLaunchKernel`：
 
-[FACT:src/enqueue/enqueue.cc:1998-2007]
+[FACT:src/enqueue/enqueue.cc:1998-2007](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1998-L2007)
 
 ```c
 } else {
@@ -396,7 +396,7 @@ if (relayUserLaunchCompletionEvent) {
 
 这样用户的 event 会在 kernel 真正开始执行后触发，而不是在 host 侧调用返回时触发。
 
-**Mem Sync Domain。** [FACT:src/enqueue/enqueue.cc:1938-1942] 在 sm90+ 上，NCCL 设置 `CU_LAUNCH_ATTRIBUTE_MEM_SYNC_DOMAIN` 为 `cudaLaunchMemSyncDomainRemote`。这是 Hopper 架构引入的内存同步域机制，用于隔离不同 kernel 的内存屏障，减少不必要的同步开销。
+**Mem Sync Domain。** [FACT:src/enqueue/enqueue.cc:1938-1942](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L1938-L1942) 在 sm90+ 上，NCCL 设置 `CU_LAUNCH_ATTRIBUTE_MEM_SYNC_DOMAIN` 为 `cudaLaunchMemSyncDomainRemote`。这是 Hopper 架构引入的内存同步域机制，用于隔离不同 kernel 的内存屏障，减少不必要的同步开销。
 
 ### 生产踩坑指南
 
@@ -404,7 +404,7 @@ if (relayUserLaunchCompletionEvent) {
 
 **踩坑点 2：驱动版本不满足导致 kernel 不可用。** `ncclInitKernelsForDevice` 会在初始化时检查每个 kernel 的驱动要求：
 
-[FACT:src/enqueue/enqueue.cc:71-76]
+[FACT:src/enqueue/enqueue.cc:71-76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L71-L76)
 
 ```c
 for (int k = 0; k < kcount; k++) {
@@ -431,7 +431,7 @@ for (int k = 0; k < kcount; k++) {
 
 设备侧的共享内存布局是理解 `ncclKernelMain` 的关键。`ncclShmemData` 是所有 block 共享的"工作台"：
 
-[FACT:src/device/common.h:48-72]
+[FACT:src/device/common.h:48-72](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L48-L72)
 
 ```c
 struct ncclShmemData {
@@ -471,7 +471,7 @@ struct ncclShmemData {
 
 **第一步：拷贝 kernel args 到共享内存。**
 
-[FACT:src/device/common.h:426-428]
+[FACT:src/device/common.h:426-428](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L426-L428)
 
 ```c
 if (tid < sizeof(ncclDevKernelArgs) / sizeof(uint32_t)) {
@@ -483,7 +483,7 @@ if (tid < sizeof(ncclDevKernelArgs) / sizeof(uint32_t)) {
 
 **第二步：确定 channelId。**
 
-[FACT:src/device/common.h:430-437]
+[FACT:src/device/common.h:430-437](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L430-L437)
 
 ```c
 if (tid < MAXCHANNELS && (args->channelMask & (1ull << tid))) {
@@ -499,7 +499,7 @@ __syncthreads();
 
 **第三步：加载 comm 和 channel 到共享内存。**
 
-[FACT:src/device/common.h:446-478]
+[FACT:src/device/common.h:446-478](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L446-L478)
 
 ```c
 switch (tid / WARP_SIZE) {
@@ -542,7 +542,7 @@ __syncthreads();
 
 `copyToShmem16` 是一个用内联 PTX 实现的 16 字节拷贝函数：
 
-[FACT:src/device/common.h:131-139]
+[FACT:src/device/common.h:131-139](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L131-L139)
 
 ```c
 inline __device__ void copyToShmem16(int tid, void* dst, void const* src, int bytes) {
@@ -562,7 +562,7 @@ inline __device__ void copyToShmem16(int tid, void* dst, void const* src, int by
 
 `loadWorkBatchToShmem` 是最复杂的部分。它的任务是把 batch 描述符指向的 work 结构体从全局内存（或 kernel 参数）拷贝到共享内存的 `workStorage` 里。
 
-[FACT:src/device/common.h:142-260]
+[FACT:src/device/common.h:142-260](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L142-L260)
 
 ```c
 __device__ __forceinline__ void loadWorkBatchToShmem(int tid, int tn, struct ncclDevKernelArgs const* args,
@@ -595,7 +595,7 @@ __device__ __forceinline__ void loadWorkBatchToShmem(int tid, int tn, struct ncc
 
 接下来是实际的拷贝：
 
-[FACT:src/device/common.h:209-241]
+[FACT:src/device/common.h:209-241](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L209-L241)
 
 ```c
 if (tid < nPacks) {
@@ -619,7 +619,7 @@ if (tid < nPacks) {
 
 注释里特别强调了不能把这两种情况合并：
 
-[FACT:src/device/common.h:212-229]
+[FACT:src/device/common.h:212-229](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L212-L229)
 
 ```c
 // The loads done in these two cases must be kept separate since we are
@@ -634,7 +634,7 @@ if (tid < nPacks) {
 
 **第五步：执行 work。**
 
-[FACT:src/device/common.h:481-497]
+[FACT:src/device/common.h:481-497](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L481-L497)
 
 ```c
 while (ncclShmem.aborted == 0) {
@@ -659,7 +659,7 @@ while (ncclShmem.aborted == 0) {
 
 `ncclDevFuncTable` 是一个设备侧的函数指针数组，由 `generate.py` 生成：
 
-[FACT:src/device/generate.py:261-270]
+[FACT:src/device/generate.py:261-270](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L261-L270)
 
 ```python
 out("__device__ ncclDevFuncPtr_t const ncclDevFuncTable[] = {\n")
@@ -678,7 +678,7 @@ out("nullptr};\n")
 
 ### 设计思考与生产踩坑
 
-**为什么用 `__grid_constant__`？** [FACT:src/device/common.h:19-24]
+**为什么用 `__grid_constant__`？** [FACT:src/device/common.h:19-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L19-L24)
 
 ```c
 #if __CUDA_ARCH__ >= 700
@@ -693,7 +693,7 @@ out("nullptr};\n")
 
 **踩坑点 1：`workStorage` 溢出。** `workStorage` 的大小是 `ncclMaxDevWorkBatchBytes()`，sm90+ 是 16KB。如果 `nWorks * workSize` 超过这个值，会写越界。源码里通过 `NCCL_MAX_DEV_WORK_BATCH_BYTES` 在 host 侧限制了 batch 的大小，但设备侧没有额外的检查。如果 host 侧的约束被绕过（比如通过修改环境变量），会导致共享内存越界。
 
-**踩坑点 2：`__syncthreads()` 的缺失导致数据竞争。** 在 `loadWorkBatchToShmem` 之后，必须有一个 `__syncthreads()` 才能让所有线程看到完整的 `workStorage`。源码里在 [FACT:src/device/common.h:479] 有 `__syncthreads(); // publish ncclShmem`。如果这个同步被去掉，某些线程可能会在 `workStorage` 还没写完时就开始读取，导致读到垃圾数据。
+**踩坑点 2：`__syncthreads()` 的缺失导致数据竞争。** 在 `loadWorkBatchToShmem` 之后，必须有一个 `__syncthreads()` 才能让所有线程看到完整的 `workStorage`。源码里在 [FACT:src/device/common.h:479](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L479) 有 `__syncthreads(); // publish ncclShmem`。如果这个同步被去掉，某些线程可能会在 `workStorage` 还没写完时就开始读取，导致读到垃圾数据。
 
 **踩坑点 3：abort 检查的时机。** `while (ncclShmem.aborted == 0)` 只在每个 batch 开始时检查 abort。如果某个 batch 执行时间很长，abort 信号可能要等很久才能生效。这是设计上的权衡：更频繁的检查会增加开销，但响应更快。
 
@@ -717,7 +717,7 @@ out("nullptr};\n")
 
 **第一步：枚举所有函数行。**
 
-[FACT:src/device/generate.py:186-199]
+[FACT:src/device/generate.py:186-199](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L186-L199)
 
 ```python
 def enumerate_func_rows():
@@ -738,7 +738,7 @@ def enumerate_func_rows():
 
 这个枚举顺序必须和 `ncclDevFuncId()` 的计算公式匹配：
 
-[FACT:src/include/device.h:646-706]
+[FACT:src/include/device.h:646-706](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/device.h#L646-L706)
 
 ```c
 inline int ncclDevFuncId(int coll, int devRedOp, int type, int algo, int proto) {
@@ -758,7 +758,7 @@ inline int ncclDevFuncId(int coll, int devRedOp, int type, int algo, int proto) 
 
 **第二步：计算主函数和 kernel 函数。**
 
-[FACT:src/device/generate.py:211-225]
+[FACT:src/device/generate.py:211-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L211-L225)
 
 ```python
 func_rows = [validate(*fn) for fn in enumerate_func_rows()]
@@ -769,7 +769,7 @@ kernel_funcs = sorted(set(best_kernel(*fn) for fn in primary_funcs))
 
 `equivalent_primary` 把有符号整数映射到无符号整数（因为加法/乘法对两者是一样的）：
 
-[FACT:src/device/generate.py:158-166]
+[FACT:src/device/generate.py:158-166](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L158-L166)
 
 ```python
 def equivalent_primary(coll, redop, ty, algo, proto):
@@ -783,7 +783,7 @@ def equivalent_primary(coll, redop, ty, algo, proto):
 
 `best_kernel` 把多个主函数映射到同一个 kernel（比如所有 `AllGather` 的算法都映射到 `AllGather RING LL`）：
 
-[FACT:src/device/generate.py:171-183]
+[FACT:src/device/generate.py:171-183](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L171-L183)
 
 ```python
 def best_kernel(coll, redop, ty, algo, proto):
@@ -800,7 +800,7 @@ def best_kernel(coll, redop, ty, algo, proto):
 
 **第三步：生成 kernel 定义。**
 
-[FACT:src/device/generate.py:458-480]
+[FACT:src/device/generate.py:458-480](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L458-L480)
 
 ```python
 (_, kfns) = name_to_kernels.get(name) or (None, [])
@@ -816,7 +816,7 @@ for kfn in kfns:
 
 `DEFINE_ncclDevKernel` 宏展开后是：
 
-[FACT:src/device/common.h:507-509]
+[FACT:src/device/common.h:507-509](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/common.h#L507-L509)
 
 ```c
 #define DEFINE_ncclDevKernel(suffix, coll, redop, ty, algo, proto, specializedFnId) \
@@ -835,6 +835,6 @@ for kfn in kfns:
 
 **踩坑点 2：`required_cuda` 的版本检查。** 某些 kernel 需要特定的 CUDA 版本或架构：
 
-[FACT:src/device/generate.py:130-154]
+[FACT:src/device/generate.py:130-154](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/generate.py#L130-L154)
 
 至此，kernel 已经在 GPU 上启动，设备侧也拿到了工作描述。但真正决定性能的，是设备内部如何搬运数据。下一章将深入 src/device 下的三种协议原语：LL、LL128 和 Simple，看看同一份 AllReduce 逻辑为什么需要三套搬运原语，以及它们在同步方式、缓冲区布局和 flag 语义上的差异。
