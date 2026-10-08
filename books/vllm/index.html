@@ -13,7 +13,7 @@
   <header class="site-header" id="navbar">
     <div class="header-container">
       <a href="../../index.html" class="logo-group">
-        <div class="logo-icon" title="AiReadCodeBooks — 开源技术专著书库">
+        <div class="logo-icon" title="AiReadCodeBooks">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
             <path d="M12 3.5C8.4 3.5 6 6 6 9.5C6 12 7.8 13.8 8.8 15H15.2C16.2 13.8 18 12 18 9.5C18 6 15.6 3.5 12 3.5Z" stroke="#00e5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             <line x1="9.5" y1="17.2" x2="14.5" y2="17.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
@@ -32,6 +32,17 @@
       </ul>
 
       <div class="header-actions">
+        <div class="lang-dropdown" id="lang-dropdown">
+          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>🇨🇳 简体中文</span>
+            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="lang-dropdown-menu" id="lang-menu">
+            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" data-base="./">🇨🇳 简体中文</a>
+            <a href="en/#ch-01" class="lang-dropdown-item" data-lang="en" data-base="./en/">🇺🇸 English</a>
+          </div>
+        </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/vllm" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
           <span>查看 Markdown 源码</span>
         </a>
@@ -91,7 +102,7 @@
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 1 / 14 章</span>
           </div>
@@ -295,7 +306,7 @@ class VllmConfig:
           <a href="#ch-02" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-02">下一章：第 2 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache">
         <div class="chapter-header">
@@ -304,7 +315,7 @@ class VllmConfig:
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 2 / 14 章</span>
           </div>
@@ -362,7 +373,7 @@ class VllmConfig:
           <a href="#ch-03" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-03">下一章：第 3 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：第 3 章：请求生命周期：从 HTTP/CLI 到 EngineCore 的端到端链路">
         <div class="chapter-header">
@@ -371,7 +382,7 @@ class VllmConfig:
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 3 / 14 章</span>
           </div>
@@ -505,7 +516,7 @@ class VllmConfig:
           <a href="#ch-04" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-04">下一章：第 4 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：第 4 章：资源感知与内存管理：PagedAttention 与 KV Cache 显存虚拟化">
         <div class="chapter-header">
@@ -514,7 +525,7 @@ class VllmConfig:
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 4 / 14 章</span>
           </div>
@@ -649,7 +660,7 @@ class VllmConfig:
           <a href="#ch-05" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-05">下一章：第 5 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：第 5 章：连续批处理引擎：Continuous Batching 与迭代级调度">
         <div class="chapter-header">
@@ -658,7 +669,7 @@ class VllmConfig:
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 5 / 14 章</span>
           </div>
@@ -843,7 +854,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <a href="#ch-06" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-06">下一章：第 6 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：第 6 章：模型执行器与分布式并行：ModelRunner、Worker 与 Tensor/Pipeline Parallel">
         <div class="chapter-header">
@@ -852,7 +863,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 6 / 14 章</span>
           </div>
@@ -985,7 +996,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <a href="#ch-07" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-07">下一章：第 7 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：第 7 章：CUDA Graph 与执行加速：静态图捕获与低延迟调度">
         <div class="chapter-header">
@@ -994,7 +1005,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 7 / 14 章</span>
           </div>
@@ -1119,7 +1130,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <a href="#ch-08" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-08">下一章：第 8 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：第 8 章：KV 传输与多节点缓存：Prefix Caching 与 Chunked Prefill">
         <div class="chapter-header">
@@ -1128,7 +1139,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 8 / 14 章</span>
           </div>
@@ -1283,7 +1294,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <a href="#ch-09" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-09">下一章：第 9 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：第 9 章：投机解码加速：Speculative Decoding 的实现与加速比评测">
         <div class="chapter-header">
@@ -1292,7 +1303,7 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 9 / 14 章</span>
           </div>
@@ -1637,7 +1648,7 @@ idle. A peer that has lost its NIC holds one indefinitely.
           <a href="#ch-10" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-10">下一章：第 10 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：第 10 章：量化与压缩支持：AWQ、GPTQ、FP8 与量化内核实现">
         <div class="chapter-header">
@@ -1646,7 +1657,7 @@ idle. A peer that has lost its NIC holds one indefinitely.
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 10 / 14 章</span>
           </div>
@@ -1761,7 +1772,7 @@ idle. A peer that has lost its NIC holds one indefinitely.
           <a href="#ch-11" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-11">下一章：第 11 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：第 11 章：服务端并发与架构：AsyncLLMEngine 与 OpenAI 兼容 API 适配">
         <div class="chapter-header">
@@ -1770,7 +1781,7 @@ idle. A peer that has lost its NIC holds one indefinitely.
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 11 / 14 章</span>
           </div>
@@ -1961,7 +1972,7 @@ class QuantSpec:
           <a href="#ch-12" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-12">下一章：第 12 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：第 12 章：性能剖析与基准测试：吞吐量优化、TTFT/ITL 延迟拆解与 Profiling">
         <div class="chapter-header">
@@ -1970,7 +1981,7 @@ class QuantSpec:
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 12 / 14 章</span>
           </div>
@@ -2092,7 +2103,7 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
           <a href="#ch-13" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-13">下一章：第 13 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：第 13 章：生产部署与稳定性：GPU 显存泄漏排查、死锁预防与高可用">
         <div class="chapter-header">
@@ -2101,7 +2112,7 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 13 / 14 章</span>
           </div>
@@ -2287,7 +2298,7 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
           <a href="#ch-14" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-14">下一章：第 14 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：第 14 章：演进历程与架构前瞻：vLLM v1 到未来推理系统的演化路径">
         <div class="chapter-header">
@@ -2296,7 +2307,7 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
-            <span>版本: Commit @7ba3df63</span>
+            <span>Commit @7ba3df63</span>
             <span>·</span>
             <span>全书进度: 第 14 / 14 章</span>
           </div>
@@ -2436,7 +2447,7 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
           <span></span>
         </div>
       </section>
-            
+        
 
       <div style="margin-top: 60px; padding: 28px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 12px; text-align: center;">
         <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任意复杂项目，其实只需要一本好书</h3>

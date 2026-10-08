@@ -13,7 +13,7 @@
   <header class="site-header" id="navbar">
     <div class="header-container">
       <a href="../../index.html" class="logo-group">
-        <div class="logo-icon" title="AiReadCodeBooks — 开源技术专著书库">
+        <div class="logo-icon" title="AiReadCodeBooks">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
             <path d="M12 3.5C8.4 3.5 6 6 6 9.5C6 12 7.8 13.8 8.8 15H15.2C16.2 13.8 18 12 18 9.5C18 6 15.6 3.5 12 3.5Z" stroke="#00e5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             <line x1="9.5" y1="17.2" x2="14.5" y2="17.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
@@ -32,6 +32,17 @@
       </ul>
 
       <div class="header-actions">
+        <div class="lang-dropdown" id="lang-dropdown">
+          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>🇨🇳 简体中文</span>
+            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="lang-dropdown-menu" id="lang-menu">
+            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" data-base="./">🇨🇳 简体中文</a>
+            <a href="en/#ch-01" class="lang-dropdown-item" data-lang="en" data-base="./en/">🇺🇸 English</a>
+          </div>
+        </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/tokio" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
           <span>查看 Markdown 源码</span>
         </a>
@@ -91,7 +102,7 @@
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 1 / 14 章</span>
           </div>
@@ -275,7 +286,7 @@ impl AutoBox {
           <a href="#ch-02" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-02">下一章：第 2 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：第 2 章：Runtime 装配工厂：Builder 如何把线程池与驱动拼装成一个运行时">
         <div class="chapter-header">
@@ -284,7 +295,7 @@ impl AutoBox {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 2 / 14 章</span>
           </div>
@@ -666,7 +677,7 @@ impl AutoBox {
           <a href="#ch-03" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-03">下一章：第 3 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：第 3 章：一粒任务的诞生：spawn 如何把一个 Future 变成可调度实体">
         <div class="chapter-header">
@@ -675,7 +686,7 @@ impl AutoBox {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 3 / 14 章</span>
           </div>
@@ -1025,7 +1036,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <a href="#ch-04" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-04">下一章：第 4 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：第 4 章：调度循环的心跳：poll 循环与工作窃取 (Work-Stealing) 算法">
         <div class="chapter-header">
@@ -1034,7 +1045,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 4 / 14 章</span>
           </div>
@@ -1233,7 +1244,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <a href="#ch-05" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-05">下一章：第 5 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：第 5 章：I/O 驱动与就绪通知：Reactor 如何把 epoll 事件转化为 Waker 唤醒">
         <div class="chapter-header">
@@ -1242,7 +1253,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 5 / 14 章</span>
           </div>
@@ -1431,7 +1442,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <a href="#ch-06" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-06">下一章：第 6 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：第 6 章：时间轮与高精度定时器：Time Driver 的分级时间轮实现">
         <div class="chapter-header">
@@ -1440,7 +1451,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 6 / 14 章</span>
           </div>
@@ -1797,7 +1808,7 @@ while let Some(item) = entries.pop_back() {
           <a href="#ch-07" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-07">下一章：第 7 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：第 7 章：同步原语深度剖析：tokio::sync (Mutex, RwLock, Notify, mpsc)">
         <div class="chapter-header">
@@ -1806,7 +1817,7 @@ while let Some(item) = entries.pop_back() {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 7 / 14 章</span>
           </div>
@@ -2084,7 +2095,7 @@ impl Drop for WakeReceiverOnDrop {
           <a href="#ch-08" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-08">下一章：第 8 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：第 8 章：阻塞线程池与外部互操作：spawn_blocking 与任务隔离">
         <div class="chapter-header">
@@ -2093,7 +2104,7 @@ impl Drop for WakeReceiverOnDrop {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 8 / 14 章</span>
           </div>
@@ -2263,7 +2274,7 @@ match &amp;self.scheduler {
           <a href="#ch-09" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-09">下一章：第 9 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：第 9 章：协作式调度预算：coop 机制如何防止异步任务饥饿">
         <div class="chapter-header">
@@ -2272,7 +2283,7 @@ match &amp;self.scheduler {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 9 / 14 章</span>
           </div>
@@ -2397,7 +2408,7 @@ match &amp;self.scheduler {
           <a href="#ch-10" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-10">下一章：第 10 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：第 10 章：背压与流控机制：异步通道的缓冲区管理与流处理">
         <div class="chapter-header">
@@ -2406,7 +2417,7 @@ match &amp;self.scheduler {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 10 / 14 章</span>
           </div>
@@ -2698,7 +2709,7 @@ Ok(Some(n))</code></pre></div>
           <a href="#ch-11" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-11">下一章：第 11 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：第 11 章：优雅停机与取消安全：Cancel Safety 与生命周期管理">
         <div class="chapter-header">
@@ -2707,7 +2718,7 @@ Ok(Some(n))</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 11 / 14 章</span>
           </div>
@@ -3210,7 +3221,7 @@ fn notify_now(&amp;self) {
           <a href="#ch-12" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-12">下一章：第 12 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：第 12 章：生产环境观测与排障：tokio-console 与 tracing 埋点实战">
         <div class="chapter-header">
@@ -3219,7 +3230,7 @@ fn notify_now(&amp;self) {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 12 / 14 章</span>
           </div>
@@ -3522,7 +3533,7 @@ impl Drop for WakeReceiverOnDrop {
           <a href="#ch-13" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-13">下一章：第 13 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：第 13 章：性能调优与高并发陷阱：上下文切换、内存分配与死锁排查">
         <div class="chapter-header">
@@ -3531,7 +3542,7 @@ impl Drop for WakeReceiverOnDrop {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 13 / 14 章</span>
           </div>
@@ -3766,7 +3777,7 @@ pub(super) struct Receiver {
           <a href="#ch-14" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-14">下一章：第 14 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：第 14 章：演进历程与架构沉思：Tokio 从微内核到工业级运行时的权衡">
         <div class="chapter-header">
@@ -3775,7 +3786,7 @@ pub(super) struct Receiver {
           <div class="reader-chapter-meta">
             <span>官方源: tokio-rs/tokio</span>
             <span>·</span>
-            <span>版本: Commit @e800714a</span>
+            <span>Commit @e800714a</span>
             <span>·</span>
             <span>全书进度: 第 14 / 14 章</span>
           </div>
@@ -4081,7 +4092,7 @@ memory leaks.</code></pre></div>
           <span></span>
         </div>
       </section>
-            
+        
 
       <div style="margin-top: 60px; padding: 28px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 12px; text-align: center;">
         <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任意复杂项目，其实只需要一本好书</h3>

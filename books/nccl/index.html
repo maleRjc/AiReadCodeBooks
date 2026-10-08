@@ -13,7 +13,7 @@
   <header class="site-header" id="navbar">
     <div class="header-container">
       <a href="../../index.html" class="logo-group">
-        <div class="logo-icon" title="AiReadCodeBooks — 开源技术专著书库">
+        <div class="logo-icon" title="AiReadCodeBooks">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
             <path d="M12 3.5C8.4 3.5 6 6 6 9.5C6 12 7.8 13.8 8.8 15H15.2C16.2 13.8 18 12 18 9.5C18 6 15.6 3.5 12 3.5Z" stroke="#00e5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             <line x1="9.5" y1="17.2" x2="14.5" y2="17.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
@@ -32,6 +32,17 @@
       </ul>
 
       <div class="header-actions">
+        <div class="lang-dropdown" id="lang-dropdown">
+          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>🇨🇳 简体中文</span>
+            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="lang-dropdown-menu" id="lang-menu">
+            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" data-base="./">🇨🇳 简体中文</a>
+            <a href="en/#ch-01" class="lang-dropdown-item" data-lang="en" data-base="./en/">🇺🇸 English</a>
+          </div>
+        </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/nccl" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
           <span>查看 Markdown 源码</span>
         </a>
@@ -102,7 +113,7 @@
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 1 / 25 章</span>
           </div>
@@ -457,7 +468,7 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
           <a href="#ch-02" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-02">下一章：第 2 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层">
         <div class="chapter-header">
@@ -466,7 +477,7 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 2 / 25 章</span>
           </div>
@@ -1086,7 +1097,7 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
           <a href="#ch-03" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-03">下一章：第 3 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域">
         <div class="chapter-header">
@@ -1095,7 +1106,7 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 3 / 25 章</span>
           </div>
@@ -1481,7 +1492,7 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
           <a href="#ch-04" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-04">下一章：第 4 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联">
         <div class="chapter-header">
@@ -1490,7 +1501,7 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 4 / 25 章</span>
           </div>
@@ -2035,7 +2046,7 @@ rank 7 -&gt; rank 0</code></pre></div>
           <a href="#ch-05" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-05">下一章：第 5 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：第 5 章：算法与协议选型：tuning 模块如何决定通信路径">
         <div class="chapter-header">
@@ -2044,7 +2055,7 @@ rank 7 -&gt; rank 0</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 5 / 25 章</span>
           </div>
@@ -2603,7 +2614,7 @@ not_valid:
           <a href="#ch-06" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-06">下一章：第 6 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务">
         <div class="chapter-header">
@@ -2612,7 +2623,7 @@ not_valid:
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 6 / 25 章</span>
           </div>
@@ -2911,7 +2922,7 @@ exit:
           <a href="#ch-07" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-07">下一章：第 7 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序">
         <div class="chapter-header">
@@ -2920,7 +2931,7 @@ exit:
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 7 / 25 章</span>
           </div>
@@ -3616,7 +3627,7 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
           <a href="#ch-08" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-08">下一章：第 8 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑">
         <div class="chapter-header">
@@ -3625,7 +3636,7 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 8 / 25 章</span>
           </div>
@@ -4230,7 +4241,7 @@ for kfn in kfns:
           <a href="#ch-09" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-09">下一章：第 9 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现">
         <div class="chapter-header">
@@ -4239,7 +4250,7 @@ for kfn in kfns:
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 9 / 25 章</span>
           </div>
@@ -4461,7 +4472,7 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
           <a href="#ch-10" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-10">下一章：第 10 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现">
         <div class="chapter-header">
@@ -4470,7 +4481,7 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 10 / 25 章</span>
           </div>
@@ -4777,7 +4788,7 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
           <a href="#ch-11" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-11">下一章：第 11 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下">
         <div class="chapter-header">
@@ -4786,7 +4797,7 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 11 / 25 章</span>
           </div>
@@ -5470,7 +5481,7 @@ struct connectMap {
           <a href="#ch-12" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-12">下一章：第 12 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行">
         <div class="chapter-header">
@@ -5479,7 +5490,7 @@ struct connectMap {
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 12 / 25 章</span>
           </div>
@@ -5934,7 +5945,7 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
           <a href="#ch-13" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-13">下一章：第 13 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA">
         <div class="chapter-header">
@@ -5943,7 +5954,7 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 13 / 25 章</span>
           </div>
@@ -6532,7 +6543,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <a href="#ch-14" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-14">下一章：第 14 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址">
         <div class="chapter-header">
@@ -6541,7 +6552,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 14 / 25 章</span>
           </div>
@@ -7111,7 +7122,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <a href="#ch-15" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-15">下一章：第 15 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-15" data-title="第 15 章：第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进">
         <div class="chapter-header">
@@ -7120,7 +7131,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 15 / 25 章</span>
           </div>
@@ -7370,7 +7381,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <a href="#ch-16" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-16">下一章：第 16 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-16" data-title="第 16 章：第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为">
         <div class="chapter-header">
@@ -7379,7 +7390,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 16 / 25 章</span>
           </div>
@@ -7609,7 +7620,7 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
           <a href="#ch-17" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-17">下一章：第 17 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-17" data-title="第 17 章：第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级">
         <div class="chapter-header">
@@ -7618,7 +7629,7 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 17 / 25 章</span>
           </div>
@@ -7908,7 +7919,7 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
           <a href="#ch-18" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-18">下一章：第 18 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-18" data-title="第 18 章：第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化">
         <div class="chapter-header">
@@ -7917,7 +7928,7 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 18 / 25 章</span>
           </div>
@@ -8189,7 +8200,7 @@ struct ncclShadowObject {
           <a href="#ch-19" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-19">下一章：第 19 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-19" data-title="第 19 章：第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约">
         <div class="chapter-header">
@@ -8198,7 +8209,7 @@ struct ncclShadowObject {
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 19 / 25 章</span>
           </div>
@@ -8547,7 +8558,7 @@ preferably with the same NCCL version that it will be running with.</code></pre>
           <a href="#ch-20" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-20">下一章：第 20 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-20" data-title="第 20 章：第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践">
         <div class="chapter-header">
@@ -8556,7 +8567,7 @@ preferably with the same NCCL version that it will be running with.</code></pre>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 20 / 25 章</span>
           </div>
@@ -8805,7 +8816,7 @@ preferably with the same NCCL version that it will be running with.</code></pre>
           <a href="#ch-21" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-21">下一章：第 21 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-21" data-title="第 21 章：第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论">
         <div class="chapter-header">
@@ -8814,7 +8825,7 @@ preferably with the same NCCL version that it will be running with.</code></pre>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 21 / 25 章</span>
           </div>
@@ -9488,7 +9499,7 @@ not_valid:
           <a href="#ch-22" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-22">下一章：第 22 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-22" data-title="第 22 章：第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案">
         <div class="chapter-header">
@@ -9497,7 +9508,7 @@ not_valid:
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 22 / 25 章</span>
           </div>
@@ -10050,7 +10061,7 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
           <a href="#ch-23" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-23">下一章：第 23 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-23" data-title="第 23 章：第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目">
         <div class="chapter-header">
@@ -10059,7 +10070,7 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 23 / 25 章</span>
           </div>
@@ -10336,7 +10347,7 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
           <a href="#ch-24" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-24">下一章：第 24 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-24" data-title="第 24 章：第 24 章：架构演进与未来方向：从静态通信到可编程通信">
         <div class="chapter-header">
@@ -10345,7 +10356,7 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 24 / 25 章</span>
           </div>
@@ -10896,7 +10907,7 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
           <a href="#ch-25" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-25">下一章：第 25 章 →</a>
         </div>
       </section>
-            
+        
 
       <section class="reader-chapter-section" id="ch-25" data-title="第 25 章：第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓">
         <div class="chapter-header">
@@ -10905,7 +10916,7 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
-            <span>版本: Commit @12df1a11</span>
+            <span>Commit @12df1a11</span>
             <span>·</span>
             <span>全书进度: 第 25 / 25 章</span>
           </div>
@@ -11587,7 +11598,7 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
           <span></span>
         </div>
       </section>
-            
+        
 
       <div style="margin-top: 60px; padding: 28px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 12px; text-align: center;">
         <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任意复杂项目，其实只需要一本好书</h3>

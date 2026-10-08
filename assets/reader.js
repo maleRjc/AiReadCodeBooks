@@ -337,7 +337,7 @@
     navigator.clipboard.writeText(code).then(() => {
       const span = btn.querySelector('.btn-text') || btn;
       const orig = span.innerText;
-      span.innerText = '已复制!';
+      span.innerText = orig.includes('复制') ? '已复制!' : 'Copied!';
       btn.classList.add('copied');
       setTimeout(() => {
         span.innerText = orig;
@@ -352,7 +352,7 @@
     navigator.clipboard.writeText(fullText).then(() => {
       const span = btn.querySelector('.btn-text') || btn;
       const orig = span.innerText;
-      span.innerText = '已复制全文!';
+      span.innerText = orig.includes('复制') ? '已复制全文!' : 'Copied Full!';
       btn.classList.add('copied');
       setTimeout(() => {
         span.innerText = orig;
@@ -411,6 +411,9 @@
       breadcrumb.innerText = chTitle;
     }
 
+    // Update language switcher links to preserve current chapter anchor
+    updateLangLinks(chId);
+
     // Sync URL hash without jitter
     if (window.location.hash !== '#' + chId) {
       if (history.pushState) {
@@ -425,8 +428,38 @@
     }
   };
 
-  // 5. Global Delegated Click Handler
+  function updateLangLinks(chId) {
+    if (!chId) return;
+    const targetHash = '#' + chId.replace(/^#/, '');
+    document.querySelectorAll('.lang-dropdown-item[data-base]').forEach(item => {
+      const base = item.getAttribute('data-base') || '';
+      item.setAttribute('href', base + targetHash);
+    });
+  }
+
+  // 5. Language Dropdown Toggle
+  window.toggleLangMenu = function (e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const dd = document.getElementById('lang-dropdown');
+    if (dd) {
+      const isOpen = dd.classList.toggle('open');
+      const btn = dd.querySelector('.lang-dropdown-btn');
+      if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    }
+  };
+
+  // 6. Global Delegated Click Handler
   document.addEventListener('click', function (e) {
+    const dd = document.getElementById('lang-dropdown');
+    if (dd && !dd.contains(e.target)) {
+      dd.classList.remove('open');
+      const btn = dd.querySelector('.lang-dropdown-btn');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+
     const tocLink = e.target.closest('.toc-link');
     if (tocLink) {
       e.preventDefault();
@@ -444,7 +477,7 @@
     }
   });
 
-  // 6. Initialization on DOMContentLoaded
+  // 7. Initialization on DOMContentLoaded
   function initReader() {
     applyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
     document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
@@ -455,6 +488,7 @@
     const hash = window.location.hash;
     const targetCh = (hash && hash.length > 1) ? hash.replace(/^#/, '') : 'ch-01';
     window.switchChapter(targetCh, false);
+    updateLangLinks(targetCh);
 
     // Auto load first FACT pill or default file
     setTimeout(() => {
