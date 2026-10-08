@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>"Tokio Internals: From Future to Production Asynchronous Runtime" · Architecture Deep Dive | AiReadCodeBooks</title>
-  <meta name="description" content="A systemic architectural breakdown of Tokio, tracing the complete lifecycle of asynchronous tasks: Future/Waker cooperative polling, work-stealing scheduler, I/">
-  <meta name="keywords" content="tokio-rs/tokio, Tokio Internals: From Future to Production Asynchronous Runtime, Source Code Walkthrough, Architecture Analysis, AiReadCode, GitHub Pages">
+  <title>"Tokio Async Underlying Mechanisms and Runtime Analysis" · Architecture Deep Dive | AiReadCodeBooks</title>
+  <meta name="description" content="Async programming in Rust is not a library, but a language-level protocol. Tokio became a production-grade runtime not because it invented Future, but because i">
+  <meta name="keywords" content="tokio-rs/tokio, Tokio Async Underlying Mechanisms and Runtime Analysis, Architecture Analysis, AiReadCode, GitHub Pages">
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -41,6 +41,14 @@
           <div class="lang-dropdown-menu" id="lang-menu">
             <a href="../index.html#ch-01" class="lang-dropdown-item" data-lang="zh" onclick="window.switchLanguage('zh', event)">🇨🇳 简体中文</a>
             <a href="#ch-01" class="lang-dropdown-item active" data-lang="en" onclick="window.switchLanguage('en', event)">🇺🇸 English</a>
+            <a href="../ja/index.html#ch-01" class="lang-dropdown-item" data-lang="ja" onclick="window.switchLanguage('ja', event)">🇯🇵 日本語</a>
+            <a href="../ko/index.html#ch-01" class="lang-dropdown-item" data-lang="ko" onclick="window.switchLanguage('ko', event)">🇰🇷 한국어</a>
+            <a href="../zh-tw/index.html#ch-01" class="lang-dropdown-item" data-lang="zh-tw" onclick="window.switchLanguage('zh-tw', event)">🇭🇰 繁體中文</a>
+            <a href="../es/index.html#ch-01" class="lang-dropdown-item" data-lang="es" onclick="window.switchLanguage('es', event)">🇪🇸 Español</a>
+            <a href="../fr/index.html#ch-01" class="lang-dropdown-item" data-lang="fr" onclick="window.switchLanguage('fr', event)">🇫🇷 Français</a>
+            <a href="../de/index.html#ch-01" class="lang-dropdown-item" data-lang="de" onclick="window.switchLanguage('de', event)">🇩🇪 Deutsch</a>
+            <a href="../ru/index.html#ch-01" class="lang-dropdown-item" data-lang="ru" onclick="window.switchLanguage('ru', event)">🇷🇺 Русский</a>
+            <a href="../pt/index.html#ch-01" class="lang-dropdown-item" data-lang="pt" onclick="window.switchLanguage('pt', event)">🇵🇹 Português</a>
           </div>
         </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/tokio/en" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
@@ -59,7 +67,7 @@
     <aside class="reader-sidebar">
       <div class="reader-book-header">
         <span class="reader-book-badge">14 Chapters · Complete Deep Dive</span>
-        <h1 class="reader-book-title">Tokio Internals: From Future to Production Asynchronous Runtime</h1>
+        <h1 class="reader-book-title">Tokio Async Underlying Mechanisms and Runtime Analysis</h1>
         <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono);">
           <span>tokio-rs/tokio</span> · <span>★ 28.5k</span>
         </div>
@@ -89,7 +97,7 @@
       <div class="book-breadcrumb">
         <a href="../../../index.html">Bookstore</a>
         <span>/</span>
-        <a href="index.html">Tokio Internals: From Future to Production Asynchronous Runtime</a>
+        <a href="index.html">Tokio Async Underlying Mechanisms and Runtime Analysis</a>
         <span>/</span>
         <span id="breadcrumb-current-chapter">Chapter 01</span>
       </div>

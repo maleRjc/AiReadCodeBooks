@@ -308,7 +308,9 @@ html[data-theme='dark'] .icon-moon { display: none; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 156px;
+  min-width: 175px;
+  max-height: 400px;
+  overflow-y: auto;
   background: #111520;
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
@@ -317,6 +319,17 @@ html[data-theme='dark'] .icon-moon { display: none; }
   z-index: 10001;
   flex-direction: column;
   gap: 2px;
+}
+
+.lang-dropdown-menu::-webkit-scrollbar {
+  width: 5px;
+}
+.lang-dropdown-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+html[data-theme='light'] .lang-dropdown-menu::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
 }
 
 html[data-theme='light'] .lang-dropdown-btn {

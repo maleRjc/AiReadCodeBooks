@@ -428,57 +428,93 @@
     }
   };
 
+  // 5. Multi-Language Synchronization & Switching Engine
   function updateLangLinks(chId) {
     if (!chId) return;
     const targetHash = '#' + chId.replace(/^#/, '');
     const pathname = window.location.pathname;
-    const isEn = pathname.includes('/en/') || pathname.endsWith('/en') || (document.documentElement.getAttribute('lang') || '').startsWith('en');
+
+    const m = pathname.match(/^(.*?)\/books\/([^/]+)(?:\/([a-zA-Z]{2}(?:-[a-zA-Z]{2})?))?(?:\/index\.html|\/)?$/);
+    const curLang = (m && m[3]) ? m[3].toLowerCase() : ((document.documentElement.getAttribute('lang') || 'zh').toLowerCase().split('-')[0]);
+    const isRoot = (!m || !m[3]);
 
     document.querySelectorAll('.lang-dropdown-item').forEach(item => {
-      const lang = item.getAttribute('data-lang');
-      if (lang === 'zh') {
-        item.setAttribute('href', isEn ? ('../index.html' + targetHash) : targetHash);
-      } else if (lang === 'en') {
-        item.setAttribute('href', isEn ? targetHash : ('en/index.html' + targetHash));
+      const lang = (item.getAttribute('data-lang') || '').toLowerCase();
+      if (!lang) return;
+
+      if (lang === curLang) {
+        item.classList.add('active');
+        item.setAttribute('href', targetHash);
+      } else {
+        item.classList.remove('active');
+        if (lang === 'zh') {
+          item.setAttribute('href', (isRoot ? '' : '../') + 'index.html' + targetHash);
+        } else {
+          item.setAttribute('href', (isRoot ? (lang + '/') : ('../' + lang + '/')) + 'index.html' + targetHash);
+        }
       }
     });
   }
 
-  // 5. Language Switching Engine
   window.switchLanguage = function (targetLang, e) {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
+    targetLang = (targetLang || 'zh').toLowerCase();
     const currentHash = window.location.hash || '#ch-01';
     const chId = currentHash.replace(/^#/, '');
     const pathname = window.location.pathname;
-    const isEn = /\/en(\/index\.html|\/)?$/.test(pathname) || (document.documentElement.getAttribute('lang') || '').startsWith('en');
 
-    if ((targetLang === 'en' && isEn) || (targetLang === 'zh' && !isEn)) {
-      const dd = document.getElementById('lang-dropdown');
-      if (dd) {
-        dd.classList.remove('open');
-        const btn = dd.querySelector('.lang-dropdown-btn');
-        if (btn) btn.setAttribute('aria-expanded', 'false');
+    const m = pathname.match(/^(.*?)\/books\/([^/]+)(?:\/([a-zA-Z]{2}(?:-[a-zA-Z]{2})?))?(?:\/index\.html|\/)?$/);
+    if (m) {
+      const base = m[1];
+      const slug = m[2];
+      const curLang = (m[3] || 'zh').toLowerCase();
+
+      if (curLang === targetLang) {
+        const dd = document.getElementById('lang-dropdown');
+        if (dd) {
+          dd.classList.remove('open');
+          const btn = dd.querySelector('.lang-dropdown-btn');
+          if (btn) btn.setAttribute('aria-expanded', 'false');
+        }
+        return;
       }
+
+      let targetUrl = '';
+      if (targetLang === 'zh') {
+        targetUrl = `${base}/books/${slug}/index.html#${chId}`;
+      } else {
+        targetUrl = `${base}/books/${slug}/${targetLang}/index.html#${chId}`;
+      }
+      window.location.href = targetUrl;
       return;
     }
 
-    let targetUrl = '';
-    if (targetLang === 'zh') {
-      targetUrl = pathname.replace(/\/en(\/index\.html|\/)?$/, '/index.html') + '#' + chId;
-    } else {
-      if (pathname.endsWith('/index.html')) {
-        targetUrl = pathname.replace(/\/index\.html$/, '/en/index.html') + '#' + chId;
-      } else if (pathname.endsWith('/')) {
-        targetUrl = pathname + 'en/index.html#' + chId;
-      } else {
-        targetUrl = pathname + '/en/index.html#' + chId;
-      }
+    const knownLangs = ['en', 'ja', 'ko', 'zh-tw', 'es', 'fr', 'de', 'ru', 'pt'];
+    const parts = pathname.split('/').filter(Boolean);
+    const lastPart = (parts[parts.length - 1] || '').toLowerCase();
+    const secondLast = (parts[parts.length - 2] || '').toLowerCase();
+    let curLang = 'zh';
+    if (knownLangs.includes(lastPart)) {
+      curLang = lastPart;
+    } else if (knownLangs.includes(secondLast)) {
+      curLang = secondLast;
     }
 
-    window.location.href = targetUrl;
+    if (curLang === targetLang) {
+      const dd = document.getElementById('lang-dropdown');
+      if (dd) dd.classList.remove('open');
+      return;
+    }
+
+    const isRoot = (curLang === 'zh');
+    if (targetLang === 'zh') {
+      window.location.href = (isRoot ? '' : '../') + 'index.html#' + chId;
+    } else {
+      window.location.href = (isRoot ? (targetLang + '/') : ('../' + targetLang + '/')) + 'index.html#' + chId;
+    }
   };
 
   // 6. Language Dropdown Toggle

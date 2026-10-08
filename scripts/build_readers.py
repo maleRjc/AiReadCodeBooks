@@ -32,11 +32,11 @@ if not os.path.exists(os.path.join(ROOT_DIR, "books")):
 BOOKS_DIR = os.path.join(ROOT_DIR, "books")
 ASSETS_DIR = os.path.join(ROOT_DIR, "assets")
 
-WEBSITE_EN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "website", "books", "en")
-if not os.path.exists(WEBSITE_EN_DIR):
-    alt_website = r"g:\AiReadCode\GitHub\AiReadCode\website\books\en"
+WEBSITE_BOOKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "website", "books")
+if not os.path.exists(WEBSITE_BOOKS_DIR):
+    alt_website = r"g:\AiReadCode\GitHub\AiReadCode\website\books"
     if os.path.exists(alt_website):
-        WEBSITE_EN_DIR = alt_website
+        WEBSITE_BOOKS_DIR = alt_website
 
 LOCAL_CODE_DIRS = {
     "vue3": r"G:\AiReadCode\Code\core",
@@ -45,26 +45,408 @@ LOCAL_CODE_DIRS = {
     "nccl": r"G:\AiReadCode\Code\nccl"
 }
 
+SUPPORTED_LANGUAGES = [
+    {"code": "zh", "name": "简体中文", "flag": "🇨🇳"},
+    {"code": "en", "name": "English", "flag": "🇺🇸"},
+    {"code": "ja", "name": "日本語", "flag": "🇯🇵"},
+    {"code": "ko", "name": "한국어", "flag": "🇰🇷"},
+    {"code": "zh-tw", "name": "繁體中文", "flag": "🇭🇰"},
+    {"code": "es", "name": "Español", "flag": "🇪🇸"},
+    {"code": "fr", "name": "Français", "flag": "🇫🇷"},
+    {"code": "de", "name": "Deutsch", "flag": "🇩🇪"},
+    {"code": "ru", "name": "Русский", "flag": "🇷🇺"},
+    {"code": "pt", "name": "Português", "flag": "🇵🇹"},
+]
+
+I18N = {
+    "zh": {
+        "name": "简体中文",
+        "flag": "🇨🇳",
+        "html_lang": "zh-CN",
+        "badge_version": "在线专著",
+        "nav_home": "返回书库大厅",
+        "nav_repo": "GitHub 仓库",
+        "nav_upstream": "目标开源: {repo}",
+        "nav_source": "查看 Markdown 源码",
+        "theme_tip": "切换深色/浅色模式",
+        "chapter_badge": "{total} 个章节 · 深度全景剖析",
+        "toc_label": "全书章节目录",
+        "breadcrumb_root": "开源书库",
+        "breadcrumb_ch": "第 01 章",
+        "footer_cta_title": "读懂任何复杂项目，你真正需要的是一本专著",
+        "footer_cta_desc": "本书由 AiReadCode 扫描官方开源仓库全自动编撰，结合真实不可变 Commit 节点与 FACT 药丸行号溯源，提供纯静态、零服务依赖的极致双栏交互式在线阅读体验。",
+        "footer_cta_star": "在 GitHub 上 Star 本项目 ★",
+        "footer_cta_browse": "浏览更多架构专著 →",
+        "code_pane_lines": "全览",
+        "copy_snippet_title": "复制当前高亮代码切片（如无则复制全文件）",
+        "copy_snippet_text": "复制代码切片",
+        "copy_all_title": "复制当前完整源码文件",
+        "copy_all_text": "复制全文",
+        "locate_title": "平滑滚动至高亮行",
+        "locate_text": "定位",
+        "loading_msg": "⚡ 正在加载源码文件...",
+        "commit_anchor_text": "Commit 不可变永久锚定",
+        "prev_ch": "← 上一章：第 {idx} 章",
+        "next_ch": "下一章：第 {idx} 章 →",
+        "back_to_top": "回到顶部 ↑",
+        "progress": "阅读进度：第 {idx} 章 / 共 {total} 章",
+    },
+    "en": {
+        "name": "English",
+        "flag": "🇺🇸",
+        "html_lang": "en",
+        "badge_version": "Online Book",
+        "nav_home": "Bookstore Lobby",
+        "nav_repo": "GitHub Repo",
+        "nav_upstream": "Upstream: {repo}",
+        "nav_source": "View Markdown Source",
+        "theme_tip": "Toggle Dark/Light Mode",
+        "chapter_badge": "{total} Chapters · Complete Deep Dive",
+        "toc_label": "Table of Contents",
+        "breadcrumb_root": "Bookstore",
+        "breadcrumb_ch": "Chapter 01",
+        "footer_cta_title": "To understand any complex project, all you really need is a good book",
+        "footer_cta_desc": "This book was automatically compiled by AiReadCode by scanning the official repository, with real commit line numbers permanently anchored.",
+        "footer_cta_star": "Star GitHub Repo ★",
+        "footer_cta_browse": "Browse More Books →",
+        "code_pane_lines": "Overview",
+        "copy_snippet_title": "Copy highlighted code slice (or full file if none)",
+        "copy_snippet_text": "Copy snippet",
+        "copy_all_title": "Copy full source file",
+        "copy_all_text": "Copy all",
+        "locate_title": "Scroll to highlighted lines",
+        "locate_text": "Locate",
+        "loading_msg": "⚡ Loading source file...",
+        "commit_anchor_text": "Commit Permanently Immutable Anchored",
+        "prev_ch": "← Prev: Chapter {idx}",
+        "next_ch": "Next: Chapter {idx} →",
+        "back_to_top": "Back to top ↑",
+        "progress": "Progress: Chapter {idx} of {total}",
+    },
+    "ja": {
+        "name": "日本語",
+        "flag": "🇯🇵",
+        "html_lang": "ja",
+        "badge_version": "オンライン技術書",
+        "nav_home": "書庫ロビーに戻る",
+        "nav_repo": "GitHub リポジトリ",
+        "nav_upstream": "上流: {repo}",
+        "nav_source": "Markdown 原稿を見る",
+        "theme_tip": "ダーク/ライトモード切替",
+        "chapter_badge": "全 {total} 章 · 完全アーキテクチャ解説",
+        "toc_label": "目次",
+        "breadcrumb_root": "オープンソース書庫",
+        "breadcrumb_ch": "第 01 章",
+        "footer_cta_title": "複雑なプロジェクトを理解するために必要なのは、一冊の優れた本です",
+        "footer_cta_desc": "本書は AiReadCode により公式リポジトリをスキャンして自動編纂され、不変コミットと FACT アンカーで裏付けられています。",
+        "footer_cta_star": "GitHub でスター ★",
+        "footer_cta_browse": "他の書籍を見る →",
+        "code_pane_lines": "全体",
+        "copy_snippet_title": "ハイライトされたコードスニペットをコピー",
+        "copy_snippet_text": "スニペットをコピー",
+        "copy_all_title": "ソースコード全体をコピー",
+        "copy_all_text": "全文コピー",
+        "locate_title": "ハイライト行へスクロール",
+        "locate_text": "移動",
+        "loading_msg": "⚡ ソースコードを読み込み中...",
+        "commit_anchor_text": "Commit 不変永久アンカー",
+        "prev_ch": "← 前の章: 第 {idx} 章",
+        "next_ch": "次の章: 第 {idx} 章 →",
+        "back_to_top": "トップへ戻る ↑",
+        "progress": "進捗: 第 {idx} 章 / 全 {total} 章",
+    },
+    "ko": {
+        "name": "한국어",
+        "flag": "🇰🇷",
+        "html_lang": "ko",
+        "badge_version": "온라인 도서",
+        "nav_home": "서재 로비로 돌아가기",
+        "nav_repo": "GitHub 저장소",
+        "nav_upstream": "업스트림: {repo}",
+        "nav_source": "Markdown 소스 보기",
+        "theme_tip": "다크/라이트 모드 전환",
+        "chapter_badge": "{total}개 챕터 · 심층 분석",
+        "toc_label": "목차",
+        "breadcrumb_root": "오픈소스 서재",
+        "breadcrumb_ch": "제 01 장",
+        "footer_cta_title": "복잡한 프로젝트를 이해하기 위해 진정 필요한 것은 한 권의 좋은 책입니다",
+        "footer_cta_desc": "이 책은 AiReadCode가 공식 저장소를 스캔하여 자동 편찬했으며, 불변 커밋과 FACT 앵커로 뒷받침됩니다.",
+        "footer_cta_star": "GitHub에서 스타 ★",
+        "footer_cta_browse": "더 많은 도서 보기 →",
+        "code_pane_lines": "전체",
+        "copy_snippet_title": "강조된 코드 조각 복사",
+        "copy_snippet_text": "코드 조각 복사",
+        "copy_all_title": "전체 소스 코드 복사",
+        "copy_all_text": "전체 복사",
+        "locate_title": "강조 표시된 줄로 이동",
+        "locate_text": "위치 이동",
+        "loading_msg": "⚡ 소스 파일을 불러오는 중...",
+        "commit_anchor_text": "Commit 불변 영구 앵커링",
+        "prev_ch": "← 이전: 제 {idx} 장",
+        "next_ch": "다음: 제 {idx} 장 →",
+        "back_to_top": "맨 위로 ↑",
+        "progress": "진행률: 제 {idx} 장 / 총 {total} 장",
+    },
+    "zh-tw": {
+        "name": "繁體中文",
+        "flag": "🇭🇰",
+        "html_lang": "zh-TW",
+        "badge_version": "線上專著",
+        "nav_home": "返回書庫大廳",
+        "nav_repo": "GitHub 倉庫",
+        "nav_upstream": "目標開源: {repo}",
+        "nav_source": "查看 Markdown 源碼",
+        "theme_tip": "切換深色/淺色模式",
+        "chapter_badge": "{total} 個章節 · 深度全景剖析",
+        "toc_label": "全書章節目錄",
+        "breadcrumb_root": "開源書庫",
+        "breadcrumb_ch": "第 01 章",
+        "footer_cta_title": "讀懂任何複雜專案，你真正需要的是一本專著",
+        "footer_cta_desc": "本書由 AiReadCode 掃描官方開源倉庫全自動編撰，結合真實不可變 Commit 節點與 FACT 藥丸行號溯源，提供純靜態、零服務依賴的極致雙欄互動式線上閱讀體驗。",
+        "footer_cta_star": "在 GitHub 上 Star 本專案 ★",
+        "footer_cta_browse": "瀏覽更多架構專著 →",
+        "code_pane_lines": "全覽",
+        "copy_snippet_title": "複製當前高亮程式碼切片（如無則複製全檔案）",
+        "copy_snippet_text": "複製程式碼切片",
+        "copy_all_title": "複製當前完整原始碼檔案",
+        "copy_all_text": "複製全文",
+        "locate_title": "平滑滾動至高亮行",
+        "locate_text": "定位",
+        "loading_msg": "⚡ 正在載入原始碼檔案...",
+        "commit_anchor_text": "Commit 不可變永久錨定",
+        "prev_ch": "← 上一章：第 {idx} 章",
+        "next_ch": "下一章：第 {idx} 章 →",
+        "back_to_top": "回到頂部 ↑",
+        "progress": "閱讀進度：第 {idx} 章 / 共 {total} 章",
+    },
+    "es": {
+        "name": "Español",
+        "flag": "🇪🇸",
+        "html_lang": "es",
+        "badge_version": "Libro en línea",
+        "nav_home": "Vestíbulo de biblioteca",
+        "nav_repo": "Repositorio GitHub",
+        "nav_upstream": "Upstream: {repo}",
+        "nav_source": "Ver fuente Markdown",
+        "theme_tip": "Alternar modo oscuro/claro",
+        "chapter_badge": "{total} Capítulos · Análisis profundo completo",
+        "toc_label": "Tabla de contenidos",
+        "breadcrumb_root": "Biblioteca",
+        "breadcrumb_ch": "Capítulo 01",
+        "footer_cta_title": "Para comprender cualquier proyecto complejo, todo lo que necesitas es un buen libro",
+        "footer_cta_desc": "Compilado automáticamente por AiReadCode escaneando el repositorio oficial con anclajes inmutables de commit.",
+        "footer_cta_star": "Dar una estrella en GitHub ★",
+        "footer_cta_browse": "Ver más libros →",
+        "code_pane_lines": "Vista general",
+        "copy_snippet_title": "Copiar fragmento resaltado",
+        "copy_snippet_text": "Copiar fragmento",
+        "copy_all_title": "Copiar código fuente completo",
+        "copy_all_text": "Copiar todo",
+        "locate_title": "Desplazarse a líneas resaltadas",
+        "locate_text": "Localizar",
+        "loading_msg": "⚡ Cargando archivo fuente...",
+        "commit_anchor_text": "Commit permanentemente inmutable",
+        "prev_ch": "← Ant: Capítulo {idx}",
+        "next_ch": "Sig: Capítulo {idx} →",
+        "back_to_top": "Volver arriba ↑",
+        "progress": "Progreso: Capítulo {idx} de {total}",
+    },
+    "fr": {
+        "name": "Français",
+        "flag": "🇫🇷",
+        "html_lang": "fr",
+        "badge_version": "Livre en ligne",
+        "nav_home": "Hall de la bibliothèque",
+        "nav_repo": "Dépôt GitHub",
+        "nav_upstream": "Amont: {repo}",
+        "nav_source": "Voir source Markdown",
+        "theme_tip": "Basculer mode sombre/clair",
+        "chapter_badge": "{total} Chapitres · Analyse approfondie",
+        "toc_label": "Table des matières",
+        "breadcrumb_root": "Bibliothèque",
+        "breadcrumb_ch": "Chapitre 01",
+        "footer_cta_title": "Pour comprendre un projet complexe, tout ce dont vous avez besoin est un bon livre",
+        "footer_cta_desc": "Compilé automatiquement par AiReadCode en scannant le dépôt officiel avec ancrage permanent des commits.",
+        "footer_cta_star": "Étoiler sur GitHub ★",
+        "footer_cta_browse": "Parcourir d'autres livres →",
+        "code_pane_lines": "Aperçu",
+        "copy_snippet_title": "Copier l'extrait mis en surbrillance",
+        "copy_snippet_text": "Copier l'extrait",
+        "copy_all_title": "Copier le fichier source complet",
+        "copy_all_text": "Tout copier",
+        "locate_title": "Faire défiler jusqu'aux lignes mises en surbrillance",
+        "locate_text": "Localiser",
+        "loading_msg": "⚡ Chargement du fichier source...",
+        "commit_anchor_text": "Commit ancré de manière immuable",
+        "prev_ch": "← Préc: Chapitre {idx}",
+        "next_ch": "Suiv: Chapitre {idx} →",
+        "back_to_top": "Haut de page ↑",
+        "progress": "Progression: Chapitre {idx} sur {total}",
+    },
+    "de": {
+        "name": "Deutsch",
+        "flag": "🇩🇪",
+        "html_lang": "de",
+        "badge_version": "Online-Buch",
+        "nav_home": "Bibliotheks-Lobby",
+        "nav_repo": "GitHub-Repository",
+        "nav_upstream": "Upstream: {repo}",
+        "nav_source": "Markdown-Quelltext anzeigen",
+        "theme_tip": "Dunkel-/Hellmodus umschalten",
+        "chapter_badge": "{total} Kapitel · Vollständige Tiefenanalyse",
+        "toc_label": "Inhaltsverzeichnis",
+        "breadcrumb_root": "Bibliothek",
+        "breadcrumb_ch": "Kapitel 01",
+        "footer_cta_title": "Um ein komplexes Projekt zu verstehen, braucht man nur ein gutes Buch",
+        "footer_cta_desc": "Automatisch kompiliert von AiReadCode durch Scannen des offiziellen Repositorys mit unveränderlichen Commit-Ankern.",
+        "footer_cta_star": "Auf GitHub mit Stern versehen ★",
+        "footer_cta_browse": "Weitere Bücher durchsuchen →",
+        "code_pane_lines": "Übersicht",
+        "copy_snippet_title": "Hervorgehobenen Codeschnipsel kopieren",
+        "copy_snippet_text": "Schnipsel kopieren",
+        "copy_all_title": "Vollständige Quelldatei kopieren",
+        "copy_all_text": "Alles kopieren",
+        "locate_title": "Zu hervorgehobenen Zeilen scrollen",
+        "locate_text": "Ort",
+        "loading_msg": "⚡ Quelldatei wird geladen...",
+        "commit_anchor_text": "Commit dauerhaft unveränderlich verankert",
+        "prev_ch": "← Zurück: Kapitel {idx}",
+        "next_ch": "Weiter: Kapitel {idx} →",
+        "back_to_top": "Nach oben ↑",
+        "progress": "Fortschritt: Kapitel {idx} von {total}",
+    },
+    "ru": {
+        "name": "Русский",
+        "flag": "🇷🇺",
+        "html_lang": "ru",
+        "badge_version": "Онлайн-книга",
+        "nav_home": "Лобби библиотеки",
+        "nav_repo": "Репозиторий GitHub",
+        "nav_upstream": "Апстрим: {repo}",
+        "nav_source": "Исходный код Markdown",
+        "theme_tip": "Переключить тему день/ночь",
+        "chapter_badge": "{total} глав · Полный глубокий разбор",
+        "toc_label": "Содержание",
+        "breadcrumb_root": "Библиотека",
+        "breadcrumb_ch": "Глава 01",
+        "footer_cta_title": "Чтобы понять сложный проект, вам действительно нужна хорошая книга",
+        "footer_cta_desc": "Автоматически скомпилировано AiReadCode путем сканирования официального репозитория с неизменяемыми анкорами коммитов.",
+        "footer_cta_star": "Поставить звезду на GitHub ★",
+        "footer_cta_browse": "Больше книг →",
+        "code_pane_lines": "Обзор",
+        "copy_snippet_title": "Копировать выделенный фрагмент кода",
+        "copy_snippet_text": "Копировать фрагмент",
+        "copy_all_title": "Копировать весь файл",
+        "copy_all_text": "Копировать все",
+        "locate_title": "Прокрутить к выделенным строкам",
+        "locate_text": "Найти",
+        "loading_msg": "⚡ Загрузка файла исходного кода...",
+        "commit_anchor_text": "Неизменяемый постоянный коммит-анкор",
+        "prev_ch": "← Пред: Глава {idx}",
+        "next_ch": "След: Глава {idx} →",
+        "back_to_top": "Наверх ↑",
+        "progress": "Прогресс: Глава {idx} из {total}",
+    },
+    "pt": {
+        "name": "Português",
+        "flag": "🇵🇹",
+        "html_lang": "pt",
+        "badge_version": "Livro online",
+        "nav_home": "Saguão da biblioteca",
+        "nav_repo": "Repositório GitHub",
+        "nav_upstream": "Upstream: {repo}",
+        "nav_source": "Ver fonte Markdown",
+        "theme_tip": "Alternar modo escuro/claro",
+        "chapter_badge": "{total} Capítulos · Análise aprofundada completa",
+        "toc_label": "Índice",
+        "breadcrumb_root": "Biblioteca",
+        "breadcrumb_ch": "Capítulo 01",
+        "footer_cta_title": "Para entender qualquer projeto complexo, tudo o que você precisa é de um bom livro",
+        "footer_cta_desc": "Compilado automaticamente pelo AiReadCode através da verificação do repositório oficial com âncoras imutáveis de commit.",
+        "footer_cta_star": "Dar estrela no GitHub ★",
+        "footer_cta_browse": "Navegar por mais livros →",
+        "code_pane_lines": "Visão geral",
+        "copy_snippet_title": "Copiar trecho de código destacado",
+        "copy_snippet_text": "Copiar trecho",
+        "copy_all_title": "Copiar arquivo fonte completo",
+        "copy_all_text": "Copiar tudo",
+        "locate_title": "Rolar para as linhas destacadas",
+        "locate_text": "Localizar",
+        "loading_msg": "⚡ Carregando arquivo fonte...",
+        "commit_anchor_text": "Commit permanentemente imutável",
+        "prev_ch": "← Ant: Capítulo {idx}",
+        "next_ch": "Próx: Capítulo {idx} →",
+        "back_to_top": "Voltar ao topo ↑",
+        "progress": "Progresso: Capítulo {idx} de {total}",
+    },
+}
+
 def clean_repeated_prefix(title, lang="en"):
     """Remove redundant prefixes like 'Chapter 1: Chapter 1:' or '第 1 章：第 1 章：'."""
     if not title:
         return ""
     title = title.strip()
-    if lang == "en":
-        m = re.match(r'^(?:Chapter\s*0?(\d+)[:：]\s*)+(.*)$', title, re.IGNORECASE)
-        if m:
-            ch_num = int(m.group(1))
-            rest = m.group(2).strip()
-            rest = re.sub(r'^(?:Chapter\s*0?\d+[:：]\s*)+', '', rest, flags=re.IGNORECASE).strip()
-            return f"Chapter {ch_num}: {rest}"
-    else:
-        m = re.match(r'^(?:第\s*0?(\d+)\s*章[：:]\s*)+(.*)$', title)
-        if m:
-            ch_num = int(m.group(1))
-            rest = m.group(2).strip()
-            rest = re.sub(r'^(?:第\s*0?\d+\s*章[：:]\s*)+', '', rest).strip()
-            return f"第 {ch_num} 章：{rest}"
+    patterns = {
+        "en": (r'^(?:Chapter\s*0?(\d+)[:：]\s*)+(.*)$', 'Chapter {num}: {rest}'),
+        "zh": (r'^(?:第\s*0?(\d+)\s*章[：:]\s*)+(.*)$', '第 {num} 章：{rest}'),
+        "zh-tw": (r'^(?:第\s*0?(\d+)\s*章[：:]\s*)+(.*)$', '第 {num} 章：{rest}'),
+        "ja": (r'^(?:第\s*0?(\d+)\s*章[：:]\s*)+(.*)$', '第 {num} 章：{rest}'),
+        "ko": (r'^(?:제\s*0?(\d+)\s*장[：:]\s*)+(.*)$', '제 {num} 장: {rest}'),
+        "de": (r'^(?:Kapitel\s*0?(\d+)[:：]\s*)+(.*)$', 'Kapitel {num}: {rest}'),
+        "es": (r'^(?:Capítulo\s*0?(\d+)[:：]\s*)+(.*)$', 'Capítulo {num}: {rest}'),
+        "pt": (r'^(?:Capítulo\s*0?(\d+)[:：]\s*)+(.*)$', 'Capítulo {num}: {rest}'),
+        "fr": (r'^(?:Chapitre\s*0?(\d+)\s*[:：]\s*)+(.*)$', 'Chapitre {num} : {rest}'),
+        "ru": (r'^(?:Глава\s*0?(\d+)[:：]\s*)+(.*)$', 'Глава {num}: {rest}'),
+    }
+
+    pat, fmt = patterns.get(lang, patterns["en"])
+    m = re.match(pat, title, re.IGNORECASE)
+    if m:
+        ch_num = int(m.group(1))
+        rest = m.group(2).strip()
+        sub_pat = pat.split('(.*)')[0]
+        rest = re.sub(sub_pat, '', rest, flags=re.IGNORECASE).strip()
+        return fmt.format(num=ch_num, rest=rest)
     return title
+
+def build_lang_dropdown_html(current_lang="zh"):
+    """Generate dropdown HTML for all 10 supported languages."""
+    items = []
+    current_flag_name = "🇨🇳 简体中文"
+    is_root = (current_lang == "zh")
+
+    for lang in SUPPORTED_LANGUAGES:
+        code = lang["code"]
+        flag_name = f"{lang['flag']} {lang['name']}"
+        if code == current_lang:
+            current_flag_name = flag_name
+            active_cls = " active"
+            href = "#ch-01"
+        else:
+            active_cls = ""
+            if is_root:
+                href = f"{code}/index.html#ch-01"
+            else:
+                if code == "zh":
+                    href = "../index.html#ch-01"
+                else:
+                    href = f"../{code}/index.html#ch-01"
+
+        items.append(
+            f'            <a href="{href}" class="lang-dropdown-item{active_cls}" data-lang="{code}" onclick="window.switchLanguage(\'{code}\', event)">{flag_name}</a>'
+        )
+
+    items_html = "\n".join(items)
+    return f"""        <div class="lang-dropdown" id="lang-dropdown">
+          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>{current_flag_name}</span>
+            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="lang-dropdown-menu" id="lang-menu">
+{items_html}
+          </div>
+        </div>"""
 
 def format_inline(text, repo="", commit="", lang="zh"):
     """Format inline elements: FACT pills, code spans, bold, and escape raw HTML."""
@@ -684,18 +1066,7 @@ def render_chinese_edition(slug, book_dir, meta):
     loading_msg = "⚡ 正在载入源文件..."
     commit_anchor_text = "Commit 永久不可变锚定"
     keywords = f"{repo}, {title}, 源码解析, 架构设计, AiReadCode, GitHub Pages"
-
-    lang_dropdown_html = f"""        <div class="lang-dropdown" id="lang-dropdown">
-          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-            <span>🇨🇳 简体中文</span>
-            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="lang-dropdown-menu" id="lang-menu">
-            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" onclick="window.switchLanguage('zh', event)">🇨🇳 简体中文</a>
-            <a href="en/index.html#ch-01" class="lang-dropdown-item" data-lang="en" onclick="window.switchLanguage('en', event)">🇺🇸 English</a>
-          </div>
-        </div>"""
+    lang_dropdown_html = build_lang_dropdown_html("zh")
 
     toc_items = []
     rendered_chapters = []
@@ -825,79 +1196,74 @@ def render_chinese_edition(slug, book_dir, meta):
 
     return len(ch_files)
 
-def render_english_edition(slug, book_dir, meta):
-    """Render the genuine English edition using website/books/en/{slug}.html."""
-    src_en_html = os.path.join(WEBSITE_EN_DIR, f"{slug}.html")
-    if not os.path.exists(src_en_html):
-        print(f"    [-] Warning: Translated English source not found: {src_en_html}")
+def render_translated_edition(slug, book_dir, meta, lang_code):
+    """Render a translated edition (e.g. en, ja, ko, zh-tw, es, fr, de, ru, pt) using website/books/{lang}/{slug}.html."""
+    src_html = os.path.join(WEBSITE_BOOKS_DIR, lang_code, f"{slug}.html")
+    if not os.path.exists(src_html):
         return 0
 
-    soup = BeautifulSoup(open(src_en_html, encoding='utf-8'), 'html.parser')
-    sections = soup.find_all('section', class_=re.compile(r'reader-chapter-section'))
+    lang_info = I18N.get(lang_code, I18N["en"])
+    with open(src_html, "r", encoding="utf-8") as f:
+        soup = BeautifulSoup(f.read(), "html.parser")
+
+    sections = soup.find_all("section", class_=re.compile(r"reader-chapter-section"))
     if not sections:
-        print(f"    [-] Warning: No sections found in {src_en_html}")
         return 0
 
     repo = meta.get("repo", "")
     commit = meta.get("commit", meta.get("branch", "main"))
     default_file = meta.get("defaultFile", "README.md")
     stars = meta.get("stars", "10k+")
-    title = meta.get("title", meta.get("titleEn", slug))
-    summary = meta.get("summary", meta.get("summaryEn", ""))
 
-    page_title = f'"{title}" · Architecture Deep Dive | AiReadCodeBooks'
-    html_lang = "en"
+    # Get translated title from h1 if present, else fallback
+    h1_el = soup.find("h1")
+    title = h1_el.get_text().strip() if h1_el else meta.get(f"title_{lang_code}", meta.get("title", slug))
+    summary_p = soup.find("p", class_="book-summary") or soup.find("p")
+    summary = summary_p.get_text().strip() if summary_p else meta.get("summary", "")
+
+    page_title = f'"{title}" · Architecture Deep Dive | AiReadCodeBooks' if lang_code == "en" else f"《{title}》| AiReadCodeBooks"
+    html_lang = lang_info.get("html_lang", lang_code)
     assets_path = "../../../assets/"
     home_path = "../../../index.html"
     snippets_url = "../snippets.json"
-    source_url = f"https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/{slug}/en"
-    badge_version = "Online Book"
-    nav_home_text = "Bookstore Lobby"
-    nav_repo_text = "GitHub Repo"
-    nav_upstream_text = f"Upstream: {repo}"
-    nav_source_text = "View Markdown Source"
-    theme_tip = "Toggle Dark/Light Mode"
-    chapter_badge = f"{len(sections)} Chapters · Complete Deep Dive"
-    toc_label = "Table of Contents"
-    breadcrumb_root = "Bookstore"
-    breadcrumb_ch1 = "Chapter 01"
-    footer_cta_title = "To understand any complex project, all you really need is a good book"
-    footer_cta_desc = "This book was automatically compiled by AiReadCode by scanning the official repository, with real commit line numbers permanently anchored."
-    footer_cta_star = "Star GitHub Repo ★"
-    footer_cta_browse = "Browse More Books →"
-    code_pane_lines = "Overview"
-    copy_snippet_title = "Copy highlighted code slice (or full file if none)"
-    copy_snippet_text = "Copy snippet"
-    copy_all_title = "Copy full source file"
-    copy_all_text = "Copy all"
-    locate_title = "Scroll to highlighted lines"
-    locate_text = "Locate"
-    loading_msg = "⚡ Loading source file..."
-    commit_anchor_text = "Commit Permanently Immutable Anchored"
-    keywords = f"{repo}, {title}, Source Code Walkthrough, Architecture Analysis, AiReadCode, GitHub Pages"
+    source_url = f"https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/{slug}/{lang_code}"
+    badge_version = lang_info.get("badge_version", "Online Book")
+    nav_home_text = lang_info.get("nav_home", "Bookstore Lobby")
+    nav_repo_text = lang_info.get("nav_repo", "GitHub Repo")
+    nav_upstream_text = lang_info.get("nav_upstream", f"Upstream: {repo}").format(repo=repo)
+    nav_source_text = lang_info.get("nav_source", "View Markdown Source")
+    theme_tip = lang_info.get("theme_tip", "Toggle Dark/Light Mode")
+    chapter_badge = lang_info.get("chapter_badge", "{total} Chapters").format(total=len(sections))
+    toc_label = lang_info.get("toc_label", "Table of Contents")
+    breadcrumb_root = lang_info.get("breadcrumb_root", "Bookstore")
+    breadcrumb_ch1 = lang_info.get("breadcrumb_ch", "Chapter 01")
+    footer_cta_title = lang_info.get("footer_cta_title", "")
+    footer_cta_desc = lang_info.get("footer_cta_desc", "")
+    footer_cta_star = lang_info.get("footer_cta_star", "")
+    footer_cta_browse = lang_info.get("footer_cta_browse", "")
+    code_pane_lines = lang_info.get("code_pane_lines", "Overview")
+    copy_snippet_title = lang_info.get("copy_snippet_title", "")
+    copy_snippet_text = lang_info.get("copy_snippet_text", "Copy snippet")
+    copy_all_title = lang_info.get("copy_all_title", "")
+    copy_all_text = lang_info.get("copy_all_text", "Copy all")
+    locate_title = lang_info.get("locate_title", "Locate")
+    locate_text = lang_info.get("locate_text", "Locate")
+    loading_msg = lang_info.get("loading_msg", "⚡ Loading source file...")
+    commit_anchor_text = lang_info.get("commit_anchor_text", "Commit Permanently Immutable Anchored")
+    keywords = f"{repo}, {title}, Architecture Analysis, AiReadCode, GitHub Pages"
 
-    lang_dropdown_html = f"""        <div class="lang-dropdown" id="lang-dropdown">
-          <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-            <span>🇺🇸 English</span>
-            <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          <div class="lang-dropdown-menu" id="lang-menu">
-            <a href="../index.html#ch-01" class="lang-dropdown-item" data-lang="zh" onclick="window.switchLanguage('zh', event)">🇨🇳 简体中文</a>
-            <a href="#ch-01" class="lang-dropdown-item active" data-lang="en" onclick="window.switchLanguage('en', event)">🇺🇸 English</a>
-          </div>
-        </div>"""
+    lang_dropdown_html = build_lang_dropdown_html(lang_code)
 
     toc_items = []
     rendered_chapters = []
-    en_dir = os.path.join(book_dir, "en")
-    os.makedirs(en_dir, exist_ok=True)
+    out_dir = os.path.join(book_dir, lang_code)
+    os.makedirs(out_dir, exist_ok=True)
 
     meta_chapters = meta.get("chapters", [])
     ch_slug_map = {}
     for c in meta_chapters:
-        idx = c.get("index", 1)
-        ch_slug_map[idx] = c.get("slug", f"chapter-{idx:02d}")
+        c_idx = c.get("index", 1)
+        ch_slug_map[c_idx] = c.get("slug", f"chapter-{c_idx:02d}")
 
     for idx, sec in enumerate(sections):
         order_str = f"{idx+1:02d}"
@@ -907,21 +1273,24 @@ def render_english_edition(slug, book_dir, meta):
         # Extract title from h2
         h2_el = sec.find(['h2', 'h1'])
         raw_title = h2_el.get_text() if h2_el else f"Chapter {idx+1}"
-        clean_title = clean_repeated_prefix(raw_title, "en")
+        clean_title = clean_repeated_prefix(raw_title, lang_code)
 
         toc_items.append(
             f'          <li><a href="#ch-{order_str}" class="toc-link{active_cls}" data-target="ch-{order_str}">'
             f'<span class="toc-num">{order_str}</span><span>{clean_title}</span></a></li>'
         )
 
-        # Extract chapter-body inner HTML
         body_el = sec.find('div', class_='chapter-body')
         body_html = str(body_el) if body_el else ""
-        # Clean any inner duplicate h2 in body if present
         body_html = re.sub(r'^\s*<div class="chapter-body">\s*<h2>.*?</h2>', '<div class="chapter-body">', body_html, flags=re.DOTALL)
 
-        prev_btn = f'<a href="#ch-{idx:02d}" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-{idx:02d}">← Prev: Chapter {idx}</a>' if idx > 0 else '<span></span>'
-        next_btn = f'<a href="#ch-{idx+2:02d}" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-{idx+2:02d}">Next: Chapter {idx+2} →</a>' if idx < len(sections) - 1 else '<span></span>'
+        prev_label = lang_info.get("prev_ch", "← Prev: Chapter {idx}").format(idx=idx)
+        next_label = lang_info.get("next_ch", "Next: Chapter {idx} →").format(idx=idx+2)
+        top_label = lang_info.get("back_to_top", "Back to top ↑")
+        progress_label = lang_info.get("progress", "Chapter {idx} of {total}").format(idx=idx+1, total=len(sections))
+
+        prev_btn = f'<a href="#ch-{idx:02d}" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-{idx:02d}">{prev_label}</a>' if idx > 0 else '<span></span>'
+        next_btn = f'<a href="#ch-{idx+2:02d}" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-{idx+2:02d}">{next_label}</a>' if idx < len(sections) - 1 else '<span></span>'
 
         commit_short = commit[:8] if commit else ""
         sec_html = f'''
@@ -934,28 +1303,28 @@ def render_english_edition(slug, book_dir, meta):
             <span>·</span>
             <span>Commit @{commit_short}</span>
             <span>·</span>
-            <span>Progress: Chapter {idx+1} of {len(sections)}</span>
+            <span>{progress_label}</span>
           </div>
         </div>
         {body_html}
         <div class="chapter-nav-bar">
           {prev_btn}
-          <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Back to top ↑</a>
+          <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">{top_label}</a>
           {next_btn}
         </div>
       </section>
         '''
         rendered_chapters.append(sec_html)
 
-        # Also write clean English markdown to books/{slug}/en/{order_str}-{slug}.md
+        # Write clean markdown
         ch_slug = ch_slug_map.get(idx+1, f"chapter-{order_str}")
         md_filename = f"{order_str}-{ch_slug}.md"
-        md_filepath = os.path.join(en_dir, md_filename)
+        md_filepath = os.path.join(out_dir, md_filename)
         try:
-            en_md = clean_html_to_markdown(str(sec), clean_title)
+            md_content = clean_html_to_markdown(str(sec), clean_title)
             with open(md_filepath, "w", encoding="utf-8") as mf:
-                mf.write(en_md)
-        except Exception as e:
+                mf.write(md_content)
+        except Exception:
             pass
 
     toc_html = "\n".join(toc_items)
@@ -1010,10 +1379,10 @@ def render_english_edition(slug, book_dir, meta):
     for rep_k, rep_v in replacements.items():
         rendered_page = rendered_page.replace(rep_k, rep_v)
 
-    target_html = os.path.join(en_dir, "index.html")
+    target_html = os.path.join(out_dir, "index.html")
     with open(target_html, "w", encoding="utf-8") as f:
         f.write(rendered_page)
-    print(f"    [+] Wrote EN {target_html} ({len(rendered_page)} bytes, {len(sections)} chapters)")
+    print(f"    [+] Wrote {lang_code.upper():5} {target_html} ({len(rendered_page)} bytes, {len(sections)} chapters)")
     return len(sections)
 
 def compile_all():
@@ -1041,8 +1410,14 @@ def compile_all():
         # 1. Render Chinese Edition (books/{slug}/index.html)
         zh_count = render_chinese_edition(slug, book_dir, meta)
 
-        # 2. Render Genuine English Edition (books/{slug}/en/index.html)
-        en_count = render_english_edition(slug, book_dir, meta)
+        # 2. Render all translated editions (en, ja, ko, zh-tw, es, fr, de, ru, pt)
+        edition_counts = {"zh": zh_count}
+        for lang_info in SUPPORTED_LANGUAGES:
+            lcode = lang_info["code"]
+            if lcode == "zh":
+                continue
+            cnt = render_translated_edition(slug, book_dir, meta, lcode)
+            edition_counts[lcode] = cnt
 
         # 3. Snippets Extraction & Caching
         snippets_json_path = os.path.join(book_dir, "snippets.json")
@@ -1069,31 +1444,45 @@ def compile_all():
                     json.dump(snippets, f, ensure_ascii=False)
                 print(f"    [+] Wrote {snippets_json_path} ({len(snippets)} snippets)")
 
-        # 4. Prepare Bookshelf Card
+        # 4. Prepare Bookshelf Card with multi-language badges
         repo = meta.get("repo", "")
         commit = meta.get("commit", meta.get("branch", "main"))
         title_zh = clean_repeated_prefix(meta.get("titleZh", slug), "zh")
         stars = meta.get("stars", "10k+")
-        tags = meta.get("tags", ["源码剖析", "FACT 锚定"])
+        tags = meta.get("tags", ["源码剖析", "FACT 锚定", "10国多语言"])
         summary = meta.get("summaryZh", meta.get("summary", ""))
         tags_html = "".join(f"<span>{t}</span>" for t in tags[:4])
 
-        en_btn = f'<a href="books/{slug}/en/#ch-01" class="btn btn-secondary btn-sm" style="padding: 6px 12px;" title="Read in English"><span>🇺🇸 EN</span></a>' if en_count else ''
+        lang_pills = []
+        for lang_info in SUPPORTED_LANGUAGES:
+            lcode = lang_info["code"]
+            flag = lang_info["flag"]
+            lname = lang_info["name"]
+            lcode_upper = lcode.upper()
+            if lcode == "zh":
+                continue
+            if edition_counts.get(lcode, 0) > 0:
+                lang_pills.append(f'<a href="books/{slug}/{lcode}/#ch-01" class="btn btn-secondary btn-sm" style="padding: 3px 7px; font-size: 11px;" title="{lname}"><span>{flag} {lcode_upper}</span></a>')
+
+        lang_pills_html = " ".join(lang_pills)
 
         cards_html.append(f'''
       <div class="book-card">
-        <span class="book-card-badge">{zh_count or len(meta.get("chapters", []))} 章全集 · 深度专著</span>
+        <span class="book-card-badge">{zh_count or len(meta.get("chapters", []))} 章全集 · 10国语言深度专著</span>
         <h2 class="book-card-title">{title_zh}</h2>
         <div class="book-card-repo">{repo} · ★ {stars} · Commit @{commit[:7]}</div>
         <p class="book-card-desc">{summary[:120]}...</p>
         <div class="book-card-tags">
           {tags_html}
         </div>
-        <div style="display: flex; gap: 8px; margin-top: auto;">
-          <a href="books/{slug}/#ch-01" class="btn btn-primary btn-sm" style="flex: 1; text-align: center;">
-            <span>🇨🇳 沉浸式阅读 →</span>
+        <div style="display: flex; gap: 8px; margin-top: auto; flex-direction: column;">
+          <a href="books/{slug}/#ch-01" class="btn btn-primary btn-sm" style="width: 100%; text-align: center;">
+            <span>🇨🇳 简体中文阅读 →</span>
           </a>
-          {en_btn}
+          <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+            <span style="font-size: 11px; color: var(--text-muted); margin-right: 2px;">多语言:</span>
+            {lang_pills_html}
+          </div>
         </div>
       </div>
         ''')
