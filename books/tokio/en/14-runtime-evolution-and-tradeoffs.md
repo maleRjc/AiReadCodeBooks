@@ -1,28 +1,28 @@
-# Chapter 14: Architectural Evolution & Trade-offs: From Micro-Kernel to Industrial Runtime
+# Chapter 14: Architectural Trade-offs and Future Evolution: From io_uring to Pluggable Drivers
 
+In the previous chapter, we sorted out four types of production pitfalls: cancellation safety, panic propagation, shutdown order, and signal conflicts. They may seem scattered, but in fact they all point to the same architectural problem: how state ownership is clearly divided across asynchronous boundaries. And the way ownership is divided is precisely determined by the three lowest-level architectural decisions of the runtime—how tasks are scheduled, how I/O events are dispatched, and how concurrency correctness is verified. This chapter no longer digs into the implementation details of a specific function, but instead stands at the architectural level, reviews Tokio's trade-offs on these decisions, and follows the evolution clues already embedded in the official documentation and source code to see where io_uring, driver refactoring, and custom executor interfaces will take Tokio. After reading this chapter, you should be able to answer a practical question: when should you extend Tokio, and when should you bypass it.
 
-上一章我们梳理了取消安全、panic 传播、关闭顺序与信号冲突这四类生产陷阱，它们看似分散，实则都指向同一个架构问题：状态所有权在异步边界上如何被清晰地划分。而划分所有权的方式，恰恰由运行时最底层的三个架构决策决定——任务如何被调度、I/O 事件如何被分发、并发正确性如何被验证。本章不再钻进某个具体函数的实现细节，而是站到架构高度，回顾 Tokio 在这些决策上的取舍，并沿着官方文档与源码中已经埋下的演进线索，看看 io_uring、驱动重构与自定义执行器接口会把 Tokio 带向何方。读完本章，你应该能回答一个实践问题：什么时候该扩展 Tokio，什么时候该绕开它。
+# 1. Three Historical Trade-offs: Why It Is the Way It Is Now
 
+## Intuitive model
 
-## Intuitive Architectural Model
+Imagine Tokio as a restaurant that has been open for ten years. The kitchen scheduling method (work-stealing), the separate staffing of food runners (separation of the I/O driver from the scheduler), and the kitchen hygiene inspection system (loom concurrency verification) were not all designed on the first day of opening, but gradually evolved as "more customers arrived and dishes became more complex." Only by understanding these evolutions can you judge which designs are forward-looking arrangements and which are historical baggage.
 
-把 Tokio 想象成一家已经开了十年的餐厅。厨房的排班方式（work-stealing）、传菜员的独立编制（I/O 驱动与调度器分离）、以及后厨的卫生检查制度（loom 并发验证），都不是开业第一天就设计好的，而是在「客人变多、菜品变复杂」的过程中逐步演化出来的。理解这些演化，才能判断哪些设计是前瞻布局、哪些是历史包袱。
+## Trade-off 1: work-stealing instead of a global queue
 
-## 权衡一：work-stealing 而非全局队列
+> **[Design Inference & Architectural Trade-offs]**
+> A global queue is the simplest to implement: all tasks go into one`Mutex<VecDeque>`, and worker threads contend for the lock to take tasks. But lock contention worsens as the number of cores increases, and cache locality is poor—which core a task is created on and which core it is executed on are completely random.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 全局队列的实现最简单：所有任务进一个 `Mutex<VecDeque>`，worker 线程抢锁取任务。但锁竞争会随核数增加而恶化，且缓存局部性差——任务在哪个核上被创建、在哪个核上被执行完全随机。
+The trade-off of work-stealing is: each worker holds a local queue,`spawn`When pushing, it prioritizes the local queue (lock-free, cache-friendly), and only when the local queue is empty does it steal from the tail of another worker's queue. The cost is delayed load balancing, and stealing itself requires atomic operations and memory barriers. Tokio chose the latter because modern servers often have dozens of cores, and the cost of lock contention is far higher than the occasional stealing overhead.
 
-work-stealing 的取舍是：每个 worker 持有本地队列，`spawn` 时优先入本地队列（无锁、缓存友好），本地空了才去别的 worker 队列尾部窃取。代价是负载均衡有延迟，且窃取本身需要原子操作与内存屏障。Tokio 选择后者，是因为现代服务器动辄几十核，锁竞争的成本远高于偶发的窃取开销。
+> **[Design Inference & Architectural Trade-offs]**
+> The boundary condition of this decision is:**task granularity cannot be too fine**. If each task only does a few microseconds of work, the overhead of stealing and scheduling will become disproportionately large. This is also why Tokio, in addition to`spawn_blocking`, also requires long tasks to actively`yield_now()`—cooperative scheduling is essentially there to backstop work-stealing.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个决策的边界条件是：**任务粒度不能太细**。如果每个任务只做几微秒的工作，窃取与调度的开销占比就会失控。这也是为什么 Tokio 在 `spawn_blocking` 之外，还要求长任务主动 `yield_now()`——协作式调度本质上是在替 work-stealing 兜底。
+## Trade-off 2: The I/O driver is independent of the scheduler
 
-## 权衡二：I/O 驱动独立于调度器
+This is the most intriguing point in this chapter's source material. Look at`tokio/src/runtime/io/mod.rs`'s module structure:
 
-这是本章源码材料里最值得玩味的一处。看 `tokio/src/runtime/io/mod.rs` 的模块结构：
-
-[FACT:tokio/src/runtime/io/mod.rs:5-22](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L5-L22)
+[FACT:tokio/src/runtime/io/mod.rs:5-22]
 
 ```rust
 mod driver;
@@ -45,16 +45,16 @@ use crate::util::ptr_expose::PtrExposeDomain;
 static EXPOSE_IO: PtrExposeDomain = PtrExposeDomain::new();
 ```
 
-注意 `driver`、`registration`、`scheduled_io` 是三个独立模块，且对外只暴露 `Driver`、`Handle`、`ReadyEvent`、`Registration` 这几个类型。`ScheduledIo` 是 `pub(crate)` 的——它被 `PtrExposeDomain` 包裹，用于在 loom 测试下把裸指针暴露给并发检查。
+Note that`driver`、`registration`、`scheduled_io`are three independent modules, and externally only`Driver`、`Handle`、`ReadyEvent`、`Registration`these types are exposed.`ScheduledIo`is`pub(crate)`'s—it is`PtrExposeDomain`wrapped, used to expose raw pointers to concurrency checking under loom tests.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么 I/O 驱动不直接嵌进调度器？因为两者的生命周期与并发模型不同。调度器关心的是「哪个任务该跑」，I/O 驱动关心的是「哪个 fd 就绪了」。如果耦合，那么每次调度策略调整都要动 I/O 路径，反之亦然。更重要的是，`block_on` 单线程运行时也需要 I/O 驱动，但不需要 work-stealing 调度器——分离让两种运行时能复用同一套 I/O 实现。
+> **[Design Inference & Architectural Trade-offs]**
+> Why is the I/O driver not directly embedded into the scheduler? Because their lifecycles and concurrency models are different. The scheduler cares about "which task should run," while the I/O driver cares about "which fd is ready." If coupled, then every adjustment to the scheduling strategy would require touching the I/O path, and vice versa. More importantly,`block_on`the single-threaded runtime also needs an I/O driver, but does not need a work-stealing scheduler—separation allows the two runtimes to reuse the same I/O implementation.
 
-## 权衡三：loom 做并发模型检验
+## Trade-off 3: Using loom for concurrency model checking
 
-`tokio/src/loom/mod.rs` 只有 14 行，却揭示了 Tokio 并发正确性的验证策略：
+`tokio/src/loom/mod.rs`It is only 14 lines, yet it reveals Tokio's verification strategy for concurrency correctness:
 
-[FACT:tokio/src/loom/mod.rs:1-14](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/loom/mod.rs#L1-L14)
+[FACT:tokio/src/loom/mod.rs:1-14]
 
 ```rust
 //! This module abstracts over `loom` and `std::sync` depending on whether we
@@ -73,30 +73,31 @@ mod mocked;
 pub(crate) use self::mocked::*;
 ```
 
-关键在 `#[cfg(all(test, loom))]` 这个条件：只有同时开启 `test` 和 `loom` 两个 cfg 时，才会用 `mocked` 模块替换 `std`。这意味着生产构建里根本没有 loom 的代码，零运行时开销。
+The key is the`#[cfg(all(test, loom))]`condition: only when both`test`and`loom`cfgs are enabled at the same time will the`mocked`module replace`std`. This means there is no loom code at all in production builds, with zero runtime overhead.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> loom 的价值在于它能把「线程交错的所有可能顺序」穷举出来。像 `ScheduledIo` 里 `AtomicUsize` 的读改写、`Waiters` 链表的插入删除，这些在真实硬件上可能跑一百万次都不出错，但 loom 能在几秒内构造出触发竞态的交错。代价是测试运行慢、内存占用高，所以只能用于单元测试，不能进生产。
+> **[Design Inference & Architectural Trade-offs]**
+> The value of loom is that it can exhaustively enumerate "all possible orders of thread interleavings." Like`ScheduledIo`in`AtomicUsize`'s read-modify-write,`Waiters`Linked list insertion and deletion—these might run a million times on real hardware without errors, but loom can construct an interleaving that triggers a race condition within seconds. The cost is slow test execution and high memory usage, so it can only be used for unit tests, not in production.
 
-## 设计思考
+## Design Reflections
 
-这三个权衡有一个共同特征：**它们都选择了「更复杂但更可扩展」的方案，并把复杂度限制在内部**。work-stealing 的复杂度藏在调度器里，I/O 驱动的复杂度藏在 `ScheduledIo` 里，loom 的复杂度藏在 cfg 条件里。对外暴露的 API 始终是 `spawn`、`TcpStream::read` 这些简单接口。
+These three trade-offs share a common characteristic:**They all chose the "more complex but more scalable" approach, and confined the complexity internally**. The complexity of work-stealing is hidden in the scheduler, the complexity of I/O driver is hidden in`ScheduledIo`, and the complexity of loom is hidden in cfg conditions. The externally exposed API is always`spawn`、`TcpStream::read`these simple interfaces.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这也是判断「何时该扩展 Tokio」的第一条准则：**如果你的需求能被现有 API 表达，就不要碰内部结构**。一旦你开始依赖 `pub(crate)` 的类型或 `tokio_unstable` 的 cfg，就意味着你把自己绑在了 Tokio 的内部实现上，升级时会付出代价。
+> **[Design Inference & Architectural Trade-offs]**
+> This is also the first principle for judging "when to extend Tokio":**If your needs can be expressed by existing APIs, don't touch the internal structures**. Once you start depending on`pub(crate)`'s types or`tokio_unstable`'s cfg, it means you've bound yourself to Tokio's internal implementation, and you'll pay the price when upgrading.
 
 ---
 
+# II. Driver Refactoring: From "One Waker One Direction" to "Arbitrary Interest Sets"
 
-## Intuitive Architectural Model
+## Intuitive Model
 
-早期的 Tokio I/O 类型有个硬性限制：`async fn read(&mut self)` 需要 `&mut self`。这就像餐厅只有一个取餐窗口，同一时间只能有一个人排队——因为 waker 被存在 I/O 资源内部，而不是存在操作对应的 Future 里。`tokio/docs/reactor-refactor.md` 完整记录了这个限制的成因与重构方案。
+Early Tokio I/O types had a hard limitation:`async fn read(&mut self)`requires`&mut self`. This is like a restaurant with only one pickup window, where only one person can queue at a time—because the waker is stored inside the I/O resource, not in the Future corresponding to the operation.`tokio/docs/reactor-refactor.md`fully documents the cause of this limitation and the refactoring plan.
 
-## 旧架构的痛点
+## Pain Points of the Old Architecture
 
-文档开篇就点明了问题：
+The document states the problem right at the beginning:
 
-[FACT:tokio/docs/reactor-refactor.md:16-20](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L16-L20)
+[FACT:tokio/docs/reactor-refactor.md:16-20]
 
 ```rust
 Currently, I/O types require `&mut self` for `async` functions. The reason for
@@ -106,14 +107,14 @@ Because of this limitation, I/O types limit the number of wakers to one per
 direction (a direction is either read-related events or write-related events).
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 把 waker 存在资源内部，意味着「一个方向只能有一个等待者」。如果你同时想读和写同一个 `TcpStream`，就必须 `split()` 成两半，各自持有独立的 waker 槽。这就是 `TcpStream::split()` 存在的原因——它不是 API 设计偏好，而是内部数据结构的直接约束。
+> **[Design Inference & Architectural Trade-offs]**
+> Storing the waker inside the resource means "one direction can only have one waiter." If you want to read and write the same`TcpStream`simultaneously, you must`split()`it into two halves, each holding an independent waker slot. This is why`TcpStream::split()`exists—it's not an API design preference, but a direct constraint of the internal data structure.
 
-## 新架构：把 waker 移到 Future 里
+## New Architecture: Moving the Waker into the Future
 
-重构的核心思路是「把 waker 从资源状态移到操作 Future 里」，从而支持每个操作注册多个 waker：
+The core idea of the refactoring is "moving the waker from the resource state into the operation Future," thereby supporting multiple wakers registered per operation:
 
-[FACT:tokio/docs/reactor-refactor.md:22-25](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L22-L25)
+[FACT:tokio/docs/reactor-refactor.md:22-25]
 
 ```rust
 Moving the waker from the internal I/O resource's state to the operation's
@@ -122,9 +123,9 @@ wake list" strategy used by `Notify` applies to this case, though there are some
 concerns unique to the I/O driver.
 ```
 
-新的 `ScheduledIo` 结构如下：
+The new`ScheduledIo`structure is as follows:
 
-[FACT:tokio/docs/reactor-refactor.md:97-134](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L97-L134)
+[FACT:tokio/docs/reactor-refactor.md:97-134]
 
 ```rust
 #[derive(Debug)]
@@ -167,15 +168,15 @@ struct Waiter {
 }
 ```
 
-这里有几个精妙的设计点值得展开：
+There are several elegant design points worth elaborating on:
 
-**第一，`readiness` 是 `AtomicUsize`，`waiters` 是 `Mutex<Waiters>`。** 为什么不用一把锁保护两者？因为 `readiness` 的读操作极其频繁（每次 `readiness()` 调用都要检查），而写操作只在收到 mio 事件时发生。用原子变量让读路径无锁，是典型的读写分离优化。
+**First,`readiness`is`AtomicUsize`，`waiters`is`Mutex<Waiters>`。**Why not use a single lock to protect both? Because`readiness`'s read operations are extremely frequent (checked on every`readiness()`call), while write operations only occur when mio events are received. Using atomic variables to make the read path lock-free is a typical read-write separation optimization.
 
-**第二，`Waiter` 是侵入式链表节点。** `pointers: linked_list::Pointers<Waiter>` 让 `Waiter` 本身成为链表的一部分，不需要额外分配节点。`_p: PhantomPinned` 明确标记它不可 `Unpin`——因为侵入式链表的节点地址一旦移动，链表就断了。
+**Second,`Waiter`is an intrusive linked list node.** `pointers: linked_list::Pointers<Waiter>`makes`Waiter`itself part of the linked list, without needing to allocate additional nodes.`_p: PhantomPinned`explicitly marks it as not`Unpin`—because once an intrusive linked list node's address moves, the linked list breaks.
 
-**第三，`reader` 和 `writer` 两个 `Option<Waker>` 是给 `AsyncRead`/`AsyncWrite` 用的。** 文档解释了原因：
+**Third,`reader`and`writer`the two`Option<Waker>`are for`AsyncRead`/`AsyncWrite`'s use.**The document explains the reason:
 
-[FACT:tokio/docs/reactor-refactor.md:210-213](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L210-L213)
+[FACT:tokio/docs/reactor-refactor.md:210-213]
 
 ```rust
 The `AsyncRead` and `AsyncWrite` traits use a "poll" based API. This means that
@@ -184,14 +185,14 @@ Additionally, there is no future associated with the operation which means it is
 not possible to cancel interest in the readiness events.
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这是新旧两套机制的妥协共存：`async fn` 路径用侵入式链表（支持多等待者、可取消），`poll` 路径用固定槽位（不支持取消、但兼容 trait）。这种「两套机制并存」是渐进式重构的典型代价。
+> **[Design Inference & Architectural Trade-offs]**
+> This is a compromise coexistence of the old and new mechanisms:`async fn`The path uses an intrusive linked list (supports multiple waiters, cancellable),`poll`The path uses fixed slots (doesn't support cancellation, but is trait-compatible). This "coexistence of two mechanisms" is a typical cost of incremental refactoring.
 
-## 竞态条件与 tick 机制
+## Race Conditions and the Tick Mechanism
 
-重构中最棘手的问题是竞态。文档给了一个具体的死锁场景：
+The trickiest problem in the refactoring is race conditions. The document gives a specific deadlock scenario:
 
-[FACT:tokio/docs/reactor-refactor.md:175-175](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L175-L175)
+[FACT:tokio/docs/reactor-refactor.md:175-175]
 
 ```rust
 If care is not taken, if between `mio_socket.read(buf)` returning and
@@ -201,9 +202,9 @@ function could deadlock. This happens because the readiness event is received,
 `readiness().await` will block forever as a new readiness event is not received.
 ```
 
-解决方案是引入 tick 机制，把 `readiness` 这个 `AtomicUsize` 拆成多个位段：
+The solution is to introduce a tick mechanism, splitting`readiness`this`AtomicUsize`into multiple bit segments:
 
-[FACT:tokio/docs/reactor-refactor.md:199-199](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L199-L199)
+[FACT:tokio/docs/reactor-refactor.md:199-199]
 
 ```
 | shutdown | generation |  driver tick | readiness |
@@ -211,10 +212,10 @@ function could deadlock. This happens because the readiness event is received,
 |   1 bit  |   7 bits   +    8 bits    +  16 bits  |
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个位段布局是「用空间换正确性」的经典案例。`tick` 每次 `mio::poll()` 递增，`ReadyEvent` 携带读取时的 tick。`clear_readiness()` 只在 tick 匹配时才清除就绪状态——如果 tick 不匹配，说明期间有新事件到达，不能清除。这样就把「清除」和「新事件到达」的竞态消解在了一个原子读改写里。
+> **[Design Inference & Architectural Trade-offs]**
+> This bit segment layout is a classic case of "trading space for correctness."`tick`increments on each`mio::poll()`,`ReadyEvent`carries the tick at read time.`clear_readiness()`Only clears the ready state when the tick matches—if the tick doesn't match, it means new events arrived in the meantime, and it must not clear. This resolves the race between "clearing" and "new event arrival" within a single atomic read-modify-write.
 
-下面这张流程图刻画了 `readiness()` 与 `clear_readiness()` 之间的决策路径：
+The following flowchart depicts the decision path between`readiness()`and`clear_readiness()`:
 
 ```mermaid
 flowchart TD
@@ -236,13 +237,13 @@ flowchart TD
     skip --> start
 ```
 
-这张图的关键分支在 `tick_match`：如果 tick 不匹配，`clear_readiness` 必须放弃清除，否则会丢掉刚到达的事件，导致下一轮 `readiness()` 永久阻塞。
+The key branch in this diagram is at`tick_match`: if the tick doesn't match,`clear_readiness`must abandon the clear, otherwise it will lose the just-arrived event, causing the next round of`readiness()`to block permanently.
 
-## 取消兴趣与内存泄漏
+## Cancelling Interest and Memory Leaks
 
-侵入式链表带来一个新问题：如果 `readiness()` 返回的 Future 被提前 drop，链表节点必须被摘除。文档明确警告：
+The intrusive linked list brings a new problem: if the Future returned by`readiness()`is dropped early, the linked list node must be removed. The document explicitly warns:
 
-[FACT:tokio/docs/reactor-refactor.md:144-148](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L144-L148)
+[FACT:tokio/docs/reactor-refactor.md:144-148]
 
 ```rust
 The future returned by `readiness()` uses an intrusive linked list to store the
@@ -252,14 +253,14 @@ dropped early, it is essential that the waker is removed from the list. This
 prevents leaking memory.
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这正是上一章「取消安全」在 I/O 层的体现。`readiness()` 的 Future 必须在 `Drop` 实现里把自己从链表摘除，否则节点会永久留在 `ScheduledIo` 里，既泄漏内存，又会在下次事件到达时被错误唤醒。
+> **[Design Inference & Architectural Trade-offs]**
+> This is exactly the manifestation of "cancellation safety" from the previous chapter at the I/O layer.`readiness()`'s Future must remove itself from the linked list in the`Drop`implementation, otherwise the node will remain in`ScheduledIo`permanently, both leaking memory and being incorrectly woken when the next event arrives.
 
-## 设计思考与生产踩坑
+## Design Reflections and Production Pitfalls
 
-**为什么不用 `Vec<Waker>` 而用侵入式链表？** 文档在讨论 `&Resource` 实现时给出了答案：
+**Why not use`Vec<Waker>`but instead an intrusive linked list?**The document gives the answer when discussing the`&Resource`implementation:
 
-[FACT:tokio/docs/reactor-refactor.md:228-233](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L228-L233)
+[FACT:tokio/docs/reactor-refactor.md:228-233]
 
 ```rust
 It is only possible to implement `AsyncRead` and `AsyncWrite` for resource types
@@ -270,12 +271,12 @@ alternate implementation would call for a `Vec` but this would result in
 memory leaks.
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `Vec<Waker>` 的问题是：Future 被 drop 后，对应的 waker 留在 Vec 里无法定位删除，只能等下次事件到达时才发现「这个 waker 已经失效」。侵入式链表让节点地址就是 Future 内部字段的地址，drop 时能精确摘除。
+> **[Design Inference & Architectural Trade-offs]**
+> `Vec<Waker>`The problem with
 
-**生产踩坑点**：`TcpStream::by_ref()` 返回的 `TcpStreamRef` 持有 `read_waiter` 和 `write_waiter` 两个节点：
+**is: after a Future is dropped, the corresponding waker remains in the Vec and cannot be located for removal, and you only discover "this waker is already invalid" when the next event arrives. The intrusive linked list makes the node address the address of a field inside the Future, allowing precise removal on drop.**：`TcpStream::by_ref()`Production Pitfall Points`TcpStreamRef`The`read_waiter`returned by`write_waiter`holds two nodes,
 
-[FACT:tokio/docs/reactor-refactor.md:238-244](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L238-L244)
+[FACT:tokio/docs/reactor-refactor.md:238-244]
 
 ```rust
 struct TcpStreamRef {
@@ -287,21 +288,22 @@ struct TcpStreamRef {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这意味着 `TcpStreamRef` 一旦被 drop，两个 waiter 节点同时失效。如果你在 `select!` 里用 `by_ref()` 的引用跨分支共享，要小心生命周期——`TcpStreamRef` 不能活得比 `TcpStream` 长，也不能在多个 `select!` 分支间被同时借用。
+> **[Design Inference & Architectural Trade-offs]**
+> Copy`TcpStreamRef`[Design Inference and Architectural Trade-offs]`select!`This means once`by_ref()`is dropped, both waiter nodes become invalid simultaneously. If you use`TcpStreamRef`'s reference across branches in`TcpStream`, be careful with lifetimes—`select!`cannot outlive
 
 ---
 
+# , nor can it be borrowed simultaneously across multiple
 
-## Intuitive Architectural Model
+## Intuition Model
 
-有时你不想用 Tokio 的调度器，只想借它的 I/O 和定时器。这就像你不想在餐厅堂食，只想用它的外卖窗口。`examples/custom-executor.rs` 展示了这种「混合模式」：用 `futures::executor::ThreadPool` 做调度，用 Tokio 做 I/O。
+Sometimes you don't want to use Tokio's scheduler, you just want to borrow its I/O and timers. This is like not wanting to dine in at a restaurant, but only using its takeout window.`examples/custom-executor.rs`This demonstrates this "hybrid mode": using`futures::executor::ThreadPool`for scheduling, and Tokio for I/O.
 
-## Core Mechanics：TokioContext
+## Core mechanism: TokioContext
 
-整个例子的关键在 `TokioContext` 这个包装类型：
+The key to the entire example is`TokioContext`this wrapper type:
 
-[FACT:examples/custom-executor.rs:51-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L51-L54)
+[FACT:examples/custom-executor.rs:51-54]
 
 ```rust
 impl ThreadPool {
@@ -312,12 +314,12 @@ impl ThreadPool {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `TokioContext::new(f, handle)` 把 Future 和 Tokio 的 `Handle` 绑在一起。当外部执行器 poll 这个包装 Future 时，`TokioContext` 会先进入 Tokio 的运行时上下文（设置线程局部的 `Handle`），再 poll 内部的 `f`。这样 `f` 里调用 `TcpListener::bind` 时，就能找到 Tokio 的 I/O 驱动。
+> **[Design Inference & Architectural Trade-offs]**
+> `TokioContext::new(f, handle)`It binds the Future together with Tokio's`Handle`. When the external executor polls this wrapper Future,`TokioContext`it first enters Tokio's runtime context (setting the thread-local`Handle`), then polls the inner`f`. This way,`f`when calling`TcpListener::bind`, it can find Tokio's I/O driver.
 
-看整个例子的结构：
+Look at the structure of the entire example:
 
-[FACT:examples/custom-executor.rs:38-48](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L38-L48)
+[FACT:examples/custom-executor.rs:38-48]
 
 ```rust
 static EXECUTOR: Lazy = Lazy::new(|| {
@@ -333,10 +335,10 @@ static EXECUTOR: Lazy = Lazy::new(|| {
 });
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这里 Tokio 运行时被创建但**没有被 `block_on` 驱动**——它只是「存在」，提供 I/O 驱动和定时器。真正的任务调度由 `futures::executor::ThreadPool` 负责。这种模式下，Tokio 的 worker 线程实际上在空转（等待 I/O 事件），任务执行发生在 futures 的线程池里。
+> **[Design Inference & Architectural Trade-offs]**
+> Here the Tokio runtime is created but**is not`block_on`driven**—it merely "exists," providing the I/O driver and timers. The actual task scheduling is handled by`futures::executor::ThreadPool`. In this mode, Tokio's worker threads are essentially spinning idle (waiting for I/O events), and task execution happens in futures' thread pool.
 
-## 数据流：一次 TcpListener::bind 的跨执行器旅程
+## Data flow: a TcpListener::bind's cross-executor journey
 
 ```mermaid
 sequenceDiagram
@@ -358,27 +360,27 @@ sequenceDiagram
     Note over FE,TR: I/O 就绪时，Tokio 驱动唤醒 wakerFE 重新调度该任务
 ```
 
-这张时序图的关键在于：**任务的 poll 发生在 futures 线程池，但 I/O 事件的等待发生在 Tokio 后台线程**。两者通过 `Handle` 和 waker 连接。
+The key to this sequence diagram is:**The task's poll happens in the futures thread pool, but the waiting for I/O events happens in Tokio's background threads**. The two are connected through`Handle`and the waker.
 
-## 设计思考：何时该绕开 Tokio
+## Design Thinking: When to Bypass Tokio
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个例子的存在本身就是一个信号：Tokio 的架构允许「只用 I/O 驱动，不用调度器」。判断标准可以归纳为三条：
+> **[Design Inference & Architectural Trade-offs]**
+> The very existence of this example is a signal: Tokio's architecture allows "using only the I/O driver, not the scheduler." The criteria can be summarized in three points:
 
-1. **如果你需要与已有的执行器生态集成**（比如某些框架强制要求 `futures::executor`），用 `TokioContext` 是最小侵入的方案。
+1. **If you need to integrate with an existing executor ecosystem**(e.g., some frameworks mandate`futures::executor`), using`TokioContext`is the least invasive approach.
 
-2. **如果你需要完全控制调度策略**（比如实时系统要求确定性调度），Tokio 的 work-stealing 不满足需求，但它的 I/O 驱动仍然可用。
+2. **If you need complete control over scheduling policy**(e.g., real-time systems requiring deterministic scheduling), Tokio's work-stealing doesn't meet the requirements, but its I/O driver is still usable.
 
-3. **如果你只是嫌 Tokio 的 API 复杂**，那不该绕开——`TokioContext` 引入的跨执行器边界会带来新的调试难度，得不偿失。
+3. **If you just find Tokio's API complicated**, then you shouldn't bypass it—`TokioContext`the cross-executor boundary introduced by
 
-**生产踩坑点**：`TokioContext` 模式下，Tokio 运行时的 `block_on` 从未被调用，意味着 `Runtime::shutdown` 的清理逻辑不会自动触发。你必须在程序退出前显式 drop `Runtime`，否则 I/O 驱动的后台线程可能不会优雅关闭。
+**Production Pitfalls**：`TokioContext`In`block_on`mode, Tokio runtime's`Runtime::shutdown`is never called, meaning`Runtime`'s cleanup logic won't trigger automatically. You must explicitly drop
 
-## 与 io_uring 的关系
+## before the program exits, otherwise the I/O driver's background threads may not shut down gracefully.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `tokio/src/runtime/io/mod.rs` 顶部的 cfg 条件透露了 io_uring 的接入方式：
+> **[Design Inference & Architectural Trade-offs]**
+> `tokio/src/runtime/io/mod.rs`[Design Inference and Architectural Trade-offs]
 
-[FACT:tokio/src/runtime/io/mod.rs:1-4](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L1-L4)
+[FACT:tokio/src/runtime/io/mod.rs:1-4]
 
 ```rust
 #![cfg_attr(
@@ -387,45 +389,47 @@ sequenceDiagram
 )]
 ```
 
-注意 `feature = "io-uring"` 和 `tokio_unstable` 同时出现。这意味着 io_uring 支持目前是**实验性的**，必须同时开启 unstable 特性才能编译。`allow(dead_code)` 则说明：当这些特性未开启时，模块里的部分代码不会被使用，编译器会警告——用 `allow` 压掉。
+reveals how io_uring is integrated:`feature = "io-uring"`Copy`tokio_unstable`Note that**and**appear simultaneously. This means io_uring support is currently`allow(dead_code)`experimental`allow`, and both unstable features must be enabled to compile.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> io_uring 与 epoll 的根本区别在于：epoll 是「就绪通知」，io_uring 是「完成通知」。前者需要应用自己发起 `read`/`write` 系统调用，后者由内核直接完成 I/O 并返回结果。这对 Tokio 的 `ScheduledIo` 模型是巨大冲击——`readiness()` 的语义在 io_uring 下不再适用，需要一套全新的「提交-完成」抽象。这也是为什么 io_uring 支持迟迟停留在 unstable：它不是加一个后端那么简单，而是要重构整个 I/O 驱动的抽象层。
+> **[Design Inference & Architectural Trade-offs]**
+> .`read`/`write`[Design Inference and Architectural Trade-offs]`ScheduledIo`The fundamental difference between io_uring and epoll is: epoll is "readiness notification," io_uring is "completion notification." The former requires the application to issue`readiness()`system calls itself, while the latter has the kernel directly complete I/O and return results. This is a huge shock to Tokio's
 
 ---
 
+# model—
 
-本章从架构高度回顾了 Tokio 的三个核心权衡，并展望了三条演进路径：
+'s semantics no longer apply under io_uring, requiring an entirely new "submit-complete" abstraction. This is also why io_uring support remains unstable: it's not as simple as adding a backend, but rather reconstructing the entire I/O driver abstraction layer.
 
-**历史权衡**：
+**Chapter Summary**：
 
-- work-stealing 用调度复杂度换取多核扩展性，边界是任务粒度不能太细；
-- I/O 驱动独立于调度器，让 `block_on` 与多线程运行时复用同一套 I/O 实现；
-- loom 通过 cfg 条件在生产构建中完全消失，只在测试时穷举线程交错。
+- This chapter reviewed Tokio's three core trade-offs from an architectural perspective, and looked ahead at three evolution paths:
+- Historical Trade-offs`block_on`work-stealing trades scheduling complexity for multi-core scalability, with the boundary being that task granularity can't be too fine;
+- I/O driver is independent of the scheduler, allowing
 
-**驱动重构**（`reactor-refactor.md`）：
+**and the multi-threaded runtime to reuse the same I/O implementation;**（`reactor-refactor.md`）：
 
-- 把 waker 从 `ScheduledIo` 内部移到操作 Future 里，用侵入式链表支持多等待者；
-- 用 `AtomicUsize` 的位段布局（shutdown/generation/tick/readiness）消解 `clear_readiness` 的竞态；
-- `AsyncRead`/`AsyncWrite` 因 poll 语义无法用侵入式链表，保留 `reader`/`writer` 固定槽位作为妥协。
+- loom completely disappears in production builds through cfg conditions, only exhaustively enumerating thread interleavings during testing.`ScheduledIo`Driver Refactoring
+- Moving the waker from inside`AtomicUsize`to the operation Future, using an intrusive linked list to support multiple waiters;`clear_readiness`using
+- `AsyncRead`/`AsyncWrite`'s bitfield layout (shutdown/generation/tick/readiness) to eliminate`reader`/`writer`'s race conditions;
 
-**未来演进**：
+**because poll semantics can't use intrusive linked lists, retaining**：
 
-- io_uring 需要「提交-完成」新抽象，目前受 `tokio_unstable` 保护；
-- `TokioContext` 允许只用 I/O 驱动、不用调度器，但需手动管理 Runtime 生命周期；
-- 判断「扩展还是绕开」的准则：能用现有 API 表达就不碰内部结构。
+- fixed slots as a compromise.`tokio_unstable`Future Evolution
+- `TokioContext`io_uring requires a new "submit-complete" abstraction, currently protected by
+- ;
 
+# allows using only the I/O driver without the scheduler, but requires manual management of the Runtime lifecycle;
 
-Q1: 在 `ScheduledIo` 的 `readiness` 位段布局中，如果把 `tick` 字段从 8 位缩减到 4 位，在什么场景下会触发错误？请结合 `clear_readiness` 的 tick 匹配逻辑分析。
+The criterion for judging "extend or bypass": if it can be expressed with existing APIs, don't touch internal structures.`ScheduledIo`Chapter Reflection and Self-Test`readiness`Q1: In`tick`'s`clear_readiness`bitfield layout, if the
 
-**参考解析**：`tick` 在每次 `mio::poll()` 时递增 [FACT:tokio/docs/reactor-refactor.md:185-185](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L185-L185)。`clear_readiness` 只在 `event.tick == 当前 readiness.tick` 时才清除就绪位 [FACT:tokio/docs/reactor-refactor.md:199-199](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/docs/reactor-refactor.md#L199-L199)。如果 tick 只有 4 位，那么每 16 次 poll 就会回绕。假设某个 `ReadyEvent` 携带 tick=15，在它被 `clear_readiness` 之前，mio 又 poll 了 1 次，tick 回绕到 0。此时 `clear_readiness` 发现 tick 不匹配（15 != 0），会错误地跳过清除——但实际上期间可能没有新事件到达，只是 tick 回绕了。这会导致就绪位被永久保留，后续 `readiness()` 立即返回但 `read` 仍然 `WouldBlock`，陷入忙循环。8 位 tick 在正常负载下足够（256 次 poll 内完成一次 read-clear 循环），但极端高并发下仍有回绕风险，这是位段布局的固有边界。
+**field is reduced from 8 bits to 4 bits, in what scenarios would errors be triggered? Please analyze in conjunction with**：`tick`'s tick matching logic.`mio::poll()`Reference Analysis[FACT:tokio/docs/reactor-refactor.md:185-185]。`clear_readiness`increments`event.tick == 当前 readiness.tick`on each[FACT:tokio/docs/reactor-refactor.md:199-199], and only clears readiness bits when`ReadyEvent`. If tick only has 4 bits, then it wraps around every 16 polls. Suppose a certain`clear_readiness`Previously, mio polled once more, and the tick wrapped around to 0. At this point`clear_readiness`discovers the tick mismatch (15 != 0) and will incorrectly skip the clear—but in reality, no new events may have arrived during this period; the tick simply wrapped around. This causes the readiness bit to be permanently retained, and subsequently`readiness()`returns immediately but`read`still`WouldBlock`, falling into a busy loop. The 8-bit tick is sufficient under normal load (a read-clear cycle completes within 256 polls), but under extreme high concurrency there is still a wraparound risk—this is an inherent boundary of the bitfield layout.
 
-Q2: `examples/custom-executor.rs` 中，Tokio 运行时被创建但从未 `block_on`。如果此时调用 `rt.shutdown_timeout()`，会发生什么？为什么这个例子选择不调用？
+Q2: `examples/custom-executor.rs`, the Tokio runtime is created but never`block_on`. If`rt.shutdown_timeout()`is called at this point, what happens? Why does this example choose not to call it?
 
-**参考解析**：`rt.shutdown_timeout()` 会等待所有任务完成并关闭 I/O 驱动。但在这个例子里，任务实际运行在 `futures::executor::ThreadPool` 上 [FACT:examples/custom-executor.rs:51-54](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/examples/custom-executor.rs#L51-L54)，Tokio 运行时里没有任务——它只提供 I/O 驱动。如果调用 `shutdown_timeout`，它会立即返回（因为没有任务），但 I/O 驱动的后台线程可能仍在运行。例子选择不调用，是因为 `EXECUTOR` 是 `Lazy` 静态变量，程序退出时由 Rust 的静态析构机制处理。真正的坑在于：如果 `TokioContext` 包装的 Future 还在运行，而 `Runtime` 被 drop，那么 Future 里的 I/O 操作会 panic（找不到运行时上下文）。生产环境必须确保所有 `TokioContext` Future 完成后才 drop Runtime。
+**Reference Analysis**：`rt.shutdown_timeout()`will wait for all tasks to complete and shut down the I/O driver. But in this example, the tasks actually run on`futures::executor::ThreadPool`on[FACT:examples/custom-executor.rs:51-54], and there are no tasks in the Tokio runtime—it only provides the I/O driver. If`shutdown_timeout`is called, it will return immediately (since there are no tasks), but the I/O driver's background thread may still be running. The example chooses not to call it because`EXECUTOR`is a`Lazy`static variable, handled by Rust's static destructor mechanism when the program exits. The real pitfall is: if the Future wrapped by`TokioContext`is still running and`Runtime`is dropped, then I/O operations inside the Future will panic (runtime context not found). Production environments must ensure all`TokioContext`Futures complete before dropping the Runtime.
 
-Q3: 假设你要为 Tokio 添加一个基于 io_uring 的 I/O 后端。根据 `reactor-refactor.md` 中 `readiness()` 的语义，哪些部分可以直接复用，哪些必须重写？
+Q3: Suppose you want to add an io_uring-based I/O backend to Tokio. Based on`reactor-refactor.md`in`readiness()`'s semantics, which parts can be directly reused, and which must be rewritten?
 
-**参考解析**：可以直接复用的是 `Registration` 的注册接口和 `ScheduledIo` 的 `waiters` 链表结构——它们管理的是「谁在等」，与底层是 epoll 还是 io_uring 无关。必须重写的是 `readiness()` 的语义：epoll 下它返回「fd 就绪」，io_uring 下没有「就绪」概念，只有「提交的 SQE 完成」。`clear_readiness` 的 tick 机制也需要重新设计——io_uring 的完成事件自带 user_data 标识，不需要 tick 来区分新旧事件。最根本的改动是：`readiness()` 返回的 Future 在 io_uring 下应该变成「提交 SQE 并等待 CQE」，这意味着 `Waiter` 结构需要携带 SQE 参数，而不仅仅是 `interest`。这也是为什么 io_uring 支持受 `tokio_unstable` 保护 [FACT:tokio/src/runtime/io/mod.rs:1-4](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/io/mod.rs#L1-L4)——它不是替换后端，而是改变 I/O 驱动的抽象契约。
+**Reference Analysis**: What can be directly reused is`Registration`'s registration interface and`ScheduledIo`'s`waiters`linked list structure—they manage "who is waiting," which is independent of whether the underlying layer is epoll or io_uring. What must be rewritten is`readiness()`'s semantics: under epoll it returns "fd ready," while under io_uring there is no concept of "ready"—only "submitted SQE completed."`clear_readiness`'s tick mechanism also needs to be redesigned—io_uring's completion events carry their own user_data identifier, so no tick is needed to distinguish new events from old ones. The most fundamental change is:`readiness()`'s returned Future under io_uring should become "submit SQE and wait for CQE," which means the`Waiter`structure needs to carry SQE parameters, not just`interest`. This is also why io_uring support is protected by`tokio_unstable`[FACT:tokio/src/runtime/io/mod.rs:1-4]—it is not replacing the backend, but changing the I/O driver's abstraction contract.
 
-至此，我们完成了从具体陷阱到架构权衡的爬升。回顾全书，从 Future 的惰性求值到调度器的公平性，从取消安全到关闭顺序，再到本章的 io_uring 与可插拔驱动，所有讨论都围绕一个核心：在异步边界上清晰地划分状态所有权。Tokio 的架构并非一成不变，io_uring 的零拷贝 I/O、驱动层的解耦、自定义执行器接口的开放，都在推动它向更灵活、更高效的方向演进。当你合上这本书，希望留下的不是一堆 API 用法，而是一套判断力：知道何时该信任运行时，何时该介入底层，以及如何在生产环境中避开那些会咬人的组合。异步 Rust 的生态仍在快速生长，保持对源码与官方文档的追踪，比记住任何结论都更重要。
+At this point, we have completed the climb from concrete pitfalls to architectural trade-offs. Looking back at the entire book, from Future's lazy evaluation to scheduler fairness, from cancellation safety to shutdown ordering, and then to this chapter's io_uring and pluggable drivers, all discussions revolve around one core: clearly delineating state ownership at asynchronous boundaries. Tokio's architecture is not set in stone—io_uring's zero-copy I/O, the decoupling of the driver layer, and the opening of custom executor interfaces are all pushing it toward a more flexible and efficient direction. When you close this book, I hope what remains is not a pile of API usage, but a set of judgment: knowing when to trust the runtime, when to intervene at the lower level, and how to avoid those combinations that bite in production environments. The async Rust ecosystem is still growing rapidly, and keeping track of source code and official documentation is more important than remembering any conclusion.

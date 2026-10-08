@@ -1,97 +1,102 @@
-# Chapter 23: Ecosystem Extensions: nccl4py, nccl4rust, nccl_ep & nccl_ubx Bindings
+# Chapter 23: Ecosystem Extensions: Peripheral Projects Such as nccl4py, nccl4rust, nccl_ep, and nccl_ubx
 
+In the previous chapter, we investigated typical NCCL failures in production environments—group semantics misuse, rank count mismatches, stream interactions, ABI version conflicts, and network timeouts. Most of these issues occur when using the C ABI directly, but modern large model training frameworks often do not call the C ABI directly. Instead, they reuse NCCL's capabilities through language bindings such as Python and Rust, or through extension projects targeting scenarios like MoE and ultra-high-bandwidth communication. These peripheral projects are placed under the bindings/ and contrib/ directories, positioned as experimental and community-maintained, and do not inherit the release quality assurance of the core library. This chapter examines nccl4py, nccl4rust, nccl_ep, nccl_ubx, and nccl_checkpoint one by one, looking at how they build a rich ecosystem outside the core through three paths: language bindings, device API extensions, and symbol interception.
 
-上一章我们排查了 NCCL 在生产环境中的典型故障——group 语义误用、rank 数不匹配、stream 交互、ABI 版本冲突以及网络超时。这些问题大多发生在直接使用 C ABI 的场景中，而现代大模型训练框架往往不直接调用 C ABI，而是通过 Python、Rust 等语言绑定，或借助针对 MoE、超带宽通信等场景的扩展项目来复用 NCCL 的能力。这些周边项目放在 bindings/ 和 contrib/ 目录下，定位是实验性、社区维护，不继承核心库的发布质量保证。本章逐一剖析 nccl4py、nccl4rust、nccl_ep、nccl_ubx 和 nccl_checkpoint，看它们如何通过语言绑定、设备 API 扩展和符号拦截三条路径，在核心之外构建起丰富的生态。
+# nccl4py: Cython bindings and namespace package design
 
-## nccl4py：Cython 绑定与命名空间包设计
+## Intuitive model: translating the C ABI into something Python can understand
 
-### Intuitive Architectural Model：把 C ABI 翻译成 Python 能懂的话
+Imagine the NCCL core is a diplomat who only speaks C, and a Python training script is an intern who only speaks Python. nccl4py is that translator—it does not change what the diplomat says (NCCL's behavior), it only translates "`ncclAllReduce(sendbuff, recvbuff, count, ...)`" into "`nccl.all_reduce(tensor)`". Without this layer of translation, every Python framework would have to write its own ctypes bindings, which is repetitive work and error-prone.
 
-想象 NCCL 核心是一个只会说 C 语言的外交官，而 Python 训练脚本是一个只会说 Python 的实习生。nccl4py 就是那个翻译官——它不改变外交官说的话（NCCL 的行为），只是把「`ncclAllReduce(sendbuff, recvbuff, count, ...)`」翻译成「`nccl.all_reduce(tensor)`」。如果没有这层翻译，每个 Python 框架都得自己写 ctypes 绑定，重复劳动且容易出错。
+## Layered structure: Cython low-level + Python high-level
 
-### 分层结构：Cython 底层 + Python 高层
-
-nccl4py 的设计是两层：底层是 Cython 绑定（`nccl/bindings/cynccl.pxd`），高层是 Python API（`nccl.core`）。README 里明确说了这个分层 [FACT:bindings/nccl4py/README.md:4-4](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L4-L4)：
+The design of nccl4py has two layers: the low level is Cython bindings (`nccl/bindings/cynccl.pxd`), and the high level is the Python API (`nccl.core`). The README explicitly states this layering.[FACT:bindings/nccl4py/README.md:4-4]：
 
 > `nccl4py provides low-level Cython bindings and a high-level Python API`
 
-Cython 绑定以 `.pxd` 文件形式随 wheel 分发，供其他 Cython 扩展直接 `cimport` [FACT:bindings/nccl4py/README.md:39-43](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L39-L43)：
+The Cython bindings are distributed with the wheel as`.pxd`files, for other Cython extensions to directly`cimport` [FACT:bindings/nccl4py/README.md:39-43]：
 
 ```cython
 from nccl.bindings cimport cynccl
 ```
 
-[INFERENCE] 为什么要暴露 Cython 层而不只是 Python 层？因为有些框架（比如 DeepSpeed、Megatron）的核心循环在 Cython 里，每次调用都走 Python 解释器开销太大。直接 `cimport cynccl` 可以让 Cython 扩展以接近 C 的零开销调用 NCCL 函数。这是「分层暴露」的典型设计——高层给普通用户，底层给性能敏感场景。
+> **[Design Inference & Architectural Trade-offs]**
+> Why expose the Cython layer and not just the Python layer? Because some frameworks (such as DeepSpeed and Megatron) have their core loops in Cython, and going through the Python interpreter on every call is too expensive. Directly`cimport cynccl`allows Cython extensions to call NCCL functions with near-C zero overhead. This is a typical "layered exposure" design—the high level is for ordinary users, and the low level is for performance-sensitive scenarios.
 
-### 命名空间包：多个发行版共享 `nccl` 前缀
+## Namespace package: multiple distributions share the`nccl`prefix
 
-这是 nccl4py 最巧妙的设计。`nccl` 是一个 PEP 420 隐式命名空间包 [FACT:bindings/nccl4py/README.md:50-51](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L50-L51)：
+This is the most ingenious design of nccl4py.`nccl`is a PEP 420 implicit namespace package[FACT:bindings/nccl4py/README.md:50-51]：
 
 > `nccl` is a PEP 420 implicit namespace package. nccl4py provides `nccl.bindings` and `nccl.core`; other NCCL extension distributions can provide additional `nccl.*` subpackages.
 
-[INFERENCE] 传统 Python 包里，`nccl/__init__.py` 会「拥有」整个 `nccl` 命名空间。如果 nccl4py 和 nccl_ep 的 Python 绑定都想提供 `nccl.xxx`，就会冲突——谁先安装谁赢。PEP 420 命名空间包解决了这个问题：没有 `__init__.py`，多个发行版可以各自往 `nccl/` 目录里放子包，Python 导入系统会把它们合并。所以 nccl4py 提供 `nccl.bindings` 和 `nccl.core`，nccl_ep 提供 `nccl.ep`，两者可以共存 [FACT:contrib/nccl_ep/README.md:80-82](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L80-L82)。
+> **[Design Inference & Architectural Trade-offs]**
+> In traditional Python packages,`nccl/__init__.py`would "own" the entire`nccl`namespace. If both nccl4py and nccl_ep's Python bindings want to provide`nccl.xxx`, they will conflict—whoever installs first wins. PEP 420 namespace packages solve this problem: without`__init__.py`, multiple distributions can each place subpackages into the`nccl/`directory, and the Python import system will merge them. So nccl4py provides`nccl.bindings`and`nccl.core`, while nccl_ep provides`nccl.ep`, and the two can coexist[FACT:contrib/nccl_ep/README.md:80-82]。
 
-这个设计对Surrounding Ecosystem & Multi-Language Bindings至关重要：未来任何第三方想加 `nccl.monitoring`、`nccl.profiling`，都不需要改 nccl4py 的代码。
+This design is crucial for ecosystem expansion: in the future, any third party that wants to add`nccl.monitoring`、`nccl.profiling`does not need to modify nccl4py's code.
 
-### CUDA 版本选择：extra 机制
+## CUDA version selection: the extra mechanism
 
-安装时用 `nccl4py[cu12]` 或 `nccl4py[cu13]` 选择 CUDA 大版本 [FACT:bindings/nccl4py/README.md:13-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L13-L17)。README 解释了原因：extras 会安装对应的 NCCL runtime 和 CUDA Python 依赖 [FACT:bindings/nccl4py/README.md:19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L19)。已发布的 wheel 不需要 `CUDA_HOME` 或本地 CUDA Toolkit，但从源码编译需要 [FACT:bindings/nccl4py/README.md:20-21](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L20-L21)。
+During installation, use`nccl4py[cu12]`or`nccl4py[cu13]`to select the CUDA major version[FACT:bindings/nccl4py/README.md:13-17]. The README explains the reason: extras will install the corresponding NCCL runtime and CUDA Python dependencies[FACT:bindings/nccl4py/README.md:19]. Published wheels do not require`CUDA_HOME`or a local CUDA Toolkit, but building from source requires[FACT:bindings/nccl4py/README.md:20-21]。
 
-[INFERENCE] 这是 Python 生态处理 CUDA 版本碎片化的标准做法。CUDA 12 和 13 的 ABI 不兼容，不能用一个 wheel 通吃。用 extra 让 pip 根据用户环境选择正确的二进制依赖，避免了运行时才发现版本不匹配。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the standard approach in the Python ecosystem for handling CUDA version fragmentation. CUDA 12 and 13 are ABI-incompatible, so one wheel cannot cover both. Using extras lets pip choose the correct binary dependency according to the user's environment, avoiding version mismatches that are only discovered at runtime.
 
-### 生产避坑
+## Production pitfalls
 
-**坑一：命名空间包与 `__init__.py` 冲突。** 如果某个第三方包在 `nccl/` 下放了 `__init__.py`，PEP 420 命名空间包机制会被破坏，导致 `nccl.core` 导入失败。排查方法：`python -c "import nccl; print(nccl.__path__)"`，如果报 `AttributeError` 说明 `nccl` 不是命名空间包。
+**Pitfall 1: namespace packages and`__init__.py`conflict.**If some third-party package places`nccl/`under`__init__.py`, the PEP 420 namespace package mechanism will be broken, causing`nccl.core`import failure. Troubleshooting method:`python -c "import nccl; print(nccl.__path__)"`, if it reports`AttributeError`it means`nccl`is not a namespace package.
 
-**坑二：Cython ABI 版本漂移。** `cynccl.pxd` 是实验性 API [FACT:bindings/nccl4py/README.md:32-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/bindings/nccl4py/README.md#L32-L32)，NCCL 升级时 `.pxd` 可能变。依赖 `cimport cynccl` 的 Cython 扩展必须和 nccl4py 版本严格匹配，否则编译期符号解析失败。
+**Pitfall 2: Cython ABI version drift.** `cynccl.pxd`is an experimental API[FACT:bindings/nccl4py/README.md:32-32], and when NCCL is upgraded`.pxd`may change. Cython extensions that depend on`cimport cynccl`must strictly match the nccl4py version, otherwise symbol resolution fails at compile time.
 
-## nccl4rust：RAII 所有权与设备侧边界
+# nccl4rust: RAII ownership and device-side boundaries
 
-### Intuitive Architectural Model：让编译器帮你管生命周期
+## Intuitive model: let the compiler manage the lifecycle for you
 
-C 语言里，你 `ncclCommInitRank` 拿到一个 communicator，用完必须 `ncclCommDestroy`。忘了销毁就泄漏，提前销毁就崩溃。Rust 的 RAII（Resource Acquisition Is Initialization）机制让编译器在变量离开作用域时自动调用析构函数——就像酒店房卡，你退房时系统自动结算，不用手动去前台。
+In C, you`ncclCommInitRank`get a communicator, and when you are done you must`ncclCommDestroy`. Forgetting to destroy it leaks; destroying it early crashes. Rust's RAII (Resource Acquisition Is Initialization) mechanism lets the compiler automatically call the destructor when a variable leaves scope—like a hotel room card, where the system automatically settles the bill when you check out, without you having to go to the front desk manually.
 
-nccl4rust 的核心价值就是把这套所有权语义套在 NCCL 的 C ABI 上。
+The core value of nccl4rust is applying this ownership semantics to NCCL's C ABI.
 
-### 分层结构：五个 crate 各司其职
+## Layered structure: five crates each with their own role
 
-README 的 Layout 表格列出了五个 crate [FACT:contrib/nccl4rust/README.md:20-28](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L20-L28)：
+The README's Layout table lists five crates[FACT:contrib/nccl4rust/README.md:20-28]：
 
 | Path | Purpose |
-|---|---|
-| `crates/nccl-sys` | bindgen 生成的原始 host ABI |
-| `crates/nccl` | Rust 风格 host 包装 + RAII 所有权 |
-| `crates/nccl-device-sys` | `no_std` CUDA-Oxide 设备声明 |
-| `crates/nccl-device` | 类型化 `DevComm`、`Team`、`Window` 包装 |
-| `shim/` | 纯 C-ABI 垫片，只用公开头文件 |
+| --- | --- |
+| `crates/nccl-sys` | Raw host ABI generated by bindgen |
+| `crates/nccl` | Rust-style host wrapper + RAII ownership |
+| `crates/nccl-device-sys` | `no_std`CUDA-Oxide device declarations |
+| `crates/nccl-device` | Typed`DevComm`、`Team`、`Window`Wrapper |
+| `shim/` | Pure C-ABI shim, using only public headers |
 
-[INFERENCE] 这个拆分是刻意的。README 解释了动机 [FACT:contrib/nccl4rust/README.md:30-32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L30-L32)：host 应用可以只用 `nccl` 而不需要 Rust GPU 编译器；CUDA-Oxide 内核用 `nccl-device`；需要原始 ABI 的消费者可以选 `-sys` crate。这种「按需分层」让不同用户只付自己需要的编译成本。
+> **[Design Inference & Architectural Trade-offs]**
+> This split is deliberate. The README explains the motivation[FACT:contrib/nccl4rust/README.md:30-32]: host applications can use only`nccl`without needing the Rust GPU compiler; CUDA-Oxide kernels use`nccl-device`; consumers who need the raw ABI can choose the`-sys`crate. This "layer on demand" approach lets different users pay only the compilation cost they need.
 
-### 关键设计：用指针而非值传递设备通信器
+## Key design: pass device communicators by pointer rather than by value
 
-这是 nccl4rust 最值得学习的设计决策。README 的 Host/device ownership boundary 一节 [FACT:contrib/nccl4rust/README.md:211-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L211-L219)：
+This is the most instructive design decision in nccl4rust. The README's Host/device ownership boundary section[FACT:contrib/nccl4rust/README.md:211-219]：
 
 > `ncclDevCommCreate` produces a versioned public structure in host memory. The host `DeviceCommunicator` wrapper owns that structure and destroys it before its parent communicator. CUDA-Oxide remains responsible for allocating device memory, copying those bytes, and keeping the copy alive while kernels execute. Kernels construct `nccl_device::DevComm` from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.
 
-[INFERENCE] 为什么不用 Rust 结构体镜像 C 结构体？因为 `ncclDevComm_t` 是版本化的——不同 NCCL 版本字段可能不同。如果内核参数按值传递 Rust 镜像，那么内核 ABI 就绑定了特定 NCCL 版本的结构体布局。一旦 NCCL 升级结构体，所有已编译的内核都要重编。用指针传递则只传一个地址，内核通过指针访问，布局变化不影响 ABI。这和上一章讲的 `ncclEpLayoutInfo_t` 的 size-based ABI 是同一个思路——**把版本差异隔离在指针背后**。
+> **[Design Inference & Architectural Trade-offs]**
+> Why not mirror C structs with Rust structs? Because`ncclDevComm_t`is versioned—different NCCL versions may have different fields. If kernel parameters pass a Rust mirror by value, then the kernel ABI is bound to a specific NCCL version's struct layout. Once NCCL upgrades the struct, all compiled kernels must be recompiled. Passing by pointer only passes an address, and the kernel accesses through the pointer, so layout changes do not affect the ABI. This is the same idea as the`ncclEpLayoutInfo_t`size-based ABI discussed in the previous chapter—**isolating version differences behind a pointer**。
 
-### 安全边界：哪些是 unsafe 的
+## Safety boundary: what is unsafe
 
-README 的 Current API contracts 一节列了六条契约 [FACT:contrib/nccl4rust/README.md:230-249](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L230-L249)，其中关键几条：
+The README's Current API contracts section lists six contracts[FACT:contrib/nccl4rust/README.md:230-249], with several key ones:
 
-- 原始 `-sys` crate 只镜像 C ABI，不加所有权或生命周期校验 [FACT:contrib/nccl4rust/README.md:232-233](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L232-L233)
-- 当前集合通信和点对点包装接受原始设备指针，声明为 `unsafe` [FACT:contrib/nccl4rust/README.md:42-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L42-L45)
-- 指针翻译方法返回原始设备指针，无法校验偏移边界、对齐、peer 成员关系、别名或窗口生命周期 [FACT:contrib/nccl4rust/README.md:242-244](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L242-L244)
+- The raw`-sys`crate only mirrors the C ABI, without adding ownership or lifetime checks[FACT:contrib/nccl4rust/README.md:232-233]
+- Current collective communication and point-to-point wrappers accept raw device pointers, declared as`unsafe` [FACT:contrib/nccl4rust/README.md:42-45]
+- Pointer translation methods return raw device pointers and cannot validate offset bounds, alignment, peer membership, aliasing, or window lifetime[FACT:contrib/nccl4rust/README.md:242-244]
 
-[INFERENCE] 这是 Rust 绑定 NCCL 的根本困难：NCCL 的很多 API 契约是「缓冲区必须在 CUDA stream 完成前保持有效」，但 Rust 的类型系统无法表达「stream 完成」这个异步事件。所以这些方法只能是 `unsafe`，把责任交回调用者。README 也指出了改进方向 [FACT:contrib/nccl4rust/README.md:44-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L44-L45)：一个 stream-aware 的缓冲区抽象可以把这些要求编码进安全 API。这是未来工作。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the fundamental difficulty of Rust bindings to NCCL: many of NCCL's API contracts are "the buffer must remain valid until the CUDA stream completes," but Rust's type system cannot express the asynchronous event of "stream completion." So these methods can only be`unsafe`, handing responsibility back to the caller. The README also points out the direction for improvement[FACT:contrib/nccl4rust/README.md:44-45]: a stream-aware buffer abstraction could encode these requirements into a safe API. This is future work.
 
-### 设备侧：CUDA-Oxide 与 LTOIR 垫片
+## Device side: CUDA-Oxide and the LTOIR shim
 
-设备侧的核心挑战是：NCCL 的设备 API 是 C++ 模板，而 Rust 设备代码（CUDA-Oxide）需要 C ABI。解决方案是一个 C++ 垫片 [FACT:contrib/nccl4rust/README.md:26](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L26)：
+The core challenge on the device side is that NCCL's device API is C++ templates, while Rust device code (CUDA-Oxide) needs a C ABI. The solution is a C++ shim[FACT:contrib/nccl4rust/README.md:26]：
 
 > `shim/` — CUDA C++ C-ABI shim built exclusively from public `nccl.h` and `nccl_device.h`
 
-垫片编译成 LTOIR（LLVM 中间表示），和 Rust PTX 一起链接成 cubin [FACT:contrib/nccl4rust/README.md:165-167](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L165-L167)。README 说明了构建流程 [FACT:contrib/nccl4rust/README.md:158-163](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L158-L163)：
+The shim is compiled into LTOIR (LLVM intermediate representation) and linked with Rust PTX into a cubin[FACT:contrib/nccl4rust/README.md:165-167]. The README explains the build process[FACT:contrib/nccl4rust/README.md:158-163]：
 
 ```bash
 make device \
@@ -100,56 +105,61 @@ make device \
   ARCH=90
 ```
 
-[INFERENCE] LTOIR 是 NVIDIA 的链接时优化中间格式。用 LTOIR 而非直接编译成 cubin，是为了让垫片和 Rust 内核在链接期做跨语言优化——比如内联垫片函数到 Rust 内核里。这是「C++ 模板 + Rust 内核」混合编程的关键技术。
+> **[Design Inference & Architectural Trade-offs]**
+> LTOIR is NVIDIA's link-time optimization intermediate format. Using LTOIR rather than compiling directly to cubin is to allow the shim and Rust kernels to perform cross-language optimization at link time—for example, inlining shim functions into Rust kernels. This is the key technique for hybrid programming with "C++ templates + Rust kernels."
 
-### 生产避坑
+## Production pitfalls
 
-**坑一：NCCL 版本必须精确匹配。** README 明确要求 `Matching NCCL 2.31 headers and runtime` [FACT:contrib/nccl4rust/README.md:80-81](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L80-L81)，因为原型直接初始化了早期 NCCL 设备 API 版本中不同的字段。头文件和 `libnccl.so` 版本不一致会导致设备通信器字段错位。
+**Pitfall one: the NCCL version must match exactly.**The README explicitly requires`Matching NCCL 2.31 headers and runtime` [FACT:contrib/nccl4rust/README.md:80-81], because the prototype directly initializes fields that differ in earlier NCCL device API versions. If the headers and`libnccl.so`versions are inconsistent, device communicator fields will be misaligned.
 
-**坑二：CUDA graph 与设备通信器。** 设备通信器是 host 内存里的版本化结构，拷贝到设备后内核通过指针访问。如果 CUDA graph 捕获时把设备指针烘焙进内核参数，之后重新创建通信器会导致 graph 里的指针失效。这和 nccl_ep 的 RDMA buffer 重分配问题同源。
+**Pitfall two: CUDA graph and device communicators.**The device communicator is a versioned structure in host memory; after being copied to the device, the kernel accesses it through a pointer. If CUDA graph capture bakes the device pointer into kernel parameters, recreating the communicator later will invalidate the pointer in the graph. This is the same root cause as the RDMA buffer reallocation problem in nccl_ep.
 
-**坑三：安全初始化不能和原始 group 混用。** README 警告 [FACT:contrib/nccl4rust/README.md:238-239](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L238-L239)：安全初始化和产生输出的管理调用不能和原始 `nccl-sys` group 状态混用，因为包装层观察不到原始 group 状态。混用会导致包装层的轮询逻辑和原始 group 语义冲突。
+**Pitfall three: safe initialization cannot be mixed with raw groups.**The README warns[FACT:contrib/nccl4rust/README.md:238-239]: safe initialization and managed calls that produce output cannot be mixed with raw`nccl-sys`group state, because the wrapper layer cannot observe raw group state. Mixing them will cause the wrapper layer's polling logic to conflict with raw group semantics.
 
-## nccl_ep：专家并行的 dispatch/combine 原语
+# nccl_ep: dispatch/combine primitives for expert parallelism
 
-### Intuitive Architectural Model：MoE 的「分拣中心」
+## Intuitive model: MoE's "sorting center"
 
-MoE（Mixture of Experts）模型里，每个 token 要被路由到 top-k 个专家。专家分布在不同 GPU 上，所以 token 需要跨 GPU 传输——这就是 dispatch。专家算完后，结果要送回原 token 所在的 GPU——这就是 combine。nccl_ep 就是这套「分拣中心」的通信引擎。
+In MoE (Mixture of Experts) models, each token must be routed to top-k experts. The experts are distributed across different GPUs, so tokens need to be transferred across GPUs—this is dispatch. After the experts compute, the results must be sent back to the GPU where the original token resides—this is combine. nccl_ep is the communication engine for this "sorting center."
 
-如果没有它，每个 MoE 框架都得自己实现 dispatch/combine 的通信逻辑，重复且难以优化。nccl_ep 把它做成 NCCL 生态里的标准原语。
+Without it, every MoE framework would have to implement the dispatch/combine communication logic itself, which is repetitive and difficult to optimize. nccl_ep turns it into a standard primitive in the NCCL ecosystem.
 
-### 两种算法：LL 与 HT
+## Two algorithms: LL and HT
 
-README 说明了两种算法 [FACT:contrib/nccl_ep/README.md:36-40](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L36-L40)：
+The README explains two algorithms[FACT:contrib/nccl_ep/README.md:36-40]：
 
-- **Low-Latency (LL)**：小 batch、延迟敏感（LLM 推理）。用直接点对点 all-to-all 通信。
-- **High-Throughput (HT)**：大 batch 训练和推理预填充。用分层通信——节点内 NVLink 聚合，节点间 RDMA。利用 Hopper 的 warp-specialized pipeline 和 TMA。
+- **Low-Latency (LL)**: small batch, latency-sensitive (LLM inference). Uses direct point-to-point all-to-all communication.
+- **High-Throughput (HT)**: large-batch training and inference prefill. Uses hierarchical communication—intra-node NVLink aggregation, inter-node RDMA. Leverages Hopper's warp-specialized pipeline and TMA.
 
-[INFERENCE] 这两种算法的分野反映了 MoE 推理和训练的不同瓶颈。推理时 batch 小，延迟是主要矛盾，所以 LL 用直接点对点避免聚合开销。训练时 batch 大，带宽是主要矛盾，所以 HT 用分层聚合减少跨节点流量。这是典型的「按工作负载特征选算法」设计。
+> **[Design Inference & Architectural Trade-offs]**
+> The split between these two algorithms reflects the different bottlenecks of MoE inference and training. During inference, the batch is small, and latency is the main contradiction, so LL uses direct point-to-point to avoid aggregation overhead. During training, the batch is large, and bandwidth is the main contradiction, so HT uses hierarchical aggregation to reduce cross-node traffic. This is a typical "choose the algorithm based on workload characteristics" design.
 
-### 核心数据结构：ncclEpGroupConfig_t
+## Core data structure: ncclEpGroupConfig_t
 
-这是 EP 的配置结构，字段很多 [FACT:contrib/nccl_ep/README.md:339-362](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L339-L362)。关键字段：
+This is the EP configuration structure, with many fields[FACT:contrib/nccl_ep/README.md:339-362]. Key fields:
 
-- `size` 和 `version`：ABI 版本检查，和上一章讲的 size-based ABI 同源 [FACT:contrib/nccl_ep/README.md:340-341](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L340-L341)
-- `algorithm`：HT 或 LL [FACT:contrib/nccl_ep/README.md:342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L342)
-- `max_dispatch_tokens_per_rank`：单 rank 最多 dispatch 的 token 数 [FACT:contrib/nccl_ep/README.md:344](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L344)
-- `rdma_buffer_size`：LL 模式的 RDMA 缓冲区大小 [FACT:contrib/nccl_ep/README.md:356-356](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L356-L356)
-- `alloc`：自定义设备内存分配器 [FACT:contrib/nccl_ep/README.md:359](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L359)
+- `size`and`version`: ABI version check, from the same origin as the size-based ABI discussed in the previous chapter[FACT:contrib/nccl_ep/README.md:340-341]
+- `algorithm`: HT or LL[FACT:contrib/nccl_ep/README.md:342]
+- `max_dispatch_tokens_per_rank`: maximum number of tokens dispatched by a single rank[FACT:contrib/nccl_ep/README.md:344]
+- `rdma_buffer_size`: RDMA buffer size in LL mode[FACT:contrib/nccl_ep/README.md:356-356]
+- `alloc`: custom device memory allocator[FACT:contrib/nccl_ep/README.md:359]
 
-[INFERENCE] `rdma_buffer_size` 的 `NCCL_EP_AUTO` 语义值得深挖。README 解释 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：AUTO 模式下缓冲区不在 `ncclEpCreateGroup` 时分配，而是第一次 `ncclEpInitHandle` 时按实际 `(layout, num_topk)` 分配。后续 handle 需要更大缓冲区时会集体重分配。这个「惰性分配」设计避免了用户猜测缓冲区大小，但引入了三个约束 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：
+> **[Design Inference & Architectural Trade-offs]**
+> `rdma_buffer_size`'s`NCCL_EP_AUTO`semantics are worth digging into. The README explains[FACT:contrib/nccl_ep/README.md:396-406]: in AUTO mode, the buffer is not allocated at`ncclEpCreateGroup`, but instead at the first`ncclEpInitHandle`according to the actual`(layout, num_topk)`. When a later handle needs a larger buffer, it will collectively reallocate. This "lazy allocation" design avoids requiring users to guess the buffer size, but introduces three constraints[FACT:contrib/nccl_ep/README.md:396-406]：
 
-1. 所有 rank 必须用相同 `(layout, num_topk)` 同步调用 `ncclEpInitHandle`
-2. 重分配会丢弃旧缓冲区内容，`send_only` 暂存的数据会丢失
-3. CUDA graph 捕获会烘焙 RDMA 基址指针，重分配后必须重新捕获
+1. All ranks must use the same`(layout, num_topk)`synchronous call`ncclEpInitHandle`
 
-**这是本章最重要的生产陷阱之一。** 惰性分配换来了易用性，但把「何时重分配」的复杂度转嫁给了用户。
+2. Reallocation discards the old buffer contents,`send_only`temporarily stored data will be lost
 
-### 张量描述符：静态与动态两种形态
+3. CUDA graph capture bakes in the RDMA base address pointer, and after reallocation it must be recaptured
 
-`ncclEpTensor_t` 是轻量值类型 [FACT:contrib/nccl_ep/README.md:310-332](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L310-L332)。README 展示了两种用法：
+**This is one of the most important production pitfalls in this chapter.**Lazy allocation buys ease of use, but shifts the complexity of "when to reallocate" onto the user.
 
-**静态描述符**（栈上，`NCCL_EP_TENSOR_INIT_INLINE`）[FACT:contrib/nccl_ep/README.md:806-809](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L806-L809)：
+## Tensor descriptors: static and dynamic forms
+
+`ncclEpTensor_t`is a lightweight value type[FACT:contrib/nccl_ep/README.md:310-332]. The README shows two usages:
+
+**Static descriptor**(on the stack,`NCCL_EP_TENSOR_INIT_INLINE`）[FACT:contrib/nccl_ep/README.md:806-809]：
 
 ```c
 ncclEpTensor_t expert_counters = { NCCL_EP_TENSOR_INIT_INLINE,
@@ -158,7 +168,7 @@ ncclEpTensor_t expert_counters = { NCCL_EP_TENSOR_INIT_INLINE,
                                    .sizes = expert_counters_dims };
 ```
 
-**动态描述符**（堆上，`ncclEpTensorAlloc`）[FACT:contrib/nccl_ep/README.md:793-798](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L793-L798)：
+**Dynamic descriptor**(on the heap,`ncclEpTensorAlloc`）[FACT:contrib/nccl_ep/README.md:793-798]：
 
 ```c
 ncclEpTensor_t* topk_idx = nullptr;
@@ -169,15 +179,16 @@ ncclEpTensor_t* topk_idx = nullptr;
 }
 ```
 
-[INFERENCE] 两种形态的区别在 `sizes` 数组的所有权。静态描述符的 `sizes` 是调用者拥有的栈数组，必须活得比描述符久 [FACT:contrib/nccl_ep/README.md:325-326](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L325-L326)。动态描述符的 `sizes` 是库拥有的堆拷贝，由 `ncclEpTensorDestroy` 释放 [FACT:contrib/nccl_ep/README.md:514-514](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L514-L514)。公共结构体持有 `ncclEpTensor_t*` 指针，所以两种形态可以在同一个调用里混用 [FACT:contrib/nccl_ep/README.md:514-514](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L514-L514)。这个设计让简单场景零堆分配，复杂场景有库管理便利。
+> **[Design Inference & Architectural Trade-offs]**
+> The difference between the two forms lies in`sizes`ownership of the array. The static descriptor's`sizes`is a caller-owned stack array, and must outlive the descriptor[FACT:contrib/nccl_ep/README.md:325-326]. The dynamic descriptor's`sizes`is a library-owned heap copy, freed by`ncclEpTensorDestroy`. The public struct holds the[FACT:contrib/nccl_ep/README.md:514-514]pointer, so the two forms can be mixed in the same call`ncclEpTensor_t*`. This design gives zero heap allocation for simple scenarios and library-managed convenience for complex scenarios.[FACT:contrib/nccl_ep/README.md:514-514]Execution modes: synchronous and staged
 
-### 执行模式：同步与分阶段
+## The README's Execution Modes section
 
-README 的 Execution Modes 一节 [FACT:contrib/nccl_ep/README.md:701-741](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L701-L741) 说明了两种模式：
+explains two modes:[FACT:contrib/nccl_ep/README.md:701-741]Synchronous mode
 
-**同步模式**（默认）：整个操作期间占用 GPU 资源，包括等待数据接收的时间 [FACT:contrib/nccl_ep/README.md:705-709](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L705-L709)。
+**(default): occupies GPU resources for the entire operation, including the time spent waiting to receive data**Staged mode[FACT:contrib/nccl_ep/README.md:705-709]。
 
-**分阶段模式**（仅 LL）：操作拆成 send 和 receive 两阶段 [FACT:contrib/nccl_ep/README.md:718-726](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L718-L726)。用 `send_only = 1` 发起，数据传输启动后释放 GPU 资源，应用可以用这些资源做计算，最后用 `ncclEpComplete` 完成 [FACT:contrib/nccl_ep/README.md:728-741](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L728-L741)。
+**(LL only): the operation is split into send and receive phases**. Initiated with[FACT:contrib/nccl_ep/README.md:718-726], GPU resources are released after data transfer starts, the application can use these resources for computation, and finally`send_only = 1`is used to complete`ncclEpComplete`copy[FACT:contrib/nccl_ep/README.md:728-741]。
 
 ```mermaid
 sequenceDiagram
@@ -198,91 +209,97 @@ sequenceDiagram
     EP-->>App: 返回，数据就绪
 ```
 
-这张时序图展示了分阶段模式的核心价值：`send_only` 发起后立即返回，SM 资源被释放给计算，等应用做完其他工作再调 `ncclEpComplete` 等待接收完成。这是「计算-通信重叠」的经典模式。
+returns immediately after initiation, SM resources are released for computation, and after the application finishes other work it calls`send_only`to wait for receive completion. This is the classic "compute-communication overlap" pattern.`ncclEpComplete`Production pitfalls
 
-### 生产避坑
+## Pitfall one:
 
-**坑一：`ncclEpInitHandle` 的条件集体性。** AUTO 模式下，`ncclEpInitHandle` 是条件集体调用 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)。如果某个 rank 因为 layout 不同触发了重分配，其他 rank 必须同步参与。不同步会导致死锁或数据错乱。
+**conditional collectivity of`ncclEpInitHandle`. In AUTO mode,**is a conditional collective call`ncclEpInitHandle`. If some rank triggers reallocation due to a different layout, the other ranks must participate synchronously. Lack of synchronization will cause deadlock or data corruption.[FACT:contrib/nccl_ep/README.md:396-406]Pitfall two: prohibited during CUDA graph capture
 
-**坑二：CUDA graph 捕获期间禁止 `ncclEpInitHandle`。** README 明确警告 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：AUTO 模式下不能在 `cudaStreamBeginCapture` 和 `cudaStreamEndCapture` 之间调用 `ncclEpInitHandle`。因为重分配会改变 RDMA 基址，而 graph 捕获已经烘焙了旧指针。
+**The README explicitly warns`ncclEpInitHandle`。**: in AUTO mode, you must not call[FACT:contrib/nccl_ep/README.md:396-406]between`cudaStreamBeginCapture`and`cudaStreamEndCapture`. Because reallocation changes the RDMA base address, while graph capture has already baked in the old pointer.`ncclEpInitHandle`Pitfall three: guard overhead.
 
-**坑三：guard 开销。** README 提到 [FACT:contrib/nccl_ep/README.md:299-303](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L299-L303)：EP 默认给内部通信缓冲区加 guard，防止相邻 dispatch/combine 调用互相破坏数据。高级用户如果已保证连续操作不会竞争，可以用 `NCCL_EP_DISABLE_GUARD=1` 关闭以回收开销。但关错了会导致数据静默损坏。
+**The README mentions**: EP adds a guard to internal communication buffers by default to prevent adjacent dispatch/combine calls from corrupting each other's data. Advanced users who have already ensured that consecutive operations will not contend can use[FACT:contrib/nccl_ep/README.md:299-303]to disable it and reclaim the overhead. But disabling it incorrectly will cause silent data corruption.`NCCL_EP_DISABLE_GUARD=1`nccl_ubx: fused collective communication and symmetric allocator
 
-## nccl_ubx：融合集合通信与对称分配器
+# Intuitive model: also hand over the "packing and unpacking before and after moving" to the moving company
 
-### Intuitive Architectural Model：把「搬家前后的打包拆包」也交给搬家公司
+## 直觉模型：把「搬家前后的打包拆包」也交给搬家公司
 
-普通集合通信只负责搬数据。但实际模型里，AllReduce 之前往往要做残差加法，之后要做 RMSNorm。如果这些操作分开做，数据要在显存里多走几趟。nccl_ubx 的思路是：把残差加法、RMSNorm、mxfp8 量化都融合进集合通信内核 [FACT:contrib/nccl_ubx/README.md:6-9](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L6-L9)。就像搬家公司不仅搬箱子，还帮你打包和拆包，一趟搞定。
+Ordinary collective communication is only responsible for moving data. But in real models, residual addition often needs to be done before AllReduce, and RMSNorm after it. If these operations are done separately, the data has to make extra trips through GPU memory. The idea of nccl_ubx is: fuse residual addition, RMSNorm, and mxfp8 quantization into the collective communication kernel[FACT:contrib/nccl_ubx/README.md:6-9]. It's like a moving company not only moving boxes, but also helping you pack and unpack, all in one trip.
 
-### 硬件前提：必须有 NVLink 多播
+## Hardware prerequisite: NVLink multicast is required
 
-README 明确要求 SM 9.0+（Hopper/Blackwell），且 MC 内核路径需要 NVLink 多播硬件 [FACT:contrib/nccl_ubx/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L24-L24)。SM 8.0（A100）不支持，因为 Ampere 没有 NVLink 多播硬件，`multimem.*` 内联 PTX 无法为 arch 8.0 汇编 [FACT:contrib/nccl_ubx/README.md:24-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L24-L24)。
+The README explicitly requires SM 9.0+ (Hopper/Blackwell), and the MC kernel path requires NVLink multicast hardware[FACT:contrib/nccl_ubx/README.md:24-24]. SM 8.0 (A100) is not supported, because Ampere does not have NVLink multicast hardware,`multimem.*`and inline PTX cannot be assembled for arch 8.0[FACT:contrib/nccl_ubx/README.md:24-24]。
 
-[INFERENCE] 这解释了为什么 ubx 是「实验性」的——它依赖 Hopper 才引入的 NVLink 多播能力。`multimem.*` 指令允许一个 GPU 用一条指令把数据写到多个 GPU 的对称地址，这是硬件加速的集合通信基础。没有这个硬件，ubx 的核心优化就不成立。
+> **[Design Inference & Architectural Trade-offs]**
+> This explains why ubx is "experimental" — it depends on the NVLink multicast capability introduced only with Hopper.`multimem.*`The instruction allows one GPU to write data to the symmetric addresses of multiple GPUs with a single instruction, which is the hardware-accelerated foundation of collective communication. Without this hardware, the core optimization of ubx does not hold.
 
-### 对称分配器：让 PyTorch 张量变成 NCCL 窗口
+## Symmetric allocator: turning PyTorch tensors into NCCL windows
 
-ubx 的核心是自定义对称分配器 [FACT:contrib/nccl_ubx/README.md:11-14](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L11-L14)：
+The core of ubx is a custom symmetric allocator[FACT:contrib/nccl_ubx/README.md:11-14]：
 
 > A central piece of the design is a custom symmetric allocator that provides zero-copy collective input/output buffers while remaining easy to plug into existing PyTorch code: tensors are ordinary `torch.Tensor` instances backed by an NCCL-managed symmetric window.
 
-[INFERENCE] 这是 ubx 最巧妙的地方。NCCL 的对称内存要求所有 rank 用同一套虚拟地址访问缓冲区（第 14 章讲过）。但 PyTorch 用户习惯用 `torch.Tensor`。ubx 让 `torch.Tensor` 的底层存储直接是 NCCL 对称窗口，这样用户代码不用改，但集合通信可以零拷贝——输入输出缓冲区就是对称内存本身，不需要额外的拷贝。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the most ingenious part of ubx. NCCL's symmetric memory requires all ranks to access the buffer using the same set of virtual addresses (as discussed in Chapter 14). But PyTorch users are used to using`torch.Tensor`. ubx makes`torch.Tensor`the underlying storage directly be an NCCL symmetric window, so user code does not need to change, but collective communication can be zero-copy — the input and output buffers are the symmetric memory itself, with no extra copy needed.
 
-### 集合通信变体与自动选择
+## Collective communication variants and automatic selection
 
-README 的 Available collectives 表格 [FACT:contrib/nccl_ubx/README.md:90-90](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L90-L90)：
+The Available collectives table in the README[FACT:contrib/nccl_ubx/README.md:90-90]：
 
 | Op | Variants | Auto-select |
-|---|---|---|
+| --- | --- | --- |
 | AllReduce | `mc`, `uc`, `lamport`, `auto` | Lamport ≤ 0.25 MB, else MC |
 | AllToAll | `uc`, `lamport`, `auto` | Lamport ≤ 0.25 MB, else UC |
 | AllGather | `mc` | — |
 
-[INFERENCE] 三种变体的区别：`mc` 用 NVLink 多播硬件，`uc` 用普通单播，`lamport` 是低延迟算法。自动选择按 0.25 MB 分界——小消息用 Lamport 低延迟，大消息用 MC/UC 高带宽。这个阈值和 NCCL 核心的 tuning 逻辑类似，但 ubx 简化成了固定阈值。
+> **[Design Inference & Architectural Trade-offs]**
+> The differences among the three variants:`mc`uses NVLink multicast hardware,`uc`uses ordinary unicast,`lamport`is a low-latency algorithm. Automatic selection uses a 0.25 MB threshold — small messages use Lamport low latency, large messages use MC/UC high bandwidth. This threshold is similar to the tuning logic in the NCCL core, but ubx simplifies it to a fixed threshold.
 
-### 融合操作：residual + RMSNorm
+## Fused operations: residual + RMSNorm
 
-README 提到 [FACT:contrib/nccl_ubx/README.md:103-103](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L103-L103)：
+The README mentions[FACT:contrib/nccl_ubx/README.md:103-103]：
 
 > `SymmAllocator.allreduce_mc()` and `allreduce_lamport()` accept optional `gamma`/`residual_in` parameters to fuse residual addition + RMSNorm into the same kernel.
 
-[INFERENCE] 这是 ubx 的核心卖点。传统流程是：AllReduce → 残差加法 → RMSNorm，三次显存读写。融合后一次内核完成，显存带宽节省 2/3。对带宽受限的大模型训练，这是实打实的加速。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the core selling point of ubx. The traditional flow is: AllReduce → residual addition → RMSNorm, with three rounds of GPU memory reads and writes. After fusion, it is completed in one kernel, saving 2/3 of GPU memory bandwidth. For bandwidth-constrained large-model training, this is a real speedup.
 
-### MoE token dispatch + mxfp8 量化
+## MoE token dispatch + mxfp8 quantization
 
-README 描述了 `a2av_token_bf16_mxfp8` [FACT:contrib/nccl_ubx/README.md:103-103](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L103-L103)：
+The README describes`a2av_token_bf16_mxfp8` [FACT:contrib/nccl_ubx/README.md:103-103]：
 
 > a single GPU kernel that routes bf16 tokens to remote ranks while quantizing them to mxfp8 (E8M0 scale per 32 elements) on the fly.
 
-[INFERENCE] 这个内核把「路由 + 量化」融合。bf16 是 16 位，mxfp8 是 8 位，量化后数据量减半，跨节点传输带宽需求减半。在传输前量化比传输后量化更优——省的是网络带宽而非显存带宽。这是 MoE 推理的关键优化。
+> **[Design Inference & Architectural Trade-offs]**
+> This kernel fuses "routing + quantization." bf16 is 16-bit, mxfp8 is 8-bit, and after quantization the data volume is halved, so the cross-node transmission bandwidth requirement is halved. Quantizing before transmission is better than quantizing after transmission — what is saved is network bandwidth rather than GPU memory bandwidth. This is a key optimization for MoE inference.
 
-### 生产避坑
+## Production pitfalls
 
-**坑一：`TORCH_CUDA_ARCH_LIST` 必须带 `a` 后缀。** README 强调 [FACT:contrib/nccl_ubx/README.md:47-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L47-L56)：用 `a` 后缀确保访问完整 `multimem.*` 指令集。有些加速专用变体在普通 `9.0`/`10.0` 上不可用，未来内核用这些变体会静默降性能或汇编失败。
+**Pitfall one:`TORCH_CUDA_ARCH_LIST`must include the`a`suffix.**The README emphasizes[FACT:contrib/nccl_ubx/README.md:47-56]: use the`a`suffix to ensure access to the complete`multimem.*`instruction set. Some acceleration-specific variants are unavailable on ordinary`9.0`/`10.0`, and future kernels using these variants will silently degrade performance or fail to assemble.
 
-**坑二：`UBX_BUILD_TIMEOUT` 的运行时开销。** README 说明 [FACT:contrib/nccl_ubx/README.md:47-56](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L47-L56)：设为 1 会在内核侧编译进 spinloop 超时，增加运行时开销（额外的 `clock64()` 检查和超时时的 `printf`）。只在排查挂死时开启。
+**Pitfall two:`UBX_BUILD_TIMEOUT`runtime overhead.**The README states[FACT:contrib/nccl_ubx/README.md:47-56]: setting it to 1 compiles a spinloop timeout into the kernel side, increasing runtime overhead (extra`clock64()`checks and`printf`on timeout). Only enable it when troubleshooting hangs.
 
-**坑三：`NCCL_NVLS_ENABLE=0` 的降级。** README 列出这个环境变量 [FACT:contrib/nccl_ubx/README.md:202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ubx/README.md#L202)：设为 0 可以在没有 NVLink 多播的情况下运行。但 MC 内核路径会失效，只剩 UC/Lamport 变体，性能大幅下降。
+**Pitfall three:`NCCL_NVLS_ENABLE=0`degradation.**The README lists this environment variable[FACT:contrib/nccl_ubx/README.md:202]: setting it to 0 allows running without NVLink multicast. But the MC kernel path becomes unavailable, leaving only the UC/Lamport variants, and performance drops significantly.
 
-## nccl_checkpoint：LD_PRELOAD 拦截与状态重放
+# nccl_checkpoint: LD_PRELOAD interception and state replay
 
-### Intuitive Architectural Model：给通信域拍快照
+## Intuitive model: taking a snapshot of the communication domain
 
-训练任务跑了几小时，突然要迁移到另一台机器，或者要保存状态以便恢复。普通检查点只保存模型权重和优化器状态，但 NCCL 通信域的状态（rank 编号、连接、缓冲区）没法直接序列化。nccl_checkpoint 的思路是：拦截所有 NCCL 调用，记录初始化步骤，恢复时重放这些步骤 [FACT:contrib/nccl_checkpoint/README.md:3-7](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L3-L7)。
+A training job runs for several hours, and suddenly it needs to be migrated to another machine, or its state needs to be saved for recovery. Ordinary checkpoints only save model weights and optimizer state, but the state of the NCCL communication domain (rank IDs, connections, buffers) cannot be serialized directly. The idea of nccl_checkpoint is: intercept all NCCL calls, record the initialization steps, and replay these steps during recovery[FACT:contrib/nccl_checkpoint/README.md:3-7]。
 
-就像录下你组装家具的每一步，搬家后按录像重新组装，而不是试图把组装好的家具整体搬走。
+It's like recording every step of assembling furniture, then reassembling it according to the recording after moving, instead of trying to move the assembled furniture as a whole.
 
-### Core Mechanics：LD_PRELOAD 符号拦截
+## Core mechanism: LD_PRELOAD symbol interception
 
-README 的 Design 一节 [FACT:contrib/nccl_checkpoint/README.md:17-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L17-L20)：
+The Design section of the README[FACT:contrib/nccl_checkpoint/README.md:17-20]：
 
 > The application is launched with `LD_PRELOAD=/path/to/libnccl-checkpoint-shim.so` in the environment. This allows the library to intercept all calls to NCCL functions to capture all resource initialization steps.
 
-[INFERENCE] `LD_PRELOAD` 是 Linux 动态链接器的机制：在应用正常加载共享库之前先加载指定的 `.so`。如果这个 `.so` 里定义了和 NCCL 同名的符号（比如 `ncclCommInitRank`），动态链接器会优先用 `.so` 里的版本。这样 shim 就能拦截所有 NCCL 调用，记录参数，然后在恢复时重放。
+> **[Design Inference & Architectural Trade-offs]**
+> `LD_PRELOAD`is a mechanism of the Linux dynamic linker: load the specified`.so`before the application normally loads shared libraries. If this`.so`defines symbols with the same names as NCCL (such as`ncclCommInitRank`), the dynamic linker will preferentially use the version in`.so`. In this way, the shim can intercept all NCCL calls, record parameters, and then replay them during recovery.
 
-### 检查点流程
+## Checkpoint flow
 
-README 的 Python 示例 [FACT:contrib/nccl_checkpoint/README.md:44-58](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L44-L58) 展示了完整流程：
+The Python example in the README[FACT:contrib/nccl_checkpoint/README.md:44-58]shows the complete workflow:
 
 ```python
 nccl_checkpoint.checkpoint_prepare()
@@ -294,51 +311,61 @@ drv.cuCheckpointProcessUnlock(os.getpid(), None)
 nccl_checkpoint.checkpoint_restore()
 ```
 
-[INFERENCE] 流程分四步：
-1. `checkpoint_prepare()`：销毁所有 communicator，让 CUDA Checkpoint 和 CRIU 能安全 dump 进程状态 [FACT:contrib/nccl_checkpoint/README.md:25-27](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L25-L27)
-2. `cuCheckpointProcessLock/Checkpoint`：CUDA 驱动锁定进程并做检查点
-3. CRIU dump：外部工具把进程内存和文件描述符 dump 到磁盘
-4. `cuCheckpointProcessRestore/Unlock` + `checkpoint_restore()`：恢复进程，重放 NCCL 配置 [FACT:contrib/nccl_checkpoint/README.md:29-31](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L29-L31)
+> **[Design Inference & Architectural Trade-offs]**
+> The workflow has four steps:
 
-### Redis KVS：跨机器 rendezvous
+1. `checkpoint_prepare()`: Destroy all communicators so that CUDA Checkpoint and CRIU can safely dump process state[FACT:contrib/nccl_checkpoint/README.md:25-27]
 
-README 解释了为什么需要 Redis [FACT:contrib/nccl_checkpoint/README.md:33-38](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L33-L38)：
+2. `cuCheckpointProcessLock/Checkpoint`: CUDA driver locks the process and performs checkpointing
+
+3. CRIU dump: External tools dump process memory and file descriptors to disk
+
+4. `cuCheckpointProcessRestore/Unlock` + `checkpoint_restore()`: Restore the process and replay NCCL configuration[FACT:contrib/nccl_checkpoint/README.md:29-31]
+
+## Redis KVS: Cross-machine rendezvous
+
+The README explains why Redis is needed[FACT:contrib/nccl_checkpoint/README.md:33-38]：
 
 > Because it is useful to restore on different hardware, IP addresses may have changed. There is no convenient way to directly inform the NCCL Checkpoint library of all peer addresses during the restore process, so the library depends on a temporary Redis Key-Value store to be made available.
 
-[INFERENCE] 恢复时可能换机器，IP 变了。NCCL 通信域重建需要知道所有 peer 的新地址。但 shim 没法直接知道这些地址，所以用一个 Redis KVS 做 rendezvous——所有进程把新地址写到 KVS，从 KVS 读其他进程的地址。这就像搬家后大家约定在一个公共留言板上交换新地址。
+> **[Design Inference & Architectural Trade-offs]**
+> During recovery, the machine may change and the IP may change. Rebuilding the NCCL communication domain requires knowing the new addresses of all peers. But the shim cannot directly know these addresses, so a Redis KVS is used for rendezvous—all processes write their new addresses to the KVS and read other processes' addresses from the KVS. This is like after moving, everyone agrees to exchange new addresses on a public message board.
 
-README 说明 Redis 只在恢复引导阶段需要 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)，`checkpoint_restore()` 返回后就可以停掉。
+The README states that Redis is only needed during the recovery bootstrap phase[FACT:contrib/nccl_checkpoint/README.md:221-221]，`checkpoint_restore()`After returning, it can be stopped.
 
-### 限制：三个不支持
+## Limitations: Three unsupported cases
 
-README 的 Limitations 一节 [FACT:contrib/nccl_checkpoint/README.md:119-129](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L119-L129) 列了三个限制：
+The Limitations section of the README[FACT:contrib/nccl_checkpoint/README.md:119-129]lists three limitations:
 
-1. `ncclWinGetUserPtr()` 返回的指针在恢复后无效 [FACT:contrib/nccl_checkpoint/README.md:125-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L125-L126)
-2. 不支持 CUDA graph 捕获 [FACT:contrib/nccl_checkpoint/README.md:136-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L136-L136)
-3. 不支持设备 API——`ncclDevComm` 对象和设备可见的 `ncclWindow_t` 值无法恢复 [FACT:contrib/nccl_checkpoint/README.md:136-136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L136-L136)
+1. `ncclWinGetUserPtr()`The returned pointer is invalid after recovery[FACT:contrib/nccl_checkpoint/README.md:125-126]
 
-[INFERENCE] 第三个限制最严重。设备 API 是 NCCL 新方向（第 19 章讲的 DevComm），但 checkpoint 不支持。这意味着用设备 API 的应用（比如 nccl_ep、nccl_ubx）无法用 checkpoint 恢复。这是生态碎片化的体现——新特性跑得快，但可靠性工具跟不上。
+2. CUDA graph capture is not supported[FACT:contrib/nccl_checkpoint/README.md:136-136]
 
-### 生产避坑
+3. Device API is not supported—`ncclDevComm`objects and device-visible`ncclWindow_t`values cannot be restored[FACT:contrib/nccl_checkpoint/README.md:136-136]
 
-**坑一：`NCCL_CHECKPOINT_KVS_PATH` 在检查点前设置，恢复时不可改。** README 警告 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)：这个环境变量在检查点准备阶段不用，但会被捕获进检查点，恢复时无法轻易修改。所以必须在检查点前就设好，且恢复环境里 Redis 地址要匹配。
+> **[Design Inference & Architectural Trade-offs]**
+> The third limitation is the most serious. The device API is a new direction for NCCL (DevComm discussed in Chapter 19), but checkpointing does not support it. This means applications using the device API (such as nccl_ep, nccl_ubx) cannot be recovered with checkpointing. This reflects ecosystem fragmentation—new features move fast, but reliability tools cannot keep up.
 
-**坑二：`NCCL_CHECKPOINT_KVS_TIMEOUT` 只覆盖 shim 的 Redis rendezvous。** README 说明 [FACT:contrib/nccl_checkpoint/README.md:221-221](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L221-L221)：默认 300 秒。一旦 communicator 重放进入 NCCL 传输建立阶段，底层 NCCL 传输调用用它们自己的行为，可能需要传输特定的诊断。也就是说，超时只保护 Redis 阶段，传输建立阶段挂死要靠 `NCCL_DEBUG` 排查。
+## Production Pitfalls
 
-**坑三：NCCL 版本必须匹配。** README 要求 NCCL 2.31.0 或更新 [FACT:contrib/nccl_checkpoint/README.md:158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L158)，且建议 `NCCL_SRC` 路径里的 NCCL 版本精确匹配运行时 NCCL 库版本 [FACT:contrib/nccl_checkpoint/README.md:156-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L156-L158)。版本不匹配会导致重放时结构体布局错位。
+**Pitfall One:`NCCL_CHECKPOINT_KVS_PATH`Set before checkpointing; cannot be changed during recovery.**The README warns[FACT:contrib/nccl_checkpoint/README.md:221-221]: This environment variable is not used during the checkpoint preparation phase, but it will be captured into the checkpoint and cannot be easily modified during recovery. Therefore, it must be set before checkpointing, and the Redis address in the recovery environment must match.
 
-## 设计思考：Surrounding Ecosystem & Multi-Language Bindings的三种模式
+**Pitfall Two:`NCCL_CHECKPOINT_KVS_TIMEOUT`Only covers the shim's Redis rendezvous.**The README states[FACT:contrib/nccl_checkpoint/README.md:221-221]: Default is 300 seconds. Once communicator replay enters the NCCL transport establishment phase, the underlying NCCL transport calls use their own behavior and may require transport-specific diagnostics. In other words, the timeout only protects the Redis phase; if the transport establishment phase hangs, you need to`NCCL_DEBUG`troubleshoot.
 
-回顾这五个项目，可以归纳出 NCCL Surrounding Ecosystem & Multi-Language Bindings的三种模式：
+**Pitfall Three: NCCL version must match.**The README requires NCCL 2.31.0 or newer[FACT:contrib/nccl_checkpoint/README.md:158], and recommends`NCCL_SRC`that the NCCL version in the path exactly matches the runtime NCCL library version[FACT:contrib/nccl_checkpoint/README.md:156-158]. Version mismatch will cause struct layout misalignment during replay.
 
-**模式一：语言绑定（nccl4py、nccl4rust）。** 核心挑战是所有权和生命周期。C 的 ABI 没有所有权语义，绑定层要自己补。nccl4py 用 Cython 分层，nccl4rust 用 RAII + `unsafe` 边界。共同点是：**把版本差异隔离在指针背后**——nccl4rust 用指针传 DevComm，nccl4py 用命名空间包隔离版本。
+# Design Reflection: Three Modes of Ecosystem Extension
 
-**模式二：设备 API 扩展（nccl_ep、nccl_ubx）。** 核心挑战是 ABI 版本管理和资源生命周期。nccl_ep 用 size-based ABI（上一章详述），nccl_ubx 用对称分配器。共同点是：**惰性分配 + 集体重分配**——nccl_ep 的 RDMA buffer 和 nccl_ubx 的对称池都是按需分配，但重分配需要所有 rank 同步。
+Reviewing these five projects, we can summarize three modes of NCCL ecosystem extension:
 
-**模式三：符号拦截（nccl_checkpoint）。** 核心挑战是状态捕获和重放。用 `LD_PRELOAD` 拦截所有 NCCL 调用，记录初始化步骤，恢复时重放。这种模式不改 NCCL 核心，但能透明地给现有应用加检查点能力。
+**Mode One: Language bindings (nccl4py, nccl4rust).**The core challenge is ownership and lifecycle. C's ABI has no ownership semantics, so the binding layer must add them itself. nccl4py uses Cython layering, nccl4rust uses RAII +`unsafe`boundaries. The common point is:**isolating version differences behind pointers**—nccl4rust passes DevComm via pointers, nccl4py isolates versions with namespace packages.
 
-[INFERENCE] 三种模式的共同约束是 **NCCL 版本兼容性**。所有项目都要求精确匹配的 NCCL 版本，因为 NCCL 的 ABI 在演进。这反映了 NCCL 生态的一个根本张力：核心快速迭代，但周边项目需要稳定性。size-based ABI、指针传递、命名空间包都是缓解这个张力的技术手段。
+**Mode Two: Device API extensions (nccl_ep, nccl_ubx).**The core challenge is ABI version management and resource lifecycle. nccl_ep uses size-based ABI (detailed in the previous chapter), nccl_ubx uses a symmetric allocator. The common point is:**lazy allocation + collective reallocation**—nccl_ep's RDMA buffer and nccl_ubx's symmetric pool are both allocated on demand, but reallocation requires synchronization across all ranks.
+
+**Mode Three: Symbol interception (nccl_checkpoint).**The core challenge is state capture and replay. Using`LD_PRELOAD`to intercept all NCCL calls, record initialization steps, and replay during recovery. This mode does not modify the NCCL core, but can transparently add checkpointing capability to existing applications.
+
+> **[Design Inference & Architectural Trade-offs]**
+> The common constraint of the three modes is**NCCL version compatibility**. All projects require an exact matching NCCL version because NCCL's ABI is evolving. This reflects a fundamental tension in the NCCL ecosystem: the core iterates rapidly, but surrounding projects need stability. Size-based ABI, pointer passing, and namespace packages are all technical means to alleviate this tension.
 
 ```mermaid
 flowchart TD
@@ -347,12 +374,12 @@ flowchart TD
     q1 -->|"新通信模式"| dev["设备 API 扩展"]
     q1 -->|"可靠性"| ckpt["符号拦截"]
     lang --> q2{"性能敏感?"}
-    q2 -->|"是"| cython["Cython 底层 + Python 高层<br/>nccl4py"]
-    q2 -->|"否"| raii["RAII 包装<br/>nccl4rust"]
+    q2 -->|"是"| cython["Cython 底层 + Python 高层nccl4py"]
+    q2 -->|"否"| raii["RAII 包装nccl4rust"]
     dev --> q3{"需要 MoE?"}
-    q3 -->|"是"| ep["dispatch/combine<br/>nccl_ep"]
-    q3 -->|"否"| ubx["融合集合通信<br/>nccl_ubx"]
-    ckpt --> preload["LD_PRELOAD 拦截<br/>nccl_checkpoint"]
+    q3 -->|"是"| ep["dispatch/combinenccl_ep"]
+    q3 -->|"否"| ubx["融合集合通信nccl_ubx"]
+    ckpt --> preload["LD_PRELOAD 拦截nccl_checkpoint"]
     cython --> abi{"ABI 版本管理"}
     raii --> abi
     ep --> abi
@@ -363,72 +390,66 @@ flowchart TD
     abi -->|"命名空间包"| safe
 ```
 
-这张决策图展示了扩展 NCCL 的选择路径。无论走哪条路，最终都要面对 ABI 版本管理这个核心问题，而三种技术手段（指针传递、size-based ABI、命名空间包）都是把版本差异隔离在稳定接口背后。
+This decision diagram shows the path for choosing NCCL extensions. Whichever path you take, you ultimately face the core issue of ABI version management, and the three technical means (pointer passing, size-based ABI, namespace packages) all isolate version differences behind stable interfaces.
 
-## 本章Summary
+# Chapter Summary
 
-本章剖析了 NCCL 生态的五个周边项目：
+This chapter analyzed five peripheral projects in the NCCL ecosystem:
 
-- **nccl4py** 用 Cython 分层 + PEP 420 命名空间包，让 Python 生态能零冲突地扩展 `nccl.*` 子包。
-- **nccl4rust** 用 RAII 所有权 + 指针传递设备通信器，把版本化 C 结构体布局隔离在内核 ABI 之外。
-- **nccl_ep** 用 LL/HT 双算法 + 惰性 RDMA 缓冲区分配，为 MoE 提供 dispatch/combine 原语，但引入了条件集体调用和 CUDA graph 失效的约束。
-- **nccl_ubx** 用对称分配器 + 内核融合，把残差加法、RMSNorm、mxfp8 量化折进集合通信内核，但依赖 Hopper+ 的 NVLink 多播硬件。
-- **nccl_checkpoint** 用 `LD_PRELOAD` 符号拦截 + Redis rendezvous，实现跨机器通信域检查点，但不支持设备 API 和 CUDA graph。
+- **nccl4py**Use Cython layering + PEP 420 namespace packages to let the Python ecosystem extend with zero conflicts`nccl.*`subpackages.
+- **nccl4rust**Use RAII ownership + pointer-passed device communicators to isolate versioned C struct layouts outside the kernel ABI.
+- **nccl_ep**Use LL/HT dual algorithms + lazy RDMA buffer allocation to provide dispatch/combine primitives for MoE, but this introduces constraints of conditional collective calls and CUDA graph invalidation.
+- **nccl_ubx**Use symmetric allocators + kernel fusion to fold residual addition, RMSNorm, and mxfp8 quantization into collective communication kernels, but this depends on Hopper+ NVLink multicast hardware.
+- **nccl_checkpoint**Use`LD_PRELOAD`symbol interception + Redis rendezvous to implement cross-machine communication domain checkpointing, but it does not support device APIs and CUDA graphs.
 
-## 本章思考与自测
+# Chapter Review and Self-Test
 
-<details><summary>Q1: nccl_ep 的 `rdma_buffer_size = NCCL_EP_AUTO` 模式下，如果 rank 0 先调用了 `ncclEpInitHandle` 且触发了缓冲区重分配，而 rank 1 因为 layout 不同没有触发重分配，会发生什么？请结合 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406) 的约束分析。</summary>
+Q1: In nccl_ep's`rdma_buffer_size = NCCL_EP_AUTO`mode, if rank 0 first calls`ncclEpInitHandle`and triggers buffer reallocation, while rank 1 does not trigger reallocation because its layout is different, what happens? Please analyze in combination with[FACT:contrib/nccl_ep/README.md:396-406]'s constraints.
 
-**参考解析**：README 明确说明 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)：`All ranks must call ncclEpInitHandle in lockstep with the same (layout, num_topk)`。AUTO 模式下 `ncclEpInitHandle` 是条件集体调用——是否触发重分配取决于该 handle 的 `(layout, num_topk)` 是否需要比当前缓冲区更大的空间。
+**Reference Analysis**: The README explicitly states[FACT:contrib/nccl_ep/README.md:396-406]：`All ranks must call ncclEpInitHandle in lockstep with the same (layout, num_topk)`. In AUTO mode,`ncclEpInitHandle`is a conditional collective call—whether reallocation is triggered depends on whether that handle's`(layout, num_topk)`requires more space than the current buffer.
 
-如果 rank 0 的 layout 需要更大缓冲区触发重分配，而 rank 1 的 layout 不需要，那么 rank 0 会执行「deregister window → free → ncclMemAlloc → register」这套集体操作 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)，而 rank 1 不会。这导致两个问题：
+If rank 0's layout requires a larger buffer and triggers reallocation, while rank 1's layout does not, then rank 0 will execute the collective operation sequence "deregister window → free → ncclMemAlloc → register"[FACT:contrib/nccl_ep/README.md:396-406], while rank 1 will not. This causes two problems:
 
-1. **集合操作不匹配**：NCCL 的 window deregister/register 是集合操作，需要所有 rank 参与。rank 0 单方面执行会导致 rank 1 在后续通信中引用旧的窗口句柄，而 rank 0 已经换了新窗口，通信失败或数据错乱。
+1. **Collective operation mismatch**: NCCL's window deregister/register are collective operations and require all ranks to participate. Rank 0 unilaterally executing them will cause rank 1 to reference the old window handle in subsequent communication, while rank 0 has already switched to a new window, resulting in communication failure or data corruption.
 
-2. **基址不一致**：重分配后 rank 0 的 RDMA 基址变了，rank 1 没变。虽然 README 说「recorded layout offsets on every live handle are pure offsets relative to the group's rdma_buffer and resolve correctly against the new base」[FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)，但这只在所有 rank 都重分配的前提下成立。rank 1 的基址没变，rank 0 的变了，跨 rank 的地址解析会错位。
+2. **Base address inconsistency**: After reallocation, rank 0's RDMA base address changes, while rank 1's does not. Although the README says "recorded layout offsets on every live handle are pure offsets relative to the group's rdma_buffer and resolve correctly against the new base"[FACT:contrib/nccl_ep/README.md:396-406], this only holds under the premise that all ranks reallocate. Rank 1's base address has not changed, while rank 0's has, so cross-rank address resolution will be misaligned.
 
-正确做法是：所有 rank 用相同的 `(layout, num_topk)` 同步调用 `ncclEpInitHandle`，确保重分配决策一致。如果无法保证，应该用显式 `rdma_buffer_size > 0` 模式，在 `ncclEpCreateGroup` 时一次性分配足够大的缓冲区，避免运行期重分配 [FACT:contrib/nccl_ep/README.md:396-406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/README.md#L396-L406)。
+The correct approach is: all ranks use the same`(layout, num_topk)`to synchronously call`ncclEpInitHandle`, ensuring consistent reallocation decisions. If this cannot be guaranteed, explicit`rdma_buffer_size > 0`mode should be used, allocating a sufficiently large buffer at`ncclEpCreateGroup`time to avoid runtime reallocation[FACT:contrib/nccl_ep/README.md:396-406]。
 
-</details>
+Q2: Why does nccl4rust pass`ncclDevComm_t`to device kernels by pointer rather than by value? If changed to pass-by-value, what happens after NCCL upgrades the struct layout? Please analyze in combination with[FACT:contrib/nccl4rust/README.md:211-219].
 
-<details><summary>Q2: nccl4rust 为什么用指针而非值传递 `ncclDevComm_t` 给设备内核？如果改成值传递，在 NCCL 升级结构体布局后会发生什么？请结合 [FACT:contrib/nccl4rust/README.md:211-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L211-L219) 分析。</summary>
+**Reference Analysis**: The README explicitly states[FACT:contrib/nccl4rust/README.md:217-219]：`Kernels construct nccl_device::DevComm from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.`
 
-**参考解析**：README 明确说明 [FACT:contrib/nccl4rust/README.md:217-219](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl4rust/README.md#L217-L219)：`Kernels construct nccl_device::DevComm from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.`
+`ncclDevComm_t`is a versioned public struct, and fields may differ across NCCL versions. If passed by value:
 
-`ncclDevComm_t` 是版本化的公共结构体，不同 NCCL 版本字段可能不同。如果用值传递：
+1. **Kernel ABI binds to struct layout**: When kernel parameters are passed by value, the compiler bakes the entire struct's byte layout into the kernel's calling convention. After NCCL upgrades the struct (adding fields, changing field order, changing alignment), already-compiled kernels still parse parameters according to the old layout, causing field misalignment.
 
-1. **内核 ABI 绑定结构体布局**：内核参数按值传递时，编译器会把整个结构体的字节布局烘焙进内核的调用约定。NCCL 升级结构体（加字段、改字段顺序、改对齐）后，已编译的内核仍然按旧布局解析参数，导致字段错位。
+2. **All kernels must be recompiled**: Every NCCL upgrade requires recompiling all kernels that use device communicators. For training jobs deployed on a large number of machines, this is a huge operational burden.
 
-2. **必须重编所有内核**：每次 NCCL 升级都要重新编译所有使用设备通信器的内核。对于部署在大量机器上的训练任务，这是巨大的运维负担。
+3. **Cross-version incompatibility**: If the host side creates a communicator with the new NCCL, while the device-side kernel is compiled with the old NCCL, pass-by-value will cause the kernel to read incorrect fields.
 
-3. **跨版本不兼容**：如果 host 侧用新 NCCL 创建通信器，设备侧内核用旧 NCCL 编译，值传递会导致内核读到错误字段。
+Passing by pointer only passes an 8-byte address, and the kernel accesses the struct through the pointer. When NCCL upgrades the struct layout, as long as the host side creates the communicator with the new version and copies it to the device, the kernel accesses the new layout through the pointer. The kernel itself does not need to be recompiled, because its parameter is just an address. This isolates version differences behind the pointer—**the pointer is stable, while the content pointed to by the pointer can change**。
 
-用指针传递则只传一个 8 字节地址，内核通过指针访问结构体。NCCL 升级结构体布局时，只要 host 侧用新版本创建通信器、拷贝到设备，内核通过指针访问的就是新布局。内核本身不需要重编，因为它的参数只是一个地址。这把版本差异隔离在了指针背后——**指针是稳定的，指针指向的内容可以变**。
+This is the same design philosophy as nccl_ep's size-based ABI: use a layer of indirection to isolate volatile version details behind a stable interface.
 
-这和 nccl_ep 的 size-based ABI 是同一个设计哲学：用一层间接把易变的版本细节隔离在稳定接口背后。
+Q3: nccl_checkpoint uses`LD_PRELOAD`to intercept NCCL calls, but if an application links both nccl4py and nccl_checkpoint, nccl4py's Cython bindings directly call`libnccl.so`'s symbols,`LD_PRELOAD`can it intercept them? Please analyze the symbol resolution order.
 
-</details>
+**Reference Analysis**: This depends on the symbol resolution order.`LD_PRELOAD`The mechanism is: before loading the shared libraries that the application normally depends on, the dynamic linker first loads the`LD_PRELOAD`specified`.so`. When the application (or a library it depends on) references a symbol, the dynamic linker searches in "first loaded, first resolved" order—`LD_PRELOAD`'s`.so`takes precedence over`libnccl.so`。
 
-<details><summary>Q3: nccl_checkpoint 用 `LD_PRELOAD` 拦截 NCCL 调用，但如果应用同时链接了 nccl4py 和 nccl_checkpoint，nccl4py 的 Cython 绑定直接调用 `libnccl.so` 的符号，`LD_PRELOAD` 能拦截到吗？请分析符号解析顺序。</summary>
+So in theory, when nccl4py's Cython binding calls`ncclCommInitRank`, the dynamic linker will first find the symbol with the same name in`libnccl-checkpoint-shim.so`, and the interception succeeds.
 
-**参考解析**：这取决于符号解析顺序。`LD_PRELOAD` 的机制是：动态链接器在加载应用正常依赖的共享库之前，先加载 `LD_PRELOAD` 指定的 `.so`。当应用（或它依赖的库）引用一个符号时，动态链接器按「先加载先解析」的顺序查找——`LD_PRELOAD` 的 `.so` 优先于 `libnccl.so`。
+But there are several edge cases:
 
-所以理论上，nccl4py 的 Cython 绑定调用 `ncclCommInitRank` 时，动态链接器会先找到 `libnccl-checkpoint-shim.so` 里的同名符号，拦截成功。
+1. **Direct`dlopen` + `dlsym`**: If nccl4py uses`dlopen("libnccl.so")`and then`dlsym`to get the function pointer,`LD_PRELOAD`cannot intercept it, because`dlsym`directly searches for the symbol in the specified`.so`, without going through the global symbol table. The README mentions that C applications use`dlsym`to resolve`ncclCheckpointPrepare` [FACT:contrib/nccl_checkpoint/README.md:109-109], but that is resolving the checkpoint's own symbols, not NCCL symbols.
 
-但有几个边界情况：
+2. **Symbol binding timing**: If nccl4py binds NCCL symbols before`LD_PRELOAD`takes effect (for example, in`__attribute__((constructor))`), interception may fail. But under normal circumstances`LD_PRELOAD`takes effect at process startup, earlier than any user code.
 
-1. **直接 `dlopen` + `dlsym`**：如果 nccl4py 用 `dlopen("libnccl.so")` 然后 `dlsym` 拿函数指针，`LD_PRELOAD` 拦截不到，因为 `dlsym` 直接在指定的 `.so` 里找符号，不走全局符号表。README 提到 C 应用用 `dlsym` 解析 `ncclCheckpointPrepare` [FACT:contrib/nccl_checkpoint/README.md:109-109](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_checkpoint/README.md#L109-L109)，但那是解析 checkpoint 自己的符号，不是 NCCL 符号。
+3. **`RTLD_DEEPBIND`**: If nccl4py uses`dlopen`and specifies`RTLD_DEEPBIND`, symbol lookup will preferentially resolve inside`libnccl.so`, bypassing`LD_PRELOAD`. This is a common pitfall.
 
-2. **符号绑定时机**：如果 nccl4py 在 `LD_PRELOAD` 生效前就绑定了 NCCL 符号（比如在 `__attribute__((constructor))` 里），拦截可能失效。但正常情况 `LD_PRELOAD` 在进程启动时就生效，早于任何用户代码。
+4. **Static linking**: If nccl4py statically links NCCL,`LD_PRELOAD`is completely ineffective, because the symbols have already been resolved at compile time.
 
-3. **`RTLD_DEEPBIND`**：如果 nccl4py 用 `dlopen` 时指定 `RTLD_DEEPBIND`，符号查找会优先在 `libnccl.so` 内部解析，绕过 `LD_PRELOAD`。这是常见的坑。
+So the conclusion is:**In normal dynamic linking scenarios`LD_PRELOAD`can intercept nccl4py's calls**, but if nccl4py uses`dlopen` + `RTLD_DEEPBIND`or static linking, interception will fail. In production use, you should use`LD_DEBUG=bindings`to verify symbol binding and confirm that NCCL calls are intercepted by the shim.
 
-4. **静态链接**：如果 nccl4py 静态链接了 NCCL，`LD_PRELOAD` 完全无效，因为符号已经在编译期解析。
+In the next chapter we will turn to architectural evolution and future directions, and look at how NCCL evolves from a collective communication library into a programmable communication engine.
 
-所以结论是：**正常动态链接场景下 `LD_PRELOAD` 能拦截 nccl4py 的调用**，但如果 nccl4py 用了 `dlopen` + `RTLD_DEEPBIND` 或静态链接，拦截会失效。生产使用时应该用 `LD_DEBUG=bindings` 验证符号绑定，确认 NCCL 调用被 shim 拦截。
-
-</details>
-
-下一章我们将转向架构演进与未来方向，看看 NCCL 如何从集合通信库演进为可编程通信引擎。
-
-这些周边项目通过语言绑定、设备 API 扩展和符号拦截，展示了 NCCL 核心能力在不同场景下的复用方式。而贯穿所有项目的核心约束是 NCCL ABI 版本兼容性——size-based ABI、指针传递、命名空间包都是把版本差异隔离在稳定接口背后的技术手段。理解这些手段，是安全使用这些周边项目的前提。当这些扩展项目不断试探核心的边界，NCCL 自身也在悄然演进：从固定集合操作走向可编程通信引擎，从 host proxy 走向 GPU 直发，从注册缓冲区走向对称内存。下一章我们将基于源码中的演进痕迹，探讨这些变化将如何重塑上层框架的通信方式。
+These surrounding projects demonstrate, through language bindings, device API extensions, and symbol interception, how NCCL's core capabilities can be reused in different scenarios. The core constraint running through all the projects is NCCL ABI version compatibility—size-based ABI, pointer passing, and namespace packages are all technical means of isolating version differences behind a stable interface. Understanding these means is the prerequisite for safely using these surrounding projects. As these extension projects keep probing the boundaries of the core, NCCL itself is also quietly evolving: from fixed collective operations to a programmable communication engine, from host proxy to GPU direct issue, from registered buffers to symmetric memory. In the next chapter, based on the traces of evolution in the source code, we will discuss how these changes will reshape the communication methods of upper-layer frameworks.

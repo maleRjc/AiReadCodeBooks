@@ -1,52 +1,54 @@
-# Chapter 06: Collective Dispatch: Converting ncclAllReduce into Executable Tasks
+# Chapter 6: Operator dispatch panorama: How ncclAllReduce becomes an executable kernel task
 
+In the previous chapter, we walked through the tuning module and learned that NCCL selects an (algorithm, protocol, channel, warp) combination for a collective communication within microseconds. But the selection result itself is just a bunch of numbers—it needs to be "translated" into a task description object that the GPU kernel can understand before it can actually be executed. This chapter enters the main body of src/enqueue/enqueue.cc and answers a core question: when the user calls ncclAllReduce, what exactly happens on the host side? From ncclAllReduce to ncclEnqueueCheck, it goes through parameter validation, algorithm/protocol determination, and channel partitioning, ultimately generating the ncclInfo and ncclTaskColl structures. This is the key chapter where the book switches from the "user perspective" to the "engine perspective." If NCCL is compared to a restaurant, then the enqueue module is the "front desk ordering system": the user (application layer) says "I want an AllReduce," and the front desk translates it into a work order that the kitchen (GPU kernel) can execute—which stove, what pan to use, and how many batches to make it in. Without this translation layer, the kitchen wouldn't know what dish to make at all.
 
-上一章我们走完了 tuning 模块，知道 NCCL 会在微秒级内为一次集合通信选定 (算法, 协议, channel, warp) 组合。但选型结果本身只是一堆数字——它需要被“翻译”成 GPU kernel 能读懂的任务描述对象，才能被真正执行。本章进入 src/enqueue/enqueue.cc 的主干，回答一个核心问题：当用户调用 ncclAllReduce 时，host 侧到底发生了什么？从 ncclAllReduce 到 ncclEnqueueCheck，经过参数校验、算法/协议确定、channel 切分，最终生成 ncclInfo 与 ncclTaskColl 结构。这是全书从“用户视角”切换到“引擎视角”的关键一章。如果把 NCCL 比作一家餐厅，那么 enqueue 模块就是“前台点单系统”：用户（应用层）说“我要一份 AllReduce”，前台把它翻译成厨房（GPU kernel）能执行的工单——几号灶台、用什么锅、分几批做。没有这个翻译层，厨房根本不知道要做什么菜。
+# I. Entry Point: How ncclAllReduce Constructs ncclInfo
 
-## 一、入口：ncclAllReduce 如何构造 ncclInfo
+## Intuitive Model
 
-### Intuitive Architectural Model
+`ncclAllReduce`It is the API function directly called by the user. Its responsibility is extremely singular:**Package the raw parameters passed in by the user into a`ncclInfo`structure, then hand it off to`ncclEnqueueCheck`**. This is like going to a bank counter to handle business—the teller first fills your request into a standard form, then forwards it to the backend system.
 
-`ncclAllReduce` 是用户直接调用的 API 函数。它的职责极其单一：**把用户传入的裸参数打包成一个 `ncclInfo` 结构体，然后交给 `ncclEnqueueCheck`**。这就像你去银行柜台办业务，柜员先把你的需求填进一张标准表单，再转交给后台系统。
+Without this layer, every collective communication API would have to handle parameter validation, group semantics, and profiler instrumentation on its own—the code would become so repetitive it would be unmaintainable.
 
-如果没有这一层，每个集合通信 API 都要自己处理参数校验、group 语义、profiler 埋点——代码会重复到无法维护。
+## Data Structure: Memory Layout of ncclInfo
 
-### 数据结构：ncclInfo 的内存布局
+`ncclInfo`It is the core carrier that runs through the entire enqueue process. Its definition is in`src/include/info.h`：
 
-`ncclInfo` 是贯穿整个 enqueue 流程的核心载体。它的定义在 `src/include/info.h`：
+[FACT:src/include/info.h:17-44]
 
-[FACT:src/include/info.h:17-44](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/info.h#L17-L44)
+This structure has 20+ fields, which we can divide into four groups by function:
 
-这个结构体有 20+ 个字段，我们可以按功能分成四组：
+| Field Group | Field | Purpose |
+| --- | --- | --- |
+| Collective Communication Parameters | `coll`, `sendbuff`, `recvbuff`, `count`, `datatype`, `op`, `root` | Describes "what to do" |
+| Communication Domain and Stream | `comm`, `stream` | Describes "where to do it" |
+| Algorithm Details | `chunkSteps`, `sliceSteps` | Describes "how to partition" |
+| One-sided Operations | `peerWinOffset`, `peerWin`, `sigIdx`, `ctx`, `flags`, `nDesc`, `signalDescs` | RMA-specific |
+| User Configuration | `collConfig` | A private copy copied from the user config |
 
-| 字段组 | 字段 | 作用 |
-|--------|------|------|
-| 集合通信参数 | `coll`, `sendbuff`, `recvbuff`, `count`, `datatype`, `op`, `root` | 描述"做什么" |
-| 通信域与流 | `comm`, `stream` | 描述"在哪做" |
-| 算法细节 | `chunkSteps`, `sliceSteps` | 描述"怎么切分" |
-| 单边操作 | `peerWinOffset`, `peerWin`, `sigIdx`, `ctx`, `flags`, `nDesc`, `signalDescs` | RMA 专用 |
-| 用户配置 | `collConfig` | 从用户 config 拷贝的私有副本 |
+Note the`collConfig`comment:**"A config copied from config passed by user so older user config can be safely accessed during synchronous host scheduling (never at launch/replay)"** [FACT:src/include/info.h:41-43]. This is a key design—the config pointer passed in by the user may be destroyed before`ncclGroupEnd`, so NCCL makes a copy in`ncclInfo`.
 
-注意 `collConfig` 的注释：**"A config copied from config passed by user so older user config can be safely accessed during synchronous host scheduling (never at launch/replay)"** [FACT:src/include/info.h:41-43](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/info.h#L41-L43)。这是一个关键设计——用户传入的 config 指针可能在 `ncclGroupEnd` 之前就被销毁，所以 NCCL 在 `ncclInfo` 里做了一份拷贝。
+## Step-by-Step: The Call Chain of ncclAllReduce
 
-### Step-by-Step：ncclAllReduce 的调用链
+We take`ncclAllReduce`as an example, tracing the complete path from the user call to the construction of`ncclInfo`.
 
-我们以 `ncclAllReduce` 为例，追踪从用户调用到 `ncclInfo` 构造的完整路径。
+**Step 1: The user calls ncclAllReduce.**The entry point is in`src/collectives.cc`：
 
-**第 1 步：用户调用 ncclAllReduce。** 入口在 `src/collectives.cc`：
+[FACT:src/collectives.cc:206-211]
 
-[FACT:src/collectives.cc:206-211](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/collectives.cc#L206-L211)
+Three things are done here:
 
-这里做了三件事：
-1. `NVTX3_FUNC_WITH_PARAMS` 打 NVTX 标记（用于 Nsight 等工具可视化）
-2. 调用 `ncclAllReduceConfigImpl`，传入 `config = nullptr`
-3. 返回结果
+1. `NVTX3_FUNC_WITH_PARAMS`Add an NVTX marker (for visualization in tools like Nsight)
 
-**第 2 步：ncclAllReduceConfigImpl 构造 ncclInfo。** 这是关键的一步：
+2. Call`ncclAllReduceConfigImpl`, passing in`config = nullptr`
 
-[FACT:src/collectives.cc:192-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/collectives.cc#L192-L202)
+3. Return the result
 
-注意这里用了 C 风格的聚合初始化：
+**Step 2: ncclAllReduceConfigImpl constructs ncclInfo.**This is the key step:
+
+[FACT:src/collectives.cc:192-202]
+
+Note that C-style aggregate initialization is used here:
 
 ```c
 struct ncclInfo info = {ncclFuncAllReduce, "AllReduce",
@@ -54,23 +56,24 @@ struct ncclInfo info = {ncclFuncAllReduce, "AllReduce",
                         ALLREDUCE_CHUNKSTEPS, ALLREDUCE_SLICESTEPS};
 ```
 
-字段按 `ncclInfo` 的声明顺序一一对应。`ALLREDUCE_CHUNKSTEPS` 和 `ALLREDUCE_SLICESTEPS` 定义在 `src/include/collectives.h`：
+The fields correspond one-to-one in the declaration order of`ncclInfo`.`ALLREDUCE_CHUNKSTEPS`and`ALLREDUCE_SLICESTEPS`are defined in`src/include/collectives.h`：
 
-[FACT:src/include/collectives.h:19-20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/collectives.h#L19-L20)
+[FACT:src/include/collectives.h:19-20]
 
-`NCCL_STEPS` 是环形缓冲区里的步数（通常为 8 或 16），所以 AllReduce 的 chunkSteps 是 `NCCL_STEPS/2`，sliceSteps 是 `NCCL_STEPS/4`。这意味着一个 chunk 包含 2 个 slice。
+`NCCL_STEPS`is the number of steps in the ring buffer (usually 8 or 16), so AllReduce's chunkSteps is`NCCL_STEPS/2`, and sliceSteps is`NCCL_STEPS/4`. This means one chunk contains 2 slices.
 
-**第 3 步：解析用户 config。** `ncclParseCollConfig` 把用户传入的 `ncclCollConfig_t*` 解析进 `info.collConfig`。如果 `config == nullptr`，这个字段保持零初始化。
+**Step 3: Parse the user config.** `ncclParseCollConfig`Parses the user-passed`ncclCollConfig_t*`into`info.collConfig`. If`config == nullptr`, this field remains zero-initialized.
 
-**第 4 步：交给 ncclEnqueueCheck。** 这是 enqueue 模块的真正入口。
+**Step 4: Hand off to ncclEnqueueCheck.**This is the true entry point of the enqueue module.
 
-### 设计思考：为什么用聚合初始化而不是逐字段赋值？
+## Design Thinking: Why Use Aggregate Initialization Instead of Field-by-Field Assignment?
 
-[INFERENCE] 聚合初始化有两个好处：一是编译器会检查字段数量是否匹配（少一个字段会警告），二是代码更紧凑。但缺点是**字段顺序必须与结构体声明严格一致**——如果有人在 `ncclInfo` 中间插入一个字段，所有聚合初始化点都会静默错位。这是 NCCL 代码里一个隐含的维护风险。
+> **[Design Inference & Architectural Trade-offs]**
+> Aggregate initialization has two benefits: first, the compiler checks whether the number of fields matches (a missing field triggers a warning); second, the code is more compact. But the drawback is that**the field order must strictly match the struct declaration**—if someone inserts a field in the middle of`ncclInfo`, all aggregate initialization sites will silently misalign. This is an implicit maintenance risk in the NCCL codebase.
 
-### 生产踩坑：config 生命周期
+## Production Pitfall: Config Lifetime
 
-一个真实的踩坑场景：用户这样写代码：
+A real pitfall scenario: the user writes code like this:
 
 ```c
 ncclCollConfig_t config = {...};
@@ -78,364 +81,373 @@ ncclAllReduceConfig(..., &config);
 // config 在这里被销毁（比如是栈变量，函数返回了）
 ```
 
-如果 NCCL 没有在 `ncclInfo` 里拷贝 config，那么 `ncclGroupEnd` 时访问 `info.collConfig` 就会读到已释放的内存。`src/include/info.h:41-43` 的注释正是为了说明这个设计——**config 在 task append 阶段就被解析并拷贝，之后不再依赖用户指针**。
+If NCCL did not copy the config in`ncclInfo`, then accessing`ncclGroupEnd`at`info.collConfig`would read already-freed memory.`src/include/info.h:41-43`The comment in**is precisely to explain this design—**。
 
 ---
 
-## 二、ncclEnqueueCheck：参数校验与 group 语义
+# the config is parsed and copied during the task append phase, and afterward no longer depends on the user pointer
 
-### Intuitive Architectural Model
+## II. ncclEnqueueCheck: Parameter Validation and Group Semantics
 
-`ncclEnqueueCheck` 是 enqueue 模块的"总闸门"。所有集合通信 API 最终都汇聚到这里。它的职责是：**校验参数合法性、处理 group 语义、调用 taskAppend 生成任务**。如果把它比作机场安检，那么每个 API 函数就是值机柜台——值机只是收行李，真正的安检在 `ncclEnqueueCheck`。
+`ncclEnqueueCheck`Intuitive Model**It is the "main gate" of the enqueue module. All collective communication APIs ultimately converge here. Its responsibilities are:**Validate parameter legality, handle group semantics, and call taskAppend to generate tasks`ncclEnqueueCheck`。
 
-如果没有这一层，每个 API 都要自己写一遍参数校验和 group 处理，代码会膨胀数倍，而且容易漏掉某个校验。
+. If compared to airport security, then each API function is a check-in counter—check-in only takes luggage; the real security check is at
 
-### Step-by-Step：ncclEnqueueCheck 的执行流程
+## Step-by-Step: The execution flow of ncclEnqueueCheck
 
-[FACT:src/enqueue/enqueue.cc:3478-3527](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3478-L3527)
+[FACT:src/enqueue/enqueue.cc:3478-3527]
 
-我们逐步拆解：
+Let's break it down step by step:
 
-**第 1 步：CommCheck 校验通信域。** `CommCheck(info->comm, info->opName, "comm")` 检查 comm 指针是否非空、是否已初始化。如果 comm 被 revoke（比如某个 rank 出错），直接返回错误：
+**Step 1: CommCheck validates the communicator.** `CommCheck(info->comm, info->opName, "comm")`Check whether the comm pointer is non-null and whether it has been initialized. If the comm has been revoked (for example, if some rank encounters an error), return an error directly:
 
-[FACT:src/enqueue/enqueue.cc:3480-3485](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3480-L3485)
+[FACT:src/enqueue/enqueue.cc:3480-3485]
 
-**第 2 步：处理 profiler 深度。** 如果已经在 group 内部（`profilerGroupDepth > 0`），递增深度计数。这是为了正确处理隐式的 `ncclGroupStartInternal`/`ncclGroupEndInternal` 调用。
+**Step 2: Handle profiler depth.**If already inside a group (`profilerGroupDepth > 0`), increment the depth counter. This is to correctly handle implicit`ncclGroupStartInternal`/`ncclGroupEndInternal`calls.
 
-**第 3 步：进入内部 group。** `ncclGroupStartInternal()` 是 NCCL 内部的 group 机制。**关键点**：即使用户没有显式调用 `ncclGroupStart`，NCCL 也会为每次 API 调用创建一个隐式 group。这保证了单次调用的原子性。
+**Step 3: Enter the internal group.** `ncclGroupStartInternal()`This is NCCL's internal group mechanism.**Key point**: Even if the user does not explicitly call`ncclGroupStart`, NCCL will create an implicit group for each API call. This guarantees the atomicity of a single call.
 
-**第 4 步：确保 comm 就绪。** `ncclCommEnsureReady(info->comm)` 等待通信域初始化完成（比如 bootstrap 完成、连接建立）。
+**Step 4: Ensure comm is ready.** `ncclCommEnsureReady(info->comm)`Wait for communicator initialization to complete (for example, bootstrap completion and connection establishment).
 
-**第 5 步：ArgsCheck 参数校验。** 这是最复杂的校验步骤：
+**Step 5: ArgsCheck parameter validation.**This is the most complex validation step:
 
-[FACT:src/enqueue/enqueue.cc:3497-3503](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3497-L3503)
+[FACT:src/enqueue/enqueue.cc:3497-3503]
 
-注意 `checkMode` 的处理：如果是 `ncclCheckModeDebugGlobal`，`ArgsCheck` 会把 info 入队，等 `ncclGroupEnd` 时做全局校验（比如检查所有 rank 的 count 是否一致）。
+Note the handling of`checkMode`: If it is`ncclCheckModeDebugGlobal`，`ArgsCheck`, info will be enqueued, and global validation will be performed at`ncclGroupEnd`(for example, checking whether the count is consistent across all ranks).
 
-**第 6 步：调用 taskAppend。** 这是核心转换步骤：
+**Step 6: Call taskAppend.**This is the core conversion step:
 
-[FACT:src/enqueue/enqueue.cc:3513](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3513)
+[FACT:src/enqueue/enqueue.cc:3513]
 
-**第 7 步：递增 opCount。** 每次成功入队后，`comm->opCount++`。这个计数器用于匹配 send/recv 操作，也是 profiler 的时间线依据。
+**Step 7: Increment opCount.**After each successful enqueue,`comm->opCount++`. This counter is used to match send/recv operations and is also the basis for the profiler timeline.
 
-**第 8 步：退出 group。** `ncclGroupEndInternal()` 如果 depth 降到 0，会触发真正的 group 操作（调度、启动 kernel）。
+**Step 8: Exit the group.** `ncclGroupEndInternal()`If depth drops to 0, the actual group operation is triggered (scheduling and kernel launch).
 
-### 并发控制：group 语义与线程安全
+## Concurrency control: group semantics and thread safety
 
-[INFERENCE] `ncclGroupStartInternal`/`ncclGroupEndInternal` 使用线程局部存储（TLS）来维护 group 状态。这意味着**同一个线程内的多次 API 调用会被合并成一个 group**，但不同线程的调用是独立的。这是 NCCL 支持多线程调用的基础。
+> **[Design Inference & Architectural Trade-offs]**
+> `ncclGroupStartInternal`/`ncclGroupEndInternal`Thread-local storage (TLS) is used to maintain group state. This means that**multiple API calls within the same thread will be merged into one group**, but calls from different threads are independent. This is the foundation of NCCL's support for multithreaded calls.
 
-一个容易踩的坑：如果用户在 `ncclGroupStart` 和 `ncclGroupEnd` 之间调用了非 NCCL 的 CUDA API（比如 `cudaMemcpy`），可能会导致 stream 顺序问题。NCCL 的 group 机制假设 group 内的操作都在同一组 stream 上。
+An easy pitfall: If the user calls a non-NCCL CUDA API between`ncclGroupStart`and`ncclGroupEnd`(for example,`cudaMemcpy`), it may cause stream ordering issues. NCCL's group mechanism assumes that operations within a group are all on the same set of streams.
 
-### 错误恢复链
+## Error recovery chain
 
-`ncclEnqueueCheck` 的错误处理有一个精巧的设计：
+`ncclEnqueueCheck`The error handling of
 
-[FACT:src/enqueue/enqueue.cc:3524-3526](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3524-L3526)
+[FACT:src/enqueue/enqueue.cc:3524-3526]
 
-如果 `taskAppend` 失败，且 comm 是非阻塞模式，会调用 `ncclCommSetAsyncError` 记录错误。这样后续的 API 调用会立即返回错误，而不是继续尝试。这是异步错误传播机制。
+has an ingenious design:`taskAppend`If`ncclCommSetAsyncError`fails and comm is in non-blocking mode, it will call
 
 ---
 
-## 三、taskAppend：任务分发的十字路口
+# to record the error. In this way, subsequent API calls will immediately return an error instead of continuing to try. This is the asynchronous error propagation mechanism.
 
-### Intuitive Architectural Model
+## III. taskAppend: The crossroads of task dispatch
 
-`taskAppend` 是 enqueue 模块的"交通枢纽"。它根据 `info->coll` 的值，把任务分发到不同的处理路径：P2P、RMA、CE、或者普通集合通信。这就像一个邮局分拣中心——根据信封上的地址，把信件投到不同的邮筒。
+`taskAppend`Intuitive model`info->coll`It is the "transport hub" of the enqueue module. Based on the value of
 
-如果没有这个分发层，所有类型的操作都要挤在一个巨大的 if-else 里，代码会难以维护。
+, it dispatches tasks to different processing paths: P2P, RMA, CE, or ordinary collective communication. This is like a post office sorting center - based on the address on the envelope, it delivers letters to different mailboxes.
 
-### Step-by-Step：taskAppend 的分发逻辑
+## Without this dispatch layer, all types of operations would have to be crammed into one huge if-else, making the code difficult to maintain.
 
-[FACT:src/enqueue/enqueue.cc:3337-3476](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3337-L3476)
+[FACT:src/enqueue/enqueue.cc:3337-3476]
 
-**第 1 步：判断是否启用新架构。** `ncclParamEnqueueRearchEnable()` 是一个环境变量开关（默认 0）。如果启用，走 `rawTaskAppend` 路径——这是 NCCL 正在开发的新任务模型。
+**Step-by-Step: The dispatch logic of taskAppend** `ncclParamEnqueueRearchEnable()`Step 1: Determine whether the new architecture is enabled.`rawTaskAppend`It is an environment variable switch (default 0). If enabled, take the
 
-**第 2 步：P2P 分发。** 如果是 Send/Recv，调用 `p2pTaskAppend`：
+**path - this is the new task model that NCCL is developing.**Step 2: P2P dispatch.`p2pTaskAppend`：
 
-[FACT:src/enqueue/enqueue.cc:3343-3345](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3343-L3345)
+[FACT:src/enqueue/enqueue.cc:3343-3345]
 
-**第 3 步：RMA 分发。** 如果是 PutSignal/Signal/WaitSignal，调用 `rmaTaskAppend`：
+**If it is Send/Recv, call**Step 3: RMA dispatch.`rmaTaskAppend`：
 
-[FACT:src/enqueue/enqueue.cc:3346-3347](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3346-L3347)
+[FACT:src/enqueue/enqueue.cc:3346-3347]
 
-**第 4 步：空集合通信提前返回。** `if (info->count == 0) return ncclSuccess;`——count 为 0 的集合通信直接丢弃。
+**If it is PutSignal/Signal/WaitSignal, call** `if (info->count == 0) return ncclSuccess;`Step 4: Early return for empty collective communication.
 
-**第 5 步：算法选择校验。** `ncclCollConfigGetAlgMask` 校验用户传入的算法选择是否合法：
+**- Collective communication with count 0 is discarded directly.** `ncclCollConfigGetAlgMask`Step 5: Algorithm selection validation.
 
-[FACT:src/enqueue/enqueue.cc:3357-3358](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3357-L3358)
+[FACT:src/enqueue/enqueue.cc:3357-3358]
 
-**第 6 步：FP8 类型检查。** FP8 归约需要 sm90+：
+**Validate whether the algorithm selection passed in by the user is legal:**Step 6: FP8 type check.
 
-[FACT:src/enqueue/enqueue.cc:3360-3366](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3360-L3366)
+[FACT:src/enqueue/enqueue.cc:3360-3366]
 
-**第 7 步：归约操作转换。** `hostToDevRedOp` 把 host 侧的 `ncclRedOp_t` 转换成设备侧的 `ncclDevRedOpFull`：
+**FP8 reduction requires sm90+:** `hostToDevRedOp`Step 7: Reduction operation conversion.`ncclRedOp_t`Convert the host-side`ncclDevRedOpFull`：
 
-[FACT:src/enqueue/enqueue.cc:3370-3371](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3370-L3371)
+[FACT:src/enqueue/enqueue.cc:3370-3371]
 
-**第 8 步：单 rank 提前返回。** 如果 `comm->nRanks == 1`，直接调用 `ncclLaunchOneRank` 执行本地归约，不需要生成任务：
+**to the device-side**Step 8: Early return for single rank.`comm->nRanks == 1`If`ncclLaunchOneRank`, directly call
 
-[FACT:src/enqueue/enqueue.cc:3373-3377](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3373-L3377)
+[FACT:src/enqueue/enqueue.cc:3373-3377]
 
-**第 9 步：多 rank 路径。** 这是最复杂的分支，包含 CE 路由、AllToAll/Gather/Scatter 降级、以及普通集合通信：
+**to perform local reduction without generating a task:**Step 9: Multi-rank path.
 
-[FACT:src/enqueue/enqueue.cc:3378-3470](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3378-L3470)
+[FACT:src/enqueue/enqueue.cc:3378-3470]
 
-### 数据结构：ncclTaskColl 的字段
+## This is the most complex branch, including CE routing, AllToAll/Gather/Scatter fallback, and ordinary collective communication:
 
-`collTaskAppend` 是生成 `ncclTaskColl` 的地方。我们看它的核心逻辑：
+`collTaskAppend`Data structure: fields of ncclTaskColl`ncclTaskColl`This is where
 
-[FACT:src/enqueue/enqueue.cc:2757-2851](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2757-L2851)
+[FACT:src/enqueue/enqueue.cc:2757-2851]
 
-关键字段赋值：
+is generated. Let's look at its core logic:
 
-| 字段 | 来源 | 含义 |
-|------|------|------|
-| `func` | `info->coll` | 集合通信类型 |
-| `sendbuff`/`recvbuff` | `info->sendbuff`/`recvbuff` | 缓冲区指针 |
-| `count` | `info->count` | 元素数量 |
-| `datatype` | `info->datatype` | 数据类型 |
-| `trafficBytes` | `count * elementSize * ncclFuncTrafficPerByte` | 流量估算 |
-| `opHost`/`opDev` | `info->op`/`opDev` | 归约操作 |
-| `chunkSteps`/`sliceSteps` | `info->chunkSteps`/`sliceSteps` | 切分步数 |
-| `minCTAs`/`maxCTAs`/`nvlsCTAs` | 配置解析 | 资源上限 |
-| `algMask` | `ncclCollConfigGetAlgMask` | 算法选择掩码 |
+| Key field assignments: | Field | Source |
+| --- | --- | --- |
+| `func` | `info->coll` | Meaning |
+| `sendbuff`/`recvbuff` | `info->sendbuff`/`recvbuff` | Collective communication type |
+| `count` | `info->count` | Buffer pointer |
+| `datatype` | `info->datatype` | Element count |
+| `trafficBytes` | `count * elementSize * ncclFuncTrafficPerByte` | Data type |
+| `opHost`/`opDev` | `info->op`/`opDev` | Traffic estimation |
+| `chunkSteps`/`sliceSteps` | `info->chunkSteps`/`sliceSteps` | Reduction operation |
+| `minCTAs`/`maxCTAs`/`nvlsCTAs` | Number of split steps | Configuration parsing |
+| `algMask` | `ncclCollConfigGetAlgMask` | Resource limit |
 
-注意 `trafficBytes` 的计算：
+Algorithm selection mask`trafficBytes`Note the calculation of
 
-[FACT:src/enqueue/enqueue.cc:2813](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2813)
+[FACT:src/enqueue/enqueue.cc:2813]
 
-`ncclFuncTrafficPerByte` 返回每种集合通信的流量倍数：
+`ncclFuncTrafficPerByte`:
 
-[FACT:src/enqueue/enqueue.cc:123-134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L123-L134)
+[FACT:src/enqueue/enqueue.cc:123-134]
 
-AllReduce 返回 2（因为要 reduce + broadcast），AllGather/ReduceScatter 返回 nRanks，其他返回 1。
+It returns the traffic multiplier for each collective communication type:
 
-### 设计思考：为什么 AllGather/Broadcast 要转成 int8？
+## AllReduce returns 2 (because it needs reduce + broadcast), AllGather/ReduceScatter returns nRanks, and others return 1.
 
-[FACT:src/enqueue/enqueue.cc:2808-2812](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2808-L2812)
+[FACT:src/enqueue/enqueue.cc:2808-2812]
 
-AllGather 和 Broadcast 把 count 乘以 elementSize，然后把 datatype 改成 `ncclInt8`。这是一个优化：**这两种操作不涉及归约，所以不需要关心数据类型，统一按字节处理可以简化 kernel 逻辑**。
+Design consideration: Why should AllGather/Broadcast be converted to int8?`ncclInt8`. This is an optimization:**These two operations do not involve reduction, so there is no need to care about data types. Handling them uniformly as bytes can simplify the kernel logic.**。
 
-### 生产踩坑：CTAPolicy 的解析顺序
+## Production pitfall: the parsing order of CTAPolicy
 
-[FACT:src/enqueue/enqueue.cc:3390-3397](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L3390-L3397)
+[FACT:src/enqueue/enqueue.cc:3390-3397]
 
-CTAPolicy 的解析有一个微妙的优先级：**env > per-call > comm**。而且 `NCCL_CTA_POLICY_ZERO` 优先于 `NCCL_CTA_POLICY_EFFICIENCY`。如果用户同时设置了这两个标志，ZERO 会生效。
+CTAPolicy parsing has a subtle priority:**env > per-call > comm**. And`NCCL_CTA_POLICY_ZERO`takes precedence over`NCCL_CTA_POLICY_EFFICIENCY`. If the user sets both flags at the same time, ZERO will take effect.
 
-一个真实的踩坑场景：用户设置了 `NCCL_CTA_POLICY=EFFICIENCY`，但发现 CE 路径没有被使用。原因是 CE 路由要求 `CTAPolicy & NCCL_CTA_POLICY_ZERO` 为真，而 EFFICIENCY 不满足这个条件。
+A real pitfall scenario: the user set`NCCL_CTA_POLICY=EFFICIENCY`, but found that the CE path was not used. The reason is that CE routing requires`CTAPolicy & NCCL_CTA_POLICY_ZERO`to be true, and EFFICIENCY does not satisfy this condition.
 
 ---
 
-## 四、ncclPrepareTasks：从任务列表到调度队列
+# 4. ncclPrepareTasks: from task list to scheduling queue
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`ncclPrepareTasks` 是 enqueue 模块的"预处理器"。它把散乱的任务列表按 (func, op, datatype) 分桶，然后为每个桶计算算法和协议。这就像一个图书馆管理员——先把还回来的书按类别分好，再决定每类书放在哪个书架。
+`ncclPrepareTasks`It is the "preprocessor" of the enqueue module. It buckets the scattered task list by (func, op, datatype), and then computes the algorithm and protocol for each bucket. This is like a librarian - first sorting returned books by category, then deciding which shelf each category of books goes on.
 
-如果没有这一步，后续的 `scheduleCollTasksToPlan` 就要为每个任务单独计算算法，效率极低。
+Without this step, the subsequent`scheduleCollTasksToPlan`would have to compute the algorithm separately for each task, which is extremely inefficient.
 
-### Step-by-Step：ncclPrepareTasks 的分桶逻辑
+## Step-by-Step: the bucketing logic of ncclPrepareTasks
 
-[FACT:src/enqueue/enqueue.cc:423-642](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L423-L642)
+[FACT:src/enqueue/enqueue.cc:423-642]
 
-**第 1 步：Broadcast 任务转换。** 如果只有一个 broadcast peer，把 broadcast 任务转成 coll 任务：
+**Step 1: Broadcast task conversion.**If there is only one broadcast peer, convert the broadcast task into a coll task:
 
-[FACT:src/enqueue/enqueue.cc:430-461](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L430-L461)
+[FACT:src/enqueue/enqueue.cc:430-461]
 
-注意这里把 `bcastTask` 的字段拷贝到新的 `ncclTaskColl`，并计算 `trafficBytes`。然后从 `memPool_ncclTaskBcast` 释放原任务。
+Note that here the fields of`bcastTask`are copied to the new`ncclTaskColl`, and`trafficBytes`is computed. Then the original task is released from`memPool_ncclTaskBcast`.
 
-**第 2 步：按 (func, op, datatype) 分桶。** 任务从 sorter 出来是按 size 降序的，然后被分到 `tasksByFnOpTy` 数组：
+**Step 2: Bucket by (func, op, datatype).**Tasks come out of the sorter in descending order of size, and are then assigned to the`tasksByFnOpTy`array:
 
-[FACT:src/enqueue/enqueue.cc:464-487](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L464-L487)
+[FACT:src/enqueue/enqueue.cc:464-487]
 
-索引计算：`((int)task->func * ncclNumDevRedOps + (int)task->opDev.op) * ncclNumTypes + (int)task->datatype`。这是一个三维数组的线性化。
+Index calculation:`((int)task->func * ncclNumDevRedOps + (int)task->opDev.op) * ncclNumTypes + (int)task->datatype`. This is the linearization of a three-dimensional array.
 
-**第 3 步：聚合与算法选择。** 对每个桶，聚合大小相近的任务（4 倍以内），然后调用 `ncclGetAlgoInfo`：
+**Step 3: Aggregation and algorithm selection.**For each bucket, aggregate tasks with similar sizes (within 4x), and then call`ncclGetAlgoInfo`：
 
-[FACT:src/enqueue/enqueue.cc:503-547](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L503-L547)
+[FACT:src/enqueue/enqueue.cc:503-547]
 
-**第 4 步：按 (collnet, nvls) 分桶。** 根据算法类型，把任务分到 `collBins[2][2]`：
+**Step 4: Bucket by (collnet, nvls).**According to the algorithm type, assign tasks to`collBins[2][2]`：
 
-[FACT:src/enqueue/enqueue.cc:517-544](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L517-L544)
+[FACT:src/enqueue/enqueue.cc:517-544]
 
-**第 5 步：拼接最终队列。** 把四个桶拼接成 `planner->collTaskQueue`：
+**Step 5: Concatenate the final queue.**Concatenate the four buckets into`planner->collTaskQueue`：
 
-[FACT:src/enqueue/enqueue.cc:553-557](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L553-L557)
+[FACT:src/enqueue/enqueue.cc:553-557]
 
-### 数据结构：ncclTaskCollSorter
+## Data structure: ncclTaskCollSorter
 
-`ncclTaskCollSorter` 是一个按 `trafficBytes` 排序的插入式排序器。`ncclTaskCollSorterInsert` 把任务插入到正确位置，`ncclTaskCollSorterDequeueAll` 按顺序取出所有任务。
+`ncclTaskCollSorter`is an insertion sorter ordered by`trafficBytes`.`ncclTaskCollSorterInsert`inserts the task into the correct position,`ncclTaskCollSorterDequeueAll`retrieves all tasks in order.
 
-[INFERENCE] 这个排序器的设计动机是：**大任务优先调度**。因为大任务的传输时间长，先启动它们可以更好地重叠计算和通信。
+> **[Design Inference & Architectural Trade-offs]**
+> The design motivation of this sorter is:**Large tasks are scheduled first**. Because large tasks have long transfer times, starting them first allows better overlap of computation and communication.
 
-### 并发控制：runtimeConn 与连接建立
+## Concurrency control: runtimeConn and connection establishment
 
-[FACT:src/enqueue/enqueue.cc:572-583](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L572-L583)
+[FACT:src/enqueue/enqueue.cc:572-583]
 
-如果 `comm->runtimeConn` 为真（运行时连接模式），且某个算法的 channel 还没初始化，就标记 `algoNeedConnect`。这会在后续触发连接建立。
+If`comm->runtimeConn`is true (runtime connection mode), and the channel of some algorithm has not yet been initialized, mark`algoNeedConnect`. This will trigger connection establishment later.
 
-### 生产踩坑：聚合的边界条件
+## Production pitfall: boundary conditions of aggregation
 
-[FACT:src/enqueue/enqueue.cc:507-508](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L507-L508)
+[FACT:src/enqueue/enqueue.cc:507-508]
 
-聚合条件是 `aggEnd->trafficBytes < 4 * aggBeg->trafficBytes`，且两个任务都不设置 `aggIsolate`。如果用户设置了 per-call config（比如 `maxCTAs`），`aggIsolate` 会被设为 true，这个任务就不会被聚合。
+The aggregation condition is`aggEnd->trafficBytes < 4 * aggBeg->trafficBytes`, and neither task sets`aggIsolate`. If the user sets a per-call config (for example,`maxCTAs`），`aggIsolate`will be set to true, this task will not be aggregated.
 
-一个真实的踩坑场景：用户为某个 AllReduce 设置了 `maxCTAs=4`，期望它只用 4 个 CTA。但由于聚合逻辑，这个任务可能和相邻任务合并，导致实际使用的 CTA 数量不符合预期。解决方案是设置 `aggIsolate`——NCCL 在 `collTaskAppend` 里已经处理了这一点：
+A real pitfall scenario: the user set`maxCTAs=4`for a certain AllReduce, expecting it to use only 4 CTAs. However, due to the aggregation logic, this task may be merged with adjacent tasks, causing the actual number of CTAs used to not match expectations. The solution is to set`aggIsolate`- NCCL has already handled this in`collTaskAppend`:
 
-[FACT:src/enqueue/enqueue.cc:2821-2822](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L2821-L2822)
-
----
-
-## 五、scheduleCollTasksToPlan：channel 切分与预算控制
-
-### Intuitive Architectural Model
-
-`scheduleCollTasksToPlan` 是 enqueue 模块的"调度器"。它把任务分配到具体的 channel，并计算每个 channel 的数据切分。这就像一个工厂的排产系统——决定每条生产线做什么、做多少。
-
-如果没有这一步，GPU kernel 就不知道自己要处理哪部分数据。
-
-### Step-by-Step：channel 切分算法
-
-[FACT:src/enqueue/enqueue.cc:644-947](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L644-L947)
-
-**第 1 步：预算估算。** 先估算能放进这个 plan 的任务数量：
-
-[FACT:src/enqueue/enqueue.cc:648-689](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L648-L689)
-
-`ncclTestBudget` 检查工作字节数是否超出预算：
-
-[FACT:src/enqueue/enqueue.cc:343-349](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L343-L349)
-
-**第 2 步：计算每个 channel 的流量。** 根据 kind（collnet/nvls）计算 `trafficPerChannel`：
-
-[FACT:src/enqueue/enqueue.cc:701-707](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L701-L707)
-
-**第 3 步：Collnet 路径。** 如果是 collnet 算法，channel 分配比较简单：
-
-[FACT:src/enqueue/enqueue.cc:709-739](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L709-L739)
-
-**第 4 步：普通路径的 cell 切分。** 这是最复杂的部分。NCCL 把数据切成 "cell"，每个 cell 是一个最小传输单元：
-
-[FACT:src/enqueue/enqueue.cc:740-845](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L740-L845)
-
-关键变量：
-- `cellSize`：每个 cell 的字节数，至少 `MinTrafficPerChannel`（32KB）
-- `cells`：总 cell 数
-- `cellsPerChannel`：每个 channel 处理的 cell 数
-- `cellsLo`/`cellsHi`：首尾 channel 的 cell 数（可能不满）
-
-**第 5 步：计算 chunkGrains。** 对每个 channel 段调用 `calcCollChunking`：
-
-[FACT:src/enqueue/enqueue.cc:811-825](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L811-L825)
-
-**第 6 步：生成 proxyOp。** 为每个 channel 生成 proxy 操作：
-
-[FACT:src/enqueue/enqueue.cc:844-894](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L844-L894)
-
-### 数据结构：ncclDevWorkColl
-
-`ncclDevWorkColl` 是设备侧的工作描述符。它的关键字段：
-
-| 字段 | 含义 |
-|------|------|
-| `sendbuff`/`recvbuff` | 缓冲区指针 |
-| `channelLo`/`channelHi` | channel 范围 |
-| `cbd.countLo`/`countMid`/`countHi` | 各段元素数 |
-| `cbd.chunkGrainsLo`/`Mid`/`Hi` | 各段 chunk 粒度 |
-| `direct` | 直接标志 |
-
-### 并发控制：channelMask 的位运算
-
-[FACT:src/enqueue/enqueue.cc:897](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L897)
-
-这行代码用位运算设置 channelMask：`(2ull << channelHi) - (1ull << channelLo)`。比如 channelLo=2, channelHi=5，结果是 `(2<<5) - (1<<2) = 64 - 4 = 60 = 0b111100`，即 bit 2-5 被设置。
-
-### 生产踩坑：预算溢出
-
-[FACT:src/enqueue/enqueue.cc:792-794](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L792-L794)
-
-如果预算不够，直接返回 `ncclSuccess`，让外层循环创建新的 plan。这是一个优雅的降级策略——**不报错，只是分批处理**。
-
-一个真实的踩坑场景：如果 `NCCL_WORK_FIFO_BYTES` 设置得太小，会导致每个 plan 只能容纳很少的任务，增加 kernel 启动次数，降低性能。
+[FACT:src/enqueue/enqueue.cc:2821-2822]
 
 ---
 
-## 六、finishPlan：从任务到 kernel 参数
+# 5. scheduleCollTasksToPlan: channel splitting and budget control
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`finishPlan` 是 enqueue 模块的"打包器"。它把任务、batch、proxyOp 打包成 kernel 能直接读取的参数结构。这就像快递打包——把散件装进箱子，贴上运单，等待发货。
+`scheduleCollTasksToPlan`It is the "scheduler" of the enqueue module. It assigns tasks to specific channels and computes the data split for each channel. This is like a factory's production scheduling system - deciding what each production line does and how much it does.
 
-### Step-by-Step：finishPlan 的打包逻辑
+Without this step, the GPU kernel would not know which part of the data it needs to process.
 
-[FACT:src/enqueue/enqueue.cc:236-330](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L236-L330)
+## Step-by-Step: channel splitting algorithm
 
-**第 1 步：决定存储类型。** 如果所有工作都能放进 kernel args，用 `ncclDevWorkStorageTypeArgs`：
+[FACT:src/enqueue/enqueue.cc:644-947]
 
-[FACT:src/enqueue/enqueue.cc:244-250](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L244-L250)
+**Step 1: Budget estimation.**First estimate the number of tasks that can fit into this plan:
 
-**第 2 步：分配 kernelArgs。** 从内存栈分配：
+[FACT:src/enqueue/enqueue.cc:648-689]
 
-[FACT:src/enqueue/enqueue.cc:251-255](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L251-L255)
+`ncclTestBudget`Check whether the work byte count exceeds the budget:
 
-**第 3 步：Round-robin 放置 batch。** 每个 channel 的第一个 batch 必须放在 `batchZero[blockIdx.x]`：
+[FACT:src/enqueue/enqueue.cc:343-349]
 
-[FACT:src/enqueue/enqueue.cc:257-280](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L257-L280)
+**Step 2: Compute the traffic for each channel.**According to kind (collnet/nvls), compute`trafficPerChannel`：
 
-**第 4 步：合并 proxyOp 队列。** 按 opCount 归并排序：
+[FACT:src/enqueue/enqueue.cc:701-707]
 
-[FACT:src/enqueue/enqueue.cc:282-329](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L282-L329)
+**Step 3: Collnet path.**If it is a collnet algorithm, channel assignment is relatively simple:
 
-### 数据结构：ncclDevKernelArgs
+[FACT:src/enqueue/enqueue.cc:709-739]
 
-`ncclDevKernelArgs` 是传给 kernel 的参数结构。它包含：
-- `comm`：设备侧通信器
-- `channelMask`：channel 位掩码
-- `workStorageType`：工作存储类型
-- `workBuf`：工作缓冲区指针
-- `workMask`：工作缓冲区掩码
+**Step 4: Cell splitting for the normal path.**This is the most complex part. NCCL splits data into "cells", and each cell is a minimum transfer unit:
 
-### 生产踩坑：batch 顺序
+[FACT:src/enqueue/enqueue.cc:740-845]
 
-[FACT:src/enqueue/enqueue.cc:257-259](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/enqueue/enqueue.cc#L257-L259)
+Key variables:
 
-注释说得很清楚："The first batch for each channel must be located at batchZero[blockIdx.x]"。如果这个顺序错了，kernel 会读到错误的 batch，导致数据损坏。
+- `cellSize`: the number of bytes per cell, at least`MinTrafficPerChannel`（32KB）
+- `cells`: total number of cells
+- `cellsPerChannel`: number of cells processed by each channel
+- `cellsLo`/`cellsHi`: number of cells for the first and last channels (may be less than full)
+
+**Step 5: Compute chunkGrains.**Call for each channel segment`calcCollChunking`：
+
+[FACT:src/enqueue/enqueue.cc:811-825]
+
+**Step 6: Generate proxyOp.**Generate a proxy operation for each channel:
+
+[FACT:src/enqueue/enqueue.cc:844-894]
+
+## Data structure: ncclDevWorkColl
+
+`ncclDevWorkColl`is the device-side work descriptor. Its key fields:
+
+| Field | Meaning |
+| --- | --- |
+| `sendbuff`/`recvbuff` | Buffer pointer |
+| `channelLo`/`channelHi` | Channel range |
+| `cbd.countLo`/`countMid`/`countHi` | Number of elements in each segment |
+| `cbd.chunkGrainsLo`/`Mid`/`Hi` | Chunk granularity of each segment |
+| `direct` | Direct flag |
+
+## Concurrency control: bit operations of channelMask
+
+[FACT:src/enqueue/enqueue.cc:897]
+
+This line of code uses bit operations to set channelMask:`(2ull << channelHi) - (1ull << channelLo)`For example, channelLo=2, channelHi=5, the result is`(2<<5) - (1<<2) = 64 - 4 = 60 = 0b111100`, meaning bits 2-5 are set.
+
+## Production pitfall: budget overflow
+
+[FACT:src/enqueue/enqueue.cc:792-794]
+
+If the budget is insufficient, directly return`ncclSuccess`, letting the outer loop create a new plan. This is an elegant degradation strategy—**no error, just batch processing**。
+
+A real pitfall scenario: if`NCCL_WORK_FIFO_BYTES`is set too small, each plan can only hold very few tasks, increasing the number of kernel launches and reducing performance.
 
 ---
 
-## 本章Summary
+# 6. finishPlan: From tasks to kernel parameters
 
-本章我们追踪了从 `ncclAllReduce` 到 `ncclTaskColl` 的完整路径：
+## Intuitive model
 
-1. **ncclAllReduce** 构造 `ncclInfo`，打包用户参数
-2. **ncclEnqueueCheck** 校验参数、处理 group 语义
-3. **taskAppend** 根据操作类型分发到不同路径
-4. **collTaskAppend** 生成 `ncclTaskColl`，解析配置
-5. **ncclPrepareTasks** 按 (func, op, datatype) 分桶，计算算法
-6. **scheduleCollTasksToPlan** 切分 channel，生成 `ncclDevWorkColl`
-7. **finishPlan** 打包成 kernel 参数
+`finishPlan`is the "packer" of the enqueue module. It packs tasks, batches, and proxyOps into a parameter structure that the kernel can directly read. This is like express packaging—putting loose items into boxes, attaching waybills, and waiting for shipment.
 
-关键设计思想：
-- **分层解耦**：每个函数只做一件事，通过 `ncclInfo` 和 `ncclTaskColl` 传递状态
-- **预算控制**：通过 `ncclTestBudget` 控制每个 plan 的大小
-- **聚合优化**：大小相近的任务会被聚合，减少 kernel 启动次数
-- **配置优先级**：env > per-call > comm
+## Step-by-Step: The packing logic of finishPlan
 
-下一章我们将进入 `task_sched`，看 NCCL 如何编排多 channel 多 kernel 的执行顺序。
+[FACT:src/enqueue/enqueue.cc:236-330]
 
-## 本章思考与自测
+**Step 1: Decide the storage type.**If all work can fit into kernel args, use`ncclDevWorkStorageTypeArgs`：
 
-<details><summary>Q1: 如果把 `collTaskAppend` 中的 `aggIsolate` 判断去掉（即 `src/enqueue/enqueue.cc:2821-2822` 永远返回 false），在什么场景下会导致用户设置的 `maxCTAs` 失效？为什么？</summary>
+[FACT:src/enqueue/enqueue.cc:244-250]
 
-**参考解析**：`aggIsolate` 的作用是标记"这个任务不能被聚合"。如果去掉这个判断，设置了 per-call config 的任务会和相邻任务合并。在 `ncclPrepareTasks` 的聚合循环中（`src/enqueue/enqueue.cc:507-508`），聚合条件是 `aggEnd->trafficBytes < 4 * aggBeg->trafficBytes && !aggBeg->aggIsolate && !aggEnd->aggIsolate`。如果 `aggIsolate` 永远为 false，那么即使任务设置了 `maxCTAs=4`，它也可能和一个 `maxCTAs=32` 的任务合并。合并后的 `agg` 会取两者的某种组合（具体取决于 `ncclGetAlgoInfo` 的实现），导致实际使用的 CTA 数量不符合用户预期。
+**Step 2: Allocate kernelArgs.**Allocate from the memory stack:
 
-更严重的是，在 `scheduleCollTasksToPlan` 中（`src/enqueue/enqueue.cc:665-666`），`taskAggIsolate` 用于确保配置了 per-call 资源的任务单独占一个 plan。如果这个判断失效，多个任务会共享 plan 的 channel 预算，导致资源分配不符合预期。
+[FACT:src/enqueue/enqueue.cc:251-255]
 
-</details>
+**Step 3: Round-robin placement of batches.**The first batch of each channel must be placed at`batchZero[blockIdx.x]`：
 
-<details><summary>Q2: 在 `ncclEnqueueCheck` 中，如果 `ncclGroupEndInternal()` 返回错误（比如某个 rank 的 ArgsCheck 失败），但 `taskAppend` 已经成功执行了，会发生什么？NCCL 如何保证状态一致性？</summary>
+[FACT:src/enqueue/enqueue.cc:257-280]
 
-**参考解析**：看 `src/enqueue/enqueue.cc:3513-3519` 的控制流：
+**Step 4: Merge proxyOp queues.**Merge sort by opCount:
+
+[FACT:src/enqueue/enqueue.cc:282-329]
+
+## Data structure: ncclDevKernelArgs
+
+`ncclDevKernelArgs`is the parameter structure passed to the kernel. It contains:
+
+- `comm`: device-side communicator
+- `channelMask`: channel bitmask
+- `workStorageType`: work storage type
+- `workBuf`: work buffer pointer
+- `workMask`: work buffer mask
+
+## Production pitfall: batch order
+
+[FACT:src/enqueue/enqueue.cc:257-259]
+
+The comment states it clearly: "The first batch for each channel must be located at batchZero[blockIdx.x]". If this order is wrong, the kernel will read the wrong batch, causing data corruption.
+
+---
+
+# Chapter summary
+
+In this chapter, we traced the complete path from`ncclAllReduce`to`ncclTaskColl`:
+
+1. **ncclAllReduce**constructs`ncclInfo`, packing user parameters
+
+2. **ncclEnqueueCheck**validates parameters, handles group semantics
+
+3. **taskAppend**dispatches to different paths based on operation type
+
+4. **collTaskAppend**generates`ncclTaskColl`, parses configuration
+
+5. **ncclPrepareTasks**buckets by (func, op, datatype), computes algorithms
+
+6. **scheduleCollTasksToPlan**splits channels, generates`ncclDevWorkColl`
+
+7. **finishPlan**packs into kernel parameters
+
+Key design principles:
+
+- **Layered decoupling**: each function does only one thing, passing state through`ncclInfo`and`ncclTaskColl`
+- **Budget control**: controlling the size of each plan through`ncclTestBudget`
+- **Aggregation optimization**: tasks of similar size are aggregated, reducing the number of kernel launches
+- **Configuration priority**：env > per-call > comm
+
+In the next chapter, we will enter`task_sched`, to see how NCCL orchestrates the execution order of multiple channels and multiple kernels.
+
+# Chapter review and self-test
+
+Q1: If the`collTaskAppend`in`aggIsolate`is removed (i.e.,`src/enqueue/enqueue.cc:2821-2822`always returns false), in what scenarios would the user-set`maxCTAs`become ineffective? Why?
+
+**Reference analysis**：`aggIsolate`'s purpose is to mark "this task cannot be aggregated". If this check is removed, tasks with per-call config set will be merged with adjacent tasks. In`ncclPrepareTasks`'s aggregation loop (`src/enqueue/enqueue.cc:507-508`), the aggregation condition is`aggEnd->trafficBytes < 4 * aggBeg->trafficBytes && !aggBeg->aggIsolate && !aggEnd->aggIsolate`. If`aggIsolate`always returns false, then even if a task has`maxCTAs=4`set, it may be merged with a task that has`maxCTAs=32`. The merged`agg`will take some combination of the two (depending on the implementation of`ncclGetAlgoInfo`), causing the actual number of CTAs used to not match user expectations.
+
+More seriously, in`scheduleCollTasksToPlan`(`src/enqueue/enqueue.cc:665-666`），`taskAggIsolate`is used to ensure that tasks with per-call resources configured occupy a separate plan. If this check fails, multiple tasks will share the plan's channel budget, causing resource allocation to not match expectations.
+
+Q2: In`ncclEnqueueCheck`, if`ncclGroupEndInternal()`returns an error (e.g., ArgsCheck fails for some rank), but`taskAppend`has already executed successfully, what happens? How does NCCL ensure state consistency?
+
+**Reference analysis**: Look at`src/enqueue/enqueue.cc:3513-3519`'s control flow:
 
 ```c
 NCCLCHECKGOTO(taskAppend(info->comm, info), ret, fail);
@@ -446,17 +458,15 @@ exit:
   NCCLCHECK(ncclGroupEndInternal());
 ```
 
-如果 `taskAppend` 成功但 `ncclGroupEndInternal` 失败，`opCount` 已经递增了。这会导致后续操作的 opCount 与对端不匹配，可能触发 hang。
+If`taskAppend`succeeds but`ncclGroupEndInternal`fails,`opCount`has already been incremented. This will cause the opCount of subsequent operations to mismatch with the peer, potentially triggering a hang.
 
-NCCL 的处理方式是：`ncclGroupErrCheck(ret)` 会检查是否有错误，如果有，会设置 comm 的错误状态。后续的 API 调用会通过 `ncclCommGetAsyncError` 检测到这个错误并立即返回。这是一种"快速失败"策略——一旦出错，整个 comm 进入错误状态，不再尝试恢复。
+NCCL's approach is:`ncclGroupErrCheck(ret)`will check for errors, and if there are any, will set the comm's error state. Subsequent API calls will detect this error through`ncclCommGetAsyncError`and return immediately. This is a "fail-fast" strategy—once an error occurs, the entire comm enters an error state and no longer attempts recovery.
 
-在生产环境中，这意味着一旦出现 group 错误，用户需要销毁并重建 communicator。
+In a production environment, this means that once a group error occurs, the user needs to destroy and rebuild the communicator.
 
-</details>
+Q3: `scheduleCollTasksToPlan`The cell splitting algorithm in`src/enqueue/enqueue.cc:740-845`) has a boundary condition: when`cellsLo == 0`, it skips the minimum number of channels. If this skip logic has a bug (e.g.,`channelId`is not correctly incremented), what consequences would it cause?
 
-<details><summary>Q3: `scheduleCollTasksToPlan` 中的 cell 切分算法（`src/enqueue/enqueue.cc:740-845`）有一个边界条件：当 `cellsLo == 0` 时，会跳过最少的 channel。如果这个跳过逻辑有 bug（比如 `channelId` 没有正确递增），会导致什么后果？</summary>
-
-**参考解析**：看 `src/enqueue/enqueue.cc:770-780`：
+**Reference analysis**: Look at`src/enqueue/enqueue.cc:770-780`：
 
 ```c
 if (cellsLo == 0) {
@@ -472,13 +482,14 @@ if (cellsLo == 0) {
 }
 ```
 
-如果 `channelId` 没有正确递增，那么下一个任务会从错误的 channel 开始分配。这会导致：
-1. **channel 重叠**：两个任务可能分配到同一个 channel 的同一段数据
-2. **数据损坏**：kernel 会重复处理或遗漏数据
-3. **性能下降**：channel 负载不均衡
+If`channelId`is not correctly incremented, then the next task will start allocating from the wrong channel. This will cause:
 
-更隐蔽的是，这种 bug 可能只在特定消息大小下触发（当 `cellsLo == 0` 时），难以复现。NCCL 通过 `plan->channelMask |= (2ull << devWork->channelHi) - (1ull << devWork->channelLo)` 来跟踪已使用的 channel，但这只是记录，不能防止重叠。
+1. **Channel overlap**: two tasks may be allocated to the same segment of data in the same channel
 
-</details>
+2. **Data corruption**: the kernel will repeatedly process or miss data
 
-至此，我们已经看清 ncclAllReduce 如何从用户调用变成一串可执行的 kernel 任务：参数校验、算法/协议确定、channel 切分，最终生成 ncclInfo 与 ncclTaskColl。但任务被创建出来只是第一步——它们还需要被调度到多个 channel 上，生成 kernel 启动参数，并在 group 语义下处理批量提交与依赖排序。下一章将深入 src/enqueue/task_sched 与 src/enqueue/task_prep，回答“为什么一次 AllReduce 会启动多个 kernel，它们之间的顺序和依赖是怎么保证的”，同时揭示 src/group.cc 中 ncclGroupStart/ncclGroupEnd 如何把多次 API 调用合并成一次提交。
+3. **Performance degradation**: channel load imbalance
+
+More insidiously, this kind of bug may only be triggered under specific message sizes (when`cellsLo == 0`), making it hard to reproduce. NCCL uses`plan->channelMask |= (2ull << devWork->channelHi) - (1ull << devWork->channelLo)`to track the channels already in use, but this is only a record; it cannot prevent overlap.
+
+At this point, we have clearly seen how ncclAllReduce goes from a user call to a series of executable kernel tasks: parameter validation, algorithm/protocol determination, channel partitioning, and finally generating ncclInfo and ncclTaskColl. But creating the tasks is only the first step—they still need to be scheduled onto multiple channels, generate kernel launch parameters, and handle batch submission and dependency ordering under group semantics. The next chapter will dive into src/enqueue/task_sched and src/enqueue/task_prep to answer "why a single AllReduce launches multiple kernels, and how their order and dependencies are guaranteed," while also revealing how ncclGroupStart/ncclGroupEnd in src/group.cc merge multiple API calls into a single submission.

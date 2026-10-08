@@ -39,8 +39,8 @@
             <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </button>
           <div class="lang-dropdown-menu" id="lang-menu">
-            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" data-base="./">🇨🇳 简体中文</a>
-            <a href="en/#ch-01" class="lang-dropdown-item" data-lang="en" data-base="./en/">🇺🇸 English</a>
+            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" onclick="window.switchLanguage('zh', event)">🇨🇳 简体中文</a>
+            <a href="en/index.html#ch-01" class="lang-dropdown-item" data-lang="en" onclick="window.switchLanguage('en', event)">🇺🇸 English</a>
           </div>
         </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/nccl" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
@@ -106,10 +106,10 @@
       </div>
 
 
-      <section class="reader-chapter-section active-chapter" id="ch-01" data-title="第 1 章：第 1 章：运行与现象：从一个 AllReduce 开始看外部行为">
+      <section class="reader-chapter-section active-chapter" id="ch-01" data-title="第 1 章：运行与现象：从一个 AllReduce 开始看外部行为">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 01</span>
-          <h2 class="reader-chapter-title">第 1 章：第 1 章：运行与现象：从一个 AllReduce 开始看外部行为</h2>
+          <h2 class="reader-chapter-title">第 1 章：运行与现象：从一个 AllReduce 开始看外部行为</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -470,10 +470,10 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层">
+      <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 02</span>
-          <h2 class="reader-chapter-title">第 2 章：第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层</h2>
+          <h2 class="reader-chapter-title">第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -1099,10 +1099,10 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域">
+      <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 03</span>
-          <h2 class="reader-chapter-title">第 3 章：第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域</h2>
+          <h2 class="reader-chapter-title">第 3 章：初始化入局：ncclCommInitRank 如何把一群孤立进程建立成通信域</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -1494,10 +1494,10 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联">
+      <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 04</span>
-          <h2 class="reader-chapter-title">第 4 章：第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联</h2>
+          <h2 class="reader-chapter-title">第 4 章：拓扑发现与图搜索：NCCL 如何“看清”多 GPU 系统的物理互联</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -2048,10 +2048,10 @@ rank 7 -&gt; rank 0</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：第 5 章：算法与协议选型：tuning 模块如何决定通信路径">
+      <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：算法与协议选型：tuning 模块如何决定通信路径">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 05</span>
-          <h2 class="reader-chapter-title">第 5 章：第 5 章：算法与协议选型：tuning 模块如何决定通信路径</h2>
+          <h2 class="reader-chapter-title">第 5 章：算法与协议选型：tuning 模块如何决定通信路径</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -2616,10 +2616,10 @@ not_valid:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务">
+      <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 06</span>
-          <h2 class="reader-chapter-title">第 6 章：第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务</h2>
+          <h2 class="reader-chapter-title">第 6 章：算子下发全景：ncclAllReduce 如何变成一个可执行的 kernel 任务</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -2924,10 +2924,10 @@ exit:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序">
+      <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 07</span>
-          <h2 class="reader-chapter-title">第 7 章：第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序</h2>
+          <h2 class="reader-chapter-title">第 7 章：任务调度器：task_sched 如何编排多 channel 与 kernel 的执行顺序</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -3629,10 +3629,10 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑">
+      <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 08</span>
-          <h2 class="reader-chapter-title">第 8 章：第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑</h2>
+          <h2 class="reader-chapter-title">第 8 章：Kernel 启动与设备端执行：从 host 侧调用到 GPU 线程块起跑</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -4243,10 +4243,10 @@ for kfn in kfns:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现">
+      <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 09</span>
-          <h2 class="reader-chapter-title">第 9 章：第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现</h2>
+          <h2 class="reader-chapter-title">第 9 章：设备端通信原语：LL、LL128、Simple 三种协议的数据搬运实现</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -4474,10 +4474,10 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现">
+      <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 10</span>
-          <h2 class="reader-chapter-title">第 10 章：第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现</h2>
+          <h2 class="reader-chapter-title">第 10 章：集体通信算法内核：AllReduce、AllGather、ReduceScatter 的设备端实现</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -4790,10 +4790,10 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下">
+      <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 11</span>
-          <h2 class="reader-chapter-title">第 11 章：第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下</h2>
+          <h2 class="reader-chapter-title">第 11 章：传输层抽象：P2P、SHM、NET、NVLS 如何统一在同一套接口下</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -5483,10 +5483,10 @@ struct connectMap {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行">
+      <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 12</span>
-          <h2 class="reader-chapter-title">第 12 章：第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行</h2>
+          <h2 class="reader-chapter-title">第 12 章：代理线程异步调度：proxy.cc 如何解耦 I/O 与 kernel 执行</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -5947,10 +5947,10 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA">
+      <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 13</span>
-          <h2 class="reader-chapter-title">第 13 章：第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA</h2>
+          <h2 class="reader-chapter-title">第 13 章：InfiniBand 网络传输：net_ib 如何封装 verbs 与 GPUDirect RDMA</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -6545,10 +6545,10 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址">
+      <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 14</span>
-          <h2 class="reader-chapter-title">第 14 章：第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址</h2>
+          <h2 class="reader-chapter-title">第 14 章：对称内存与 NVLS：多播加速与 LSA 设备端直接寻址</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -7124,10 +7124,10 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-15" data-title="第 15 章：第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进">
+      <section class="reader-chapter-section" id="ch-15" data-title="第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 15</span>
-          <h2 class="reader-chapter-title">第 15 章：第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进</h2>
+          <h2 class="reader-chapter-title">第 15 章：RMA 与 GIN：远端内存访问与 GPU 直连通信的演进</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -7383,10 +7383,10 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-16" data-title="第 16 章：第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为">
+      <section class="reader-chapter-section" id="ch-16" data-title="第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 16</span>
-          <h2 class="reader-chapter-title">第 16 章：第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为</h2>
+          <h2 class="reader-chapter-title">第 16 章：插件生态与环境变量：net、tuner、profiler、env 如何扩展 NCCL 行为</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -7622,10 +7622,10 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-17" data-title="第 17 章：第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级">
+      <section class="reader-chapter-section" id="ch-17" data-title="第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 17</span>
-          <h2 class="reader-chapter-title">第 17 章：第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级</h2>
+          <h2 class="reader-chapter-title">第 17 章：RAS 机制与容错：链路故障检测、心跳与优雅降级</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -7921,10 +7921,10 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-18" data-title="第 18 章：第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化">
+      <section class="reader-chapter-section" id="ch-18" data-title="第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 18</span>
-          <h2 class="reader-chapter-title">第 18 章：第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化</h2>
+          <h2 class="reader-chapter-title">第 18 章：内存分配与显存管理：allocator、注册缓存与用户注册内存优化</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -8202,10 +8202,10 @@ struct ncclShadowObject {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-19" data-title="第 19 章：第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约">
+      <section class="reader-chapter-section" id="ch-19" data-title="第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 19</span>
-          <h2 class="reader-chapter-title">第 19 章：第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约</h2>
+          <h2 class="reader-chapter-title">第 19 章：设备端通信域与 ABI 兼容：devcomm 与 kernel 的通信契约</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -8560,10 +8560,10 @@ preferably with the same NCCL version that it will be running with.</code></pre>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-20" data-title="第 20 章：第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践">
+      <section class="reader-chapter-section" id="ch-20" data-title="第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 20</span>
-          <h2 class="reader-chapter-title">第 20 章：第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践</h2>
+          <h2 class="reader-chapter-title">第 20 章：设备端原生 API 与算子融合：nccl_device 与 kernel fusion 实践</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -8818,10 +8818,10 @@ preferably with the same NCCL version that it will be running with.</code></pre>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-21" data-title="第 21 章：第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论">
+      <section class="reader-chapter-section" id="ch-21" data-title="第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 21</span>
-          <h2 class="reader-chapter-title">第 21 章：第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论</h2>
+          <h2 class="reader-chapter-title">第 21 章：性能调优实战：tuning 实操、benchmark 工具与调优方法论</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -9501,10 +9501,10 @@ not_valid:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-22" data-title="第 22 章：第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案">
+      <section class="reader-chapter-section" id="ch-22" data-title="第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 22</span>
-          <h2 class="reader-chapter-title">第 22 章：第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案</h2>
+          <h2 class="reader-chapter-title">第 22 章：生产排障与踩坑：常见死锁、超时、版本不匹配与排查方案</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -10063,10 +10063,10 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-23" data-title="第 23 章：第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目">
+      <section class="reader-chapter-section" id="ch-23" data-title="第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 23</span>
-          <h2 class="reader-chapter-title">第 23 章：第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目</h2>
+          <h2 class="reader-chapter-title">第 23 章：生态扩展：nccl4py、nccl4rust、nccl_ep、nccl_ubx 等周边项目</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -10349,10 +10349,10 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-24" data-title="第 24 章：第 24 章：架构演进与未来方向：从静态通信到可编程通信">
+      <section class="reader-chapter-section" id="ch-24" data-title="第 24 章：架构演进与未来方向：从静态通信到可编程通信">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 24</span>
-          <h2 class="reader-chapter-title">第 24 章：第 24 章：架构演进与未来方向：从静态通信到可编程通信</h2>
+          <h2 class="reader-chapter-title">第 24 章：架构演进与未来方向：从静态通信到可编程通信</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>
@@ -10909,10 +10909,10 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-25" data-title="第 25 章：第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓">
+      <section class="reader-chapter-section" id="ch-25" data-title="第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 25</span>
-          <h2 class="reader-chapter-title">第 25 章：第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓</h2>
+          <h2 class="reader-chapter-title">第 25 章：全景回顾与思考：一个 AllReduce 的终极旅程与设计精髓</h2>
           <div class="reader-chapter-meta">
             <span>官方源: NVIDIA/nccl</span>
             <span>·</span>

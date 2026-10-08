@@ -1,31 +1,31 @@
-# Chapter 03: Request Lifecycle: End-to-End Flow from HTTP/CLI to EngineCore
+# Chapter 3: Request Entry: The Complete Path from HTTP/CLI to EngineCore
 
+In the previous chapter, we analyzed the two core data structures inside the engine, Request and KVCacheSpec, and understood how logical sequences are decoupled from physical memory blocks. But how exactly does an HTTP request body or a Python string traverse the API Server, chat template, and multimodal processing to ultimately become an EngineCoreRequest? This chapter will fully trace this path and reveal how the three entry paths—synchronous CLI, asynchronous API, and offline LLM class—converge onto the same engine core.
 
-上一章我们剖析了 Request 与 KVCacheSpec 这两个引擎内部的核心数据结构，理解了逻辑序列与物理显存块如何解耦。但一个 HTTP 请求体或一个 Python 字符串，究竟如何穿越 API Server、chat template 与多模态处理，最终变成 EngineCoreRequest？本章将完整追踪这条链路，并揭示同步 CLI、异步 API 与离线 LLM 类三条入口路径如何汇聚到同一引擎核心。
+# 3.1 The Convergence Point of Three Entry Paths: AsyncLLMEngine and LLMEngine
 
+Before diving into request parsing, we must first understand the topology of the three entry paths. vLLM provides three usage modes:`vllm serve`the OpenAI-compatible HTTP service started by, the command-line`vllm`tool, and directly instantiating the`LLM`class in Python for offline inference. They appear independent but actually share the same engine core.
 
-在深入请求解析之前，必须先看清三条入口路径的拓扑结构。vLLM 提供了三种使用方式：`vllm serve` 启动的 OpenAI 兼容 HTTP 服务、命令行 `vllm` 工具、以及 Python 中直接实例化 `LLM` 类做离线推理。它们看似独立，实则共享同一套引擎核心。
+Let's first look at the alias mechanism of the asynchronous API path.
 
-先看异步 API 路径的别名机制。
+[FACT:vllm/engine/async_llm_engine.py:7-7]
 
-[FACT:vllm/engine/async_llm_engine.py:7-7](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/engine/async_llm_engine.py#L7-L7)
+This file is so short it barely looks like a module—it does only one thing: aliasing`AsyncLLMEngine`to point to`vllm.v1.engine.async_llm.AsyncLLM`. This is a typical trace of architectural migration. In the vLLM v0 era,`AsyncLLMEngine`was a large and complex class. After the v1 architecture rewrite, the new`AsyncLLM`took on the same responsibilities. To avoid breaking existing user code, vLLM retained the old module path as a compatibility layer.
 
-这个文件短得几乎不像一个模块——它只做了一件事：把 `AsyncLLMEngine` 别名指向 `vllm.v1.engine.async_llm.AsyncLLM`。这是一个典型的架构迁移痕迹。vLLM v0 时代的 `AsyncLLMEngine` 是一个庞大而复杂的类，v1 架构重写后，新的 `AsyncLLM` 承担了相同职责。为了不破坏既有用户代码，vLLM 保留了旧模块路径作为兼容层。
+> **[Design Inference & Architectural Trade-offs]**
+> This pattern of "old path aliasing to new implementation" appears repeatedly in vLLM (such as`api_server.py`'s deprecation warning), indicating that the project adopted a gradual strategy in the v0 to v1 migration: new code uses new paths, old code does not error but receives warnings, giving users sufficient migration window.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种「旧路径别名指向新实现」的模式在 vLLM 中反复出现（如 `api_server.py` 的 deprecation warning），说明项目在 v0 到 v1 的迁移中采取了渐进式策略：新代码用新路径，旧代码不报错但会收到警告，给用户足够的迁移窗口。
+Now let's look at the entry point of the offline path.
 
-再看离线路径的入口。
+[FACT:vllm/entrypoints/llm.py:344-346]
 
-[FACT:vllm/entrypoints/llm.py:344-346](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L344-L346)
+`LLM.__init__`ultimately calls`LLMEngine.from_engine_args`, passing in`UsageContext.LLM_CLASS`. This`UsageContext`enum is the key to distinguishing entry paths—it lets the engine know whether it is running in offline batch mode or online serving mode, thereby adjusting logging, metrics, and resource management strategies.
 
-`LLM.__init__` 最终调用 `LLMEngine.from_engine_args`，传入 `UsageContext.LLM_CLASS`。这个 `UsageContext` 枚举是区分入口路径的关键——它让引擎知道自己是运行在离线批处理模式还是在线服务模式，从而调整日志、指标和资源管理策略。
+[FACT:vllm/entrypoints/llm.py:357-359]
 
-[FACT:vllm/entrypoints/llm.py:357-359](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L357-L359)
+Note the assignment of`self.renderer = self.llm_engine.renderer`and`self.input_processor = self.llm_engine.input_processor`here. The offline`LLM`class does not implement chat template rendering itself, but reuses the engine's internal`renderer`. This means the chat template parsing logic is the same code on both offline and online paths, only the invocation timing differs.
 
-注意这里 `self.renderer = self.llm_engine.renderer` 和 `self.input_processor = self.llm_engine.input_processor` 的赋值。离线 `LLM` 类并不自己实现 chat template 渲染，而是复用引擎内部的 `renderer`。这意味着 chat template 的解析逻辑在离线与在线路径上是同一份代码，只是调用时机不同。
-
-三条路径的收敛关系可以用下面的数据流图表示。
+The convergence relationship of the three paths can be represented by the following data flow diagram.
 
 ```mermaid
 flowchart LR
@@ -56,156 +56,160 @@ flowchart LR
     llm_engine --> core
 ```
 
-这张图揭示了一个关键设计：无论请求来自 HTTP、CLI 还是 Python，`chat_utils` 都是多模态与 chat template 处理的唯一入口。它把异构的输入格式统一为 `ConversationMessage` 列表加 `MultiModalDataDict`，再交给 renderer 生成 token 序列。
+This diagram reveals a key design: regardless of whether the request comes from HTTP, CLI, or Python,`chat_utils`is the sole entry point for multimodal and chat template processing. It unifies heterogeneous input formats into a`ConversationMessage`list plus`MultiModalDataDict`, then hands them to the renderer to generate token sequences.
 
+# 3.2 chat_utils: From Heterogeneous Messages to Unified Conversation Structure
 
-`chat_utils.py` 是整个请求入口层最复杂的模块，2264 行代码处理了 OpenAI 兼容格式、自定义扩展、多模态嵌入、工具调用等所有输入形态。它的核心职责可以用一句话概括：把用户传来的任意消息列表，规范化为 chat template 能理解的 `ConversationMessage` 列表，同时把多模态数据抽取到独立的 `MultiModalDataDict` 中。
+`chat_utils.py`is the most complex module in the entire request entry layer. Its 2264 lines of code handle OpenAI-compatible formats, custom extensions, multimodal embeddings, tool calls, and all other input forms. Its core responsibility can be summarized in one sentence: normalize any message list passed by the user into a`ConversationMessage`list that the chat template can understand, while extracting multimodal data into a separate`MultiModalDataDict`.
 
-## Intuitive Architectural Model：翻译官与行李分拣员
+## Intuitive Model: Translator and Baggage Sorter
 
-把 `chat_utils` 想象成机场的翻译官兼行李分拣员。旅客（用户）来自不同国家（OpenAI 格式、自定义格式、Harmony 格式），说着不同的语言。翻译官先把所有人的话翻译成统一的工作语言（`ConversationMessage`），同时把旅客托运的行李（图片、音频、视频）分拣到独立的传送带上（`MultiModalDataDict`），贴上标签（UUID），最后把人和行李分别送上同一架飞机（引擎）。
+Think of`chat_utils`as an airport translator and baggage sorter. Passengers (users) come from different countries (OpenAI format, custom format, Harmony format), speaking different languages. The translator first translates everyone's words into a unified working language (`ConversationMessage`), while sorting the passenger's checked baggage (images, audio, video) onto independent conveyor belts (`MultiModalDataDict`), attaching tags (UUID), and finally loading both the person and the baggage onto the same airplane (engine).
 
-如果没有这一层，引擎就必须理解每一种输入格式的细节，多模态数据的提取逻辑会散落在各个入口中，任何新格式的加入都要改动引擎核心。
+Without this layer, the engine would have to understand the details of every input format, the extraction logic for multimodal data would be scattered across various entry points, and adding any new format would require modifying the engine core.
 
-## 数据结构：追踪器与解析器的双类协作
+## Data structures: dual-class collaboration between trackers and parsers
 
-`chat_utils` 的核心是两组类的协作：`BaseMultiModalItemTracker` 及其子类负责「追踪」多模态项，`BaseMultiModalContentParser` 及其子类负责「解析」内容部分。
+`chat_utils`The core of  is the collaboration between two groups of classes:`BaseMultiModalItemTracker`and its subclasses are responsible for "tracking" multimodal items,`BaseMultiModalContentParser`and its subclasses are responsible for "parsing" content parts.
 
-先看追踪器的字段布局。
+First, let's look at the field layout of the tracker.
 
-[FACT:vllm/entrypoints/chat_utils.py:598-601](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L598-L601)
+[FACT:vllm/entrypoints/chat_utils.py:598-601]
 
-`_items_by_modality` 是一个 `defaultdict[str, list[_T]]`，按模态（image、audio、video 等）分组存储待处理的项。`_modality_order` 则专门为 `vision_chunk` 模态记录每个 chunk 的原始模态（image 还是 video），因为统一视觉 chunk 模型会把两者都映射到 `vision_chunk`，但后续处理需要知道原始类型。
+`_items_by_modality`is a`defaultdict[str, list[_T]]`, storing pending items grouped by modality (image, audio, video, etc.).`_modality_order`specifically records, for the`vision_chunk`modality, the original modality of each chunk (image or video), because the unified vision chunk model maps both to`vision_chunk`, but subsequent processing needs to know the original type.
 
-[FACT:vllm/entrypoints/chat_utils.py:613-615](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L613-L615)
+[FACT:vllm/entrypoints/chat_utils.py:613-615]
 
-`use_unified_vision_chunk_modality` 是一个 `cached_property`，从 HuggingFace 配置中读取 `use_unified_vision_chunk` 标志。使用 `cached_property` 而非普通属性，是因为这个检查在每次 `add` 调用时都会触发，缓存可以避免重复的 `getattr` 开销。
+`use_unified_vision_chunk_modality`is a`cached_property`, reading the`use_unified_vision_chunk`flag from the HuggingFace configuration. Using`cached_property`instead of a regular attribute is because this check is triggered on every`add`call, and caching avoids repeated`getattr`overhead.
 
-追踪器的 `add` 方法是核心入口。
+The tracker's`add`method is the core entry point.
 
-[FACT:vllm/entrypoints/chat_utils.py:656-684](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L656-L684)
+[FACT:vllm/entrypoints/chat_utils.py:656-684]
 
-`add` 方法先调用 `_validate_add` 做校验，然后根据是否使用统一视觉 chunk 模态，把项存入不同的键下。注意 `prompt_embeds` 的特殊处理：它直接追加到 `_items_by_modality["prompt_embeds"]` 并返回 `None`，因为预计算嵌入不经过 HF processor，没有占位符字符串。
+`add`The  method first calls`_validate_add`for validation, then stores items under different keys depending on whether the unified vision chunk modality is used. Note the special handling of`prompt_embeds`: it directly appends to`_items_by_modality["prompt_embeds"]`and returns`None`, because precomputed embeddings do not go through the HF processor and have no placeholder string.
 
-`_validate_add` 中的校验逻辑值得细看。
+`_validate_add`The validation logic in  is worth a closer look.
 
-[FACT:vllm/entrypoints/chat_utils.py:686-721](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L686-L721)
+[FACT:vllm/entrypoints/chat_utils.py:686-721]
 
-这里有一个微妙的分支：当 `enable_mm_embeds=True` 且该模态的每 prompt 限制为 0 且原始模态以 `_embeds` 结尾时，跳过数量校验。这是为了允许嵌入输入绕过原始模态的数量限制——嵌入是预计算的，不占用原始模态的处理资源。
+There is a subtle branch here: when`enable_mm_embeds=True`and the per-prompt limit for that modality is 0 and the original modality ends with`_embeds`, skip the count validation. This is to allow embedding inputs to bypass the count limit of the original modality—embeddings are precomputed and do not consume the processing resources of the original modality.
 
-## 场景驱动：一次带图片的 chat 请求如何被解析
+## Scenario-driven: how a chat request with an image is parsed
 
-假设用户发送一个包含图片 URL 和文本的 chat 请求。`parse_chat_messages` 是同步路径的入口。
+Suppose the user sends a chat request containing an image URL and text.`parse_chat_messages`is the entry point for the synchronous path.
 
-[FACT:vllm/entrypoints/chat_utils.py:2161-2197](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2161-L2197)
+[FACT:vllm/entrypoints/chat_utils.py:2161-2197]
 
-`parse_chat_messages` 创建 `MultiModalItemTracker`，遍历每条消息调用 `_parse_chat_message_content`，最后调用 `_postprocess_messages` 处理工具调用参数，再通过 `mm_tracker.resolve_items()` 物化多模态数据。
+`parse_chat_messages`creates`MultiModalItemTracker`, iterates over each message and calls`_parse_chat_message_content`, and finally calls`_postprocess_messages`to process tool call parameters, then materializes multimodal data through`mm_tracker.resolve_items()`.
 
-`_parse_chat_message_content` 负责单条消息的解析。
+`_parse_chat_message_content`is responsible for parsing a single message.
 
-[FACT:vllm/entrypoints/chat_utils.py:2007-2029](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2007-L2029)
+[FACT:vllm/entrypoints/chat_utils.py:2007-2029]
 
-它先规范化 content：`None` 变成空列表，字符串变成单个文本 part。然后调用 `_parse_chat_message_content_parts`，其中 `wrap_dicts` 参数由 `content_format == "openai"` 决定——这决定了输出是结构化字典列表还是拼接后的字符串。
+It first normalizes content:`None`becomes an empty list, and a string becomes a single text part. Then it calls`_parse_chat_message_content_parts`, where the`wrap_dicts`parameter is determined by`content_format == "openai"`—this determines whether the output is a list of structured dictionaries or a concatenated string.
 
-`_parse_chat_message_content_parts` 遍历每个 part。
+`_parse_chat_message_content_parts`iterates over each part.
 
-[FACT:vllm/entrypoints/chat_utils.py:1814-1853](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1814-L1853)
+[FACT:vllm/entrypoints/chat_utils.py:1814-1853]
 
-每个 part 经过 `_parse_chat_message_content_part` 处理。如果 `wrap_dicts=False`，最终会把文本和占位符拼接成单个字符串；如果 `wrap_dicts=True`，则返回结构化字典列表。
+Each part is processed by`_parse_chat_message_content_part`. If`wrap_dicts=False`, it ultimately concatenates text and placeholders into a single string; if`wrap_dicts=True`, it returns a list of structured dictionaries.
 
-`_parse_chat_message_content_part` 是分发的核心。
+`_parse_chat_message_content_part`is the core of dispatch.
 
-[FACT:vllm/entrypoints/chat_utils.py:1875-1884](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1875-L1884)
+[FACT:vllm/entrypoints/chat_utils.py:1875-1884]
 
-对于纯文本 part，先做保留占位符检查，再根据 `wrap_dicts` 决定返回格式。对于结构化 part，调用 `_parse_chat_message_content_mm_part` 提取类型和内容。
+For pure text parts, it first performs a placeholder-preservation check, then decides the return format based on`wrap_dicts`. For structured parts, it calls`_parse_chat_message_content_mm_part`to extract the type and content.
 
-[FACT:vllm/entrypoints/chat_utils.py:1690-1723](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1690-L1723)
+[FACT:vllm/entrypoints/chat_utils.py:1690-1723]
 
-`_parse_chat_message_content_mm_part` 通过 `MM_PARSER_MAP` 查找对应的解析函数。注意 `uuid is None` 的条件——如果用户提供了 UUID，说明媒体数据可能不在请求体中（已通过其他方式上传），此时走下面的直接 URL 字段分支。
+`_parse_chat_message_content_mm_part`looks up the corresponding parsing function through`MM_PARSER_MAP`. Note the condition of`uuid is None`—if the user provides a UUID, it means the media data may not be in the request body (it has been uploaded through other means), so it goes to the direct URL field branch below.
 
-[FACT:vllm/entrypoints/chat_utils.py:1731-1733](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1731-L1733)
+[FACT:vllm/entrypoints/chat_utils.py:1731-1733]
 
-当 `part_type is None` 或 `uuid is not None` 时，代码尝试从 part 中直接提取 URL 字段。这种「宽松解析」是为了兼容那些不严格遵循 OpenAI 格式的客户端。
+When`part_type is None`or`uuid is not None`, the code tries to directly extract the URL field from the part. This "lenient parsing" is to be compatible with clients that do not strictly follow the OpenAI format.
 
-回到 `_parse_chat_message_content_part`，媒体类型的 part 会被分发到对应的 `mm_parser` 方法。
+Returning to`_parse_chat_message_content_part`, parts of media types are dispatched to the corresponding`mm_parser`methods.
 
-[FACT:vllm/entrypoints/chat_utils.py:1923-1968](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1923-L1968)
+[FACT:vllm/entrypoints/chat_utils.py:1923-1968]
 
-每个媒体类型调用对应的 `parse_*` 方法，这些方法内部会调用 `tracker.add` 把项加入追踪器，并返回占位符字符串。最后根据 `interleave_strings` 决定返回占位符还是 `None`。
+Each media type calls the corresponding`parse_*`method, and these methods internally call`tracker.add`to add the item to the tracker and return a placeholder string. Finally, based on`interleave_strings`, it decides whether to return the placeholder or`None`。
 
-[FACT:vllm/entrypoints/chat_utils.py:1984-1999](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1984-L1999)
+[FACT:vllm/entrypoints/chat_utils.py:1984-1999]
 
-`prompt_embeds` 的处理是特殊的：无论 `interleave_strings` 如何，都返回 `PROMPT_EMBEDS_PLACEHOLDER_TOKEN`。注释解释了原因——prompt_embeds 在 token 偏移处拼接，位置很重要，如果走 `missing_placeholders` 的前置填充逻辑会打乱顺序。
+`prompt_embeds`is handled specially: regardless of`interleave_strings`, it returns`PROMPT_EMBEDS_PLACEHOLDER_TOKEN`. The comment explains the reason—prompt_embeds are concatenated at token offsets, and position matters; if it went through`missing_placeholders`'s pre-padding logic, the order would be disrupted.
 
-## 异步路径的差异
+## Differences in the asynchronous path
 
-异步路径使用 `AsyncMultiModalItemTracker` 和 `AsyncMultiModalContentParser`。核心差异在 `resolve_items`。
+The asynchronous path uses`AsyncMultiModalItemTracker`and`AsyncMultiModalContentParser`. The core difference is in`resolve_items`。
 
-[FACT:vllm/entrypoints/chat_utils.py:906-952](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L906-L952)
+[FACT:vllm/entrypoints/chat_utils.py:906-952]
 
-异步版本用 `asyncio.gather` 并发等待所有模态项。注释明确指出：每个追踪项已经是独立的 awaitable，异步连接器会把阻塞的解码工作卸载到线程池，所以串行等待一个模态再等下一个会无谓地增加延迟。`return_exceptions=True` 让所有任务都完成或失败后再统一抛出，避免第一个失败就放弃仍在进行中的网络请求。
+The asynchronous version uses`asyncio.gather`to concurrently await all modality items. The comment explicitly points out: each tracked item is already an independent awaitable, and the asynchronous connector offloads blocking decoding work to a thread pool, so serially awaiting one modality and then the next would unnecessarily increase latency.`return_exceptions=True`lets all tasks complete or fail before throwing uniformly, avoiding giving up on network requests still in progress just because the first one fails.
 
-## 设计思考：为什么追踪器与解析器分离
+## Design reflection: why trackers and parsers are separated
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 追踪器与解析器的分离是一个值得玩味的设计。追踪器负责「状态管理」——记录每个模态有多少项、校验数量限制、维护 vision_chunk 的原始模态顺序。解析器负责「内容提取」——从 URL 获取图片、从 base64 解码嵌入、处理音频格式转换。这种分离使得同步和异步路径可以共享追踪逻辑（`BaseMultiModalItemTracker` 是抽象基类），只在解析器层面分叉。如果合并成一个类，同步和异步的差异会渗透到追踪逻辑中，导致代码重复和状态管理复杂化。
+> **[Design Inference & Architectural Trade-offs]**
+> The separation of tracker and parser is a design worth pondering. The tracker is responsible for "state management"—recording how many items each modality has, validating count limits, and maintaining the original modality order of vision_chunk. The parser is responsible for "content extraction"—fetching images from URLs, decoding embeddings from base64, and handling audio format conversion. This separation allows the synchronous and asynchronous paths to share tracking logic (`BaseMultiModalItemTracker`is an abstract base class), diverging only at the parser layer. If merged into a single class, the differences between synchronous and asynchronous would permeate the tracking logic, leading to code duplication and more complex state management.
 
+# 3.3 From messages to tokens: the handoff between renderer and EngineCore
 
-`chat_utils` 产出的 `ConversationMessage` 列表和 `MultiModalDataDict` 还需要经过 chat template 渲染才能变成 token 序列。这一步由 renderer 完成，之后请求才真正进入引擎。
+`chat_utils`The`ConversationMessage`list and`MultiModalDataDict`produced by  still need to go through chat template rendering before they can become token sequences. This step is completed by the renderer, after which the request truly enters the engine.
 
-## 场景驱动：chat template 渲染与请求投递
+## Scenario-driven: chat template rendering and request submission
 
-`parse_chat_messages` 返回后，调用方（如 `OpenAIServingChat`）会把 `conversation` 和 `mm_data` 传给 renderer。renderer 应用 chat template，把 `ConversationMessage` 列表渲染成文本，再 tokenize 成 token ID 序列。多模态占位符（如 `<##IMAGE##>`）在 tokenize 后会被替换为模型特定的占位符 token。
+`parse_chat_messages`After returning, the caller (such as`OpenAIServingChat`) will pass`conversation`and`mm_data`to the renderer. The renderer applies the chat template, renders the`ConversationMessage`list into text, and then tokenizes it into a token ID sequence. Multimodal placeholders (such as`<##IMAGE##>`) are replaced with model-specific placeholder tokens after tokenization.
 
-渲染完成后，请求被封装为 `EngineCoreRequest`，通过 `AsyncLLM.add_request()` 或 `LLMEngine.add_request()` 投递到 EngineCore 的输入队列。
+After rendering is complete, the request is encapsulated as`EngineCoreRequest`and delivered to EngineCore's input queue via`AsyncLLM.add_request()`or`LLMEngine.add_request()`.
 
-[FACT:vllm/entrypoints/llm.py:420-484](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L420-L484)
+[FACT:vllm/entrypoints/llm.py:420-484]
 
-离线 `LLM.generate` 方法展示了这条链路：它先校验 `runner_type`，获取默认采样参数，然后调用 `_run_completion`。`_run_completion` 内部会调用 renderer 渲染 prompt，再通过 `llm_engine` 投递请求。
+Offline`LLM.generate`The method demonstrates this chain: it first validates`runner_type`, obtains default sampling parameters, then calls`_run_completion`。`_run_completion`Internally, it calls the renderer to render the prompt, then delivers the request via`llm_engine`.
 
-[FACT:vllm/entrypoints/llm.py:615-708](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/llm.py#L615-L708)
+[FACT:vllm/entrypoints/llm.py:615-708]
 
-`LLM.chat` 方法则展示了 chat 路径：它接收 `messages` 列表，调用 `_run_chat`，后者内部会调用 `parse_chat_messages` 和 renderer。
+`LLM.chat`The method demonstrates the chat path: it receives the`messages`list, calls`_run_chat`, which internally calls`parse_chat_messages`and the renderer.
 
-## 设计思考：为什么 renderer 在引擎内部
+## Design consideration: Why is the renderer inside the engine
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `LLM.__init__` 中 `self.renderer = self.llm_engine.renderer` 这一行揭示了一个重要设计决策：renderer 属于引擎而非入口层。这意味着 chat template 的加载、缓存和预热（`self.renderer.warmup(ChatParams(...))`）都在引擎初始化时完成，入口层只是调用者。这样做的好处是：离线 `LLM` 和在线 `AsyncLLM` 共享同一份 renderer 实现和缓存，避免重复加载 tokenizer 和 chat template。同时，renderer 的预热可以在引擎启动时完成，避免首个请求的冷启动延迟。
+> **[Design Inference & Architectural Trade-offs]**
+> `LLM.__init__`In`self.renderer = self.llm_engine.renderer`This line reveals an important design decision: the renderer belongs to the engine rather than the entry layer. This means that chat template loading, caching, and warmup (`self.renderer.warmup(ChatParams(...))`) are all completed during engine initialization, and the entry layer is merely the caller. The benefit of this approach is that offline`LLM`and online`AsyncLLM`share the same renderer implementation and cache, avoiding repeated loading of the tokenizer and chat template. At the same time, renderer warmup can be completed at engine startup, avoiding cold-start latency for the first request.
 
-## 错误恢复与生产踩坑
+## Error recovery and production pitfalls
 
-`_postprocess_messages` 中的工具调用参数处理是一个典型的生产环境陷阱。
+`_postprocess_messages`The tool call parameter handling in
 
-[FACT:vllm/entrypoints/chat_utils.py:2118-2158](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2118-L2158)
+[FACT:vllm/entrypoints/chat_utils.py:2118-2158]
 
-当 assistant 消息包含 `tool_calls` 时，`arguments` 字段可能是 JSON 字符串、字典或无效 JSON。代码尝试解析 JSON 字符串，如果失败则记录警告并强制转为空对象。注释解释了原因：格式错误的 `arguments` 存在于对话历史中，如果在这里让请求失败，后续每一轮都会失败，对话将无法恢复。这是一个深思熟虑的容错设计——宁可让模型看到空的工具参数，也不让整个对话卡死。
+is a typical production environment trap.`tool_calls`When an assistant message contains`arguments`, the field may be a JSON string, a dictionary, or invalid JSON. The code attempts to parse the JSON string; if it fails, it logs a warning and forcibly converts it to an empty object. The comment explains the reason: malformed`arguments`exists in the conversation history, and if the request is failed here, every subsequent turn will fail, and the conversation will be unable to recover. This is a deliberate fault-tolerance design—better to let the model see empty tool parameters than to let the entire conversation get stuck.
 
-另一个陷阱是保留占位符的注入防护。
+Another trap is injection protection for reserved placeholders.
 
-[FACT:vllm/entrypoints/chat_utils.py:1856-1872](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1856-L1872)
+[FACT:vllm/entrypoints/chat_utils.py:1856-1872]
 
-当 `enable_prompt_embeds` 开启时，`PROMPT_EMBEDS_PLACEHOLDER_TOKEN` 被注册为不可分割的特殊 token。如果用户文本中恰好包含这个字面序列，tokenizer 会把它编码为同一个 token ID，renderer 会误认为这是拼接点，允许调用者通过纯文本内容移动或注入拼接位置。`_reject_reserved_placeholder_in_text` 在文本 part 解析时拒绝这种输入，堵住了这个安全漏洞。
+When`enable_prompt_embeds`is enabled,`PROMPT_EMBEDS_PLACEHOLDER_TOKEN`is registered as an indivisible special token. If the user text happens to contain this literal sequence, the tokenizer will encode it as the same token ID, and the renderer will mistakenly think this is a splice point, allowing the caller to move or inject the splice position through plain text content.`_reject_reserved_placeholder_in_text`rejects this kind of input during text part parsing, closing this security hole.
 
-[FACT:vllm/entrypoints/chat_utils.py:1889-1892](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1889-L1892)
+[FACT:vllm/entrypoints/chat_utils.py:1889-1892]
 
-注意这个检查在 `isinstance(part, str)` 分支和结构化文本分支中都有调用，确保所有文本路径都经过防护。
+Note that this check is called in both the`isinstance(part, str)`branch and the structured text branch, ensuring that all text paths are protected.
 
+# Chapter summary
 
-本章追踪了请求从外部进入系统的第一段链路。三条入口路径——HTTP API、CLI 和离线 `LLM` 类——最终都汇聚到 `chat_utils` 的多模态解析层。`BaseMultiModalItemTracker` 负责状态管理，`BaseMultiModalContentParser` 负责内容提取，两者分离使得同步和异步路径可以共享追踪逻辑。`parse_chat_messages` 把异构消息规范化为 `ConversationMessage` 列表和 `MultiModalDataDict`，再交给引擎内部的 renderer 完成 chat template 渲染和 tokenize。最终，请求被封装为 `EngineCoreRequest` 投递到 EngineCore 的输入队列。
+This chapter traced the first segment of the path by which a request enters the system from the outside. The three entry paths—HTTP API, CLI, and offline`LLM`class—all ultimately converge on`chat_utils`'s multimodal parsing layer.`BaseMultiModalItemTracker`is responsible for state management,`BaseMultiModalContentParser`is responsible for content extraction, and the separation of the two allows the synchronous and asynchronous paths to share tracing logic.`parse_chat_messages`normalizes heterogeneous messages into a`ConversationMessage`list and`MultiModalDataDict`, then hands them to the engine-internal renderer to complete chat template rendering and tokenization. Finally, the request is encapsulated as`EngineCoreRequest`and delivered to EngineCore's input queue.
 
+# Chapter review and self-test
 
-Q1: 在 `_parse_chat_message_content_mm_part` 中，如果去掉 `uuid is None` 这个条件（即改为 `if isinstance(part_type, str) and part_type in MM_PARSER_MAP:`），在什么场景下会导致问题？
+Q1: In`_parse_chat_message_content_mm_part`, if`uuid is None`this condition is removed (that is, changed to`if isinstance(part_type, str) and part_type in MM_PARSER_MAP:`), in what scenarios would this cause problems?
 
-**参考解析**：`uuid is None` 条件的存在是为了处理「用户提供了 UUID 但媒体数据不在请求体中」的场景。当用户提供 UUID 时，媒体数据可能已经通过其他方式上传（如预先上传到媒体缓存），此时请求体中的 part 可能只包含 UUID 而不包含实际的 URL 或数据。如果去掉这个条件，代码会尝试通过 `MM_PARSER_MAP[part_type](part)` 解析，但 part 中可能没有对应的数据字段（如 `image_url` 为空），导致解析出 `None` 内容。更严重的是，后续的 `parse_image(None, uuid)` 会调用 `_connector.fetch_image(None)`，可能触发不必要的网络请求或异常。`uuid is not None` 分支则走直接字段提取路径，正确处理了「有 UUID 无数据」的情况。参见 [FACT:vllm/entrypoints/chat_utils.py:1713-1723](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1713-L1723) 和 [FACT:vllm/entrypoints/chat_utils.py:1731-1733](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L1731-L1733)。
+**Reference analysis**：`uuid is None`The condition exists to handle the scenario where "the user provides a UUID but the media data is not in the request body." When the user provides a UUID, the media data may already have been uploaded by other means (such as being pre-uploaded to the media cache). In this case, the part in the request body may contain only the UUID and not the actual URL or data. If this condition is removed, the code will try to parse via`MM_PARSER_MAP[part_type](part)`, but the part may not have the corresponding data field (such as`image_url`being empty), resulting in parsed`None`content. More seriously, the subsequent`parse_image(None, uuid)`will call`_connector.fetch_image(None)`, which may trigger unnecessary network requests or exceptions.`uuid is not None`The branch instead takes the direct field extraction path, correctly handling the "UUID present but no data" case. See[FACT:vllm/entrypoints/chat_utils.py:1713-1723]and[FACT:vllm/entrypoints/chat_utils.py:1731-1733]。
 
-Q2: `AsyncMultiModalItemTracker.resolve_items` 使用 `asyncio.gather(..., return_exceptions=True)` 而非默认的 `return_exceptions=False`。如果改为 `False`，在什么并发场景下会导致资源泄漏？
+Q2: `AsyncMultiModalItemTracker.resolve_items`uses`asyncio.gather(..., return_exceptions=True)`instead of the default`return_exceptions=False`. If changed to`False`, in what concurrency scenario would this cause a resource leak?
 
-**参考解析**：`return_exceptions=False` 时，`asyncio.gather` 会在第一个异常抛出时立即返回，但其他仍在进行中的任务不会被取消——它们会继续在后台运行。这些任务可能持有网络连接、线程池工作项或文件句柄。如果这些任务最终失败，异常会被静默丢弃（因为 gather 已经返回），导致资源泄漏和难以排查的错误。`return_exceptions=True` 让所有任务都完成或失败后再统一检查，确保没有任务被遗弃。注释明确说明了这一点：「Gathering with return_exceptions=True lets every task finish (or itself fail) before we raise, instead of abandoning still-in-flight fetches (real network/thread-pool work) the moment the first one fails.」参见 [FACT:vllm/entrypoints/chat_utils.py:924-931](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L924-L931)。
+**Reference analysis**：`return_exceptions=False`When`asyncio.gather`returns immediately when the first exception is thrown, but other tasks still in progress will not be canceled—they will continue running in the background. These tasks may hold network connections, thread pool work items, or file handles. If these tasks eventually fail, the exceptions will be silently discarded (because gather has already returned), causing resource leaks and errors that are difficult to troubleshoot.`return_exceptions=True`Let all tasks either complete or fail before performing a unified check, ensuring no task is abandoned. The comment explicitly states this: "Gathering with return_exceptions=True lets every task finish (or itself fail) before we raise, instead of abandoning still-in-flight fetches (real network/thread-pool work) the moment the first one fails." See[FACT:vllm/entrypoints/chat_utils.py:924-931]。
 
-Q3: `_postprocess_messages` 中，当 `arguments` 是无效 JSON 时，代码选择强制转为空对象而非抛出异常。如果改为抛出异常，在什么生产场景下会导致不可恢复的对话状态？
+Q3: `_postprocess_messages`In, when`arguments`is invalid JSON, the code chooses to force it to an empty object rather than throw an exception. If changed to throw an exception, in what production scenarios would it lead to an unrecoverable conversation state?
 
-**参考解析**：`arguments` 字段存在于对话历史中（assistant 消息的 `tool_calls`）。如果某轮对话中模型生成了格式错误的 `arguments`，这个错误会被保存在对话历史中。如果 `_postprocess_messages` 在解析历史时抛出异常，那么后续每一轮请求都会因为历史中的这个错误而失败——即使当前轮次的输入完全正确。用户将无法继续这个对话，只能放弃整个会话重新开始。强制转为空对象让对话可以继续，模型看到空的工具参数后会重新生成正确的调用。注释解释了这一点：「A malformed arguments string lives in conversation history, so failing the request here would fail every subsequent turn too and leave the conversation unrecoverable.」参见 [FACT:vllm/entrypoints/chat_utils.py:2124-2139](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/entrypoints/chat_utils.py#L2124-L2139)。
+**Reference Analysis**：`arguments`The field exists in the conversation history (the assistant message's`tool_calls`). If in a certain round of conversation the model generates a malformed`arguments`, this error will be saved in the conversation history. If`_postprocess_messages`throws an exception when parsing the history, then every subsequent round of requests will fail because of this error in the history—even if the current round's input is completely correct. The user will be unable to continue this conversation and can only abandon the entire session and start over. Forcing it to an empty object allows the conversation to continue, and after the model sees the empty tool arguments, it will regenerate the correct call. The comment explains this: "A malformed arguments string lives in conversation history, so failing the request here would fail every subsequent turn too and leave the conversation unrecoverable." See[FACT:vllm/entrypoints/chat_utils.py:2124-2139]。
 
-下一章将进入调度器，看 EngineCore 如何用连续批处理与显存感知策略编排这些请求。
+The next chapter will enter the scheduler to see how EngineCore orchestrates these requests using continuous batching and memory-aware strategies.
 
-至此，请求已经完成从外部输入到 EngineCoreRequest 的规范化转换，并抵达引擎核心的入口。但请求进入之后并不会立即执行——引擎需要决定在每一步中处理哪些请求、如何分配有限的显存资源。下一章将深入 EngineCore 的调度循环，剖析 Scheduler 如何在连续批处理中权衡吞吐与延迟，以及 chunked prefill、prefix caching 与 KV block 分配如何协同工作。
+At this point, the request has completed the normalized transformation from external input to EngineCoreRequest and has reached the entrance of the engine core. But after the request enters, it is not executed immediately—the engine needs to decide which requests to process at each step and how to allocate limited GPU memory resources. The next chapter will delve into EngineCore's scheduling loop, analyzing how the Scheduler balances throughput and latency in continuous batching, and how chunked prefill, prefix caching, and KV block allocation work together.

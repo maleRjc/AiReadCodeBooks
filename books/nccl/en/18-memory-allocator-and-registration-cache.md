@@ -1,17 +1,16 @@
-# Chapter 18: Memory Allocator & Registration Cache: Host-to-Device Memory Optimization
+# Chapter 18: Memory Allocation and Device Memory Management: Allocator, Registration Cache, and User-Registered Memory Optimization
 
+In the previous chapter, we saw how the RAS subsystem runs independently of the data plane on the control plane, using hashes for versioning and reference counting to protect object lifetimes. This chapter enters NCCL's third pillar—memory management. The upper bound of communication performance often does not depend on the algorithm itself, but on "whether the data can be directly read and written by the NIC." To this end, NCCL builds a three-layer mechanism: at the bottom layer, it uses`ncclSpace`and`ncclShadowPool`to manage the address space and shadow objects; at the middle layer, it uses`ncclMemManager`to track the import/export and suspend/resume of dynamic memory; at the upper layer, it uses`ncclCommRegister`to register user buffers into the cache, avoiding repeated pinning of memory for every communication. This chapter will dismantle these three mechanisms layer by layer and answer "why NCCL needs to register memory before communication" and "how the registration cache affects performance."
 
-上一章我们看到 RAS 子系统如何在控制面上独立于数据面运行，用哈希做版本、用引用计数保护生命周期。本章进入 NCCL 的第三个支柱——内存管理。通信性能的上限，往往不取决于算法本身，而取决于「数据能不能被网卡直接读写」。NCCL 为此构建了三层机制：底层用 `ncclSpace` 和 `ncclShadowPool` 管理地址空间与影子对象，中层用 `ncclMemManager` 跟踪动态内存的导入导出与挂起恢复，上层用 `ncclCommRegister` 把用户缓冲区注册进缓存，避免每次通信都重复 pin 内存。本章将逐层拆解这三套机制，回答「为什么 NCCL 通信前需要注册内存」以及「注册缓存如何影响性能」。
+# 18.1 ncclSpace: Slicing the Address Space into Alternating Full/Empty Segments
 
-## 18.1 ncclSpace：把地址空间切成满/空交替的段
+## Intuitive Model
 
-### Intuitive Architectural Model
+Imagine an infinitely long line of parking space numbers, starting at 0 and extending to the right. Some spaces have cars parked in them (allocated), while others are empty (unallocated).`ncclSpace`is the "parking space status record book" for this number line—it does not record every space, but only the "boundary points where the status flips." Without it, when managing the virtual address range of symmetric memory, NCCL would have to maintain a flag bit for every byte, making memory overhead proportional to the address space, which is completely unacceptable.
 
-想象一条无限长的停车位编号线，从 0 开始向右延伸。有些车位停了车（已分配），有些空着（未分配）。`ncclSpace` 就是这条编号线的「车位状态记录本」——它不记录每个车位，只记录「状态发生翻转的边界点」。若没有它，NCCL 在管理对称内存的虚拟地址区间时，就得为每个字节维护一个标记位，内存开销与地址空间成正比，完全不可接受。
+## Data Structure and Memory Layout
 
-### Data Structures & Memory Layout
-
-`ncclSpace` 的定义极简 [FACT:src/include/allocator.h:20-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/allocator.h#L20-L24)：
+`ncclSpace`The definition of  is extremely minimal[FACT:src/include/allocator.h:20-24]：
 
 ```c
 struct ncclSpace {
@@ -21,49 +20,49 @@ struct ncclSpace {
 };
 ```
 
-核心洞察在源码注释里写得很清楚 [FACT:src/allocator.cc:151-153](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L151-L153)：`cuts[]` 把非负整数轴切成「满」和「空」交替的段，切割点升序排列，最后一个切割点之后的段必然是空的（未分配前沿）。由此可以推导出判断第 `i` 段是否已满的公式：
+The core insight is stated very clearly in the source code comments[FACT:src/allocator.cc:151-153]：`cuts[]`splits the non-negative integer axis into alternating "full" and "empty" segments, with cut points arranged in ascending order. The segment after the last cut point must be empty (the unallocated frontier). From this, we can derive the formula for determining whether the`i`th segment is full:
 
 ```
 isFull(i) = (i%2 != ncuts%2)
 ```
 
-这个公式的含义是：段的满/空状态由「段索引奇偶性」和「切割点总数的奇偶性」共同决定。当 `ncuts` 为偶数时，第 0 段（`cuts[0]` 之前）是空的；当 `ncuts` 为奇数时，第 0 段是满的。这个不变量贯穿整个模块。
+The meaning of this formula is: the full/empty state of a segment is jointly determined by "the parity of the segment index" and "the parity of the total number of cut points." When`ncuts`is even, segment 0 (before`cuts[0]`) is empty; when`ncuts`is odd, segment 0 is full. This invariant runs through the entire module.
 
-### Step-by-Step Walkthrough：一次分配如何改变 cuts[]
+## Step-by-Step Walkthrough: How a Single Allocation Changes cuts[]
 
-代入场景：初始 `ncclSpace` 为空（`count=0`），调用 `ncclSpaceTryAlloc(a, limit=1000, size=100, align=1, &outOffset)`。
+Scenario: initially`ncclSpace`is empty (`count=0`), call`ncclSpaceTryAlloc(a, limit=1000, size=100, align=1, &outOffset)`。
 
-**第一步：定位第一个空段** [FACT:src/allocator.cc:209](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L209)。`i = a->count % 2`，此时 `count=0`，所以 `i=0`，从第 0 段开始扫描。
+**Step 1: Locate the first empty segment** [FACT:src/allocator.cc:209]。`i = a->count % 2`, at this point`count=0`, so`i=0`, and scanning starts from segment 0.
 
-**第二步：计算段边界** [FACT:src/allocator.cc:212-213](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L212-L213)。`i==0` 时 `lo=0`；`i==a->count` 时 `hi=limit=1000`。所以空段是 `[0, 1000)`。
+**Step 2: Compute the segment boundaries** [FACT:src/allocator.cc:212-213]。`i==0`when`lo=0`；`i==a->count`when`hi=limit=1000`. So the empty segment is`[0, 1000)`。
 
-**第三步：对齐并检查容量** [FACT:src/allocator.cc:214-215](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L214-L215)。`off = alignUp(0, 1) = 0`，`0 + 100 <= 1000` 成立，分配成功。
+**Step 3: Align and check capacity** [FACT:src/allocator.cc:214-215]。`off = alignUp(0, 1) = 0`，`0 + 100 <= 1000`holds, and the allocation succeeds.
 
-**第四步：插入切割点** [FACT:src/allocator.cc:217-223](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L217-L223)。因为 `i==0`（在头部插入），走慢路径 `insertSegment(a, 0, 0, 100)`。`insertSegment` 在 `index=0` 处插入两个切割点 `lo=0, hi=100` [FACT:src/allocator.cc:172-174](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L172-L174)，然后执行「相邻重复值过滤」[FACT:src/allocator.cc:185-203](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L185-L203)。过滤逻辑很精妙：它用读写双游标扫描，遇到重复值就回退写游标，把成对的重复值删掉——因为成对重复意味着一个空段被夹在两个满段之间，可以合并。但前导零是特例，可以单独删除 [FACT:src/allocator.cc:182-184](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L182-L184)。
+**Step 4: Insert cut points** [FACT:src/allocator.cc:217-223]. Because`i==0`(insertion at the head), take the slow path`insertSegment(a, 0, 0, 100)`。`insertSegment`at`index=0`insert two cut points`lo=0, hi=100` [FACT:src/allocator.cc:172-174], then perform "adjacent duplicate value filtering"[FACT:src/allocator.cc:185-203]. The filtering logic is very elegant: it scans with read and write cursors, and when it encounters duplicate values, it moves the write cursor back, deleting duplicate pairs—because a duplicate pair means an empty segment is sandwiched between two full segments and can be merged. But leading zeros are a special case and can be deleted separately[FACT:src/allocator.cc:182-184]。
 
-分配后 `cuts = [0, 100]`，`count=2`。此时 `isFull(0) = (0%2 != 2%2) = false`，第 0 段（`[0,0)`，空）为空；第 1 段（`[0,100)`）为满。正确。
+After allocation`cuts = [0, 100]`，`count=2`. At this point`isFull(0) = (0%2 != 2%2) = false`, segment 0 (`[0,0)`, empty) is empty; segment 1 (`[0,100)`) is full. Correct.
 
-**第五步：释放** [FACT:src/allocator.cc:239-267](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L239-L267)。调用 `ncclSpaceFree(a, 0, 100)`。先检查 `cuts[count-1] <= offset` 是否成立 [FACT:src/allocator.cc:231-237](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L231-L237)，即 `100 <= 0` 为假，继续。定位第一个满段 `i = 1 - count%2 = 1 - 0 = 1` [FACT:src/allocator.cc:246](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L246)，`cuts[1]=100 > 0`，所以 `i=1`。`lo = cuts[0] = 0`，`hi = cuts[1] = 100`。检查 `offset < lo || hi < offset+size` [FACT:src/allocator.cc:252](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L252)，`0<0` 假，`100<100` 假，通过。因为 `lo==offset` 且 `offset+size==hi`，两个快速路径都不满足（第一个要求 `offset+size != hi`，第二个要求 `lo != offset`），走慢路径 `insertSegment(a, 1, 0, 100)` [FACT:src/allocator.cc:264](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L264)。插入后 `cuts = [0, 0, 100, 100]`，过滤后变成 `[]`，`count=0`。回到初始状态。
+**Step 5: Free** [FACT:src/allocator.cc:239-267]. Call`ncclSpaceFree(a, 0, 100)`. First check whether`cuts[count-1] <= offset`holds[FACT:src/allocator.cc:231-237], that is,`100 <= 0`is false, so continue. Locate the first full segment`i = 1 - count%2 = 1 - 0 = 1` [FACT:src/allocator.cc:246]，`cuts[1]=100 > 0`, so`i=1`。`lo = cuts[0] = 0`，`hi = cuts[1] = 100`. Check`offset < lo || hi < offset+size` [FACT:src/allocator.cc:252]，`0<0`false,`100<100`false, pass. Because`lo==offset`and`offset+size==hi`, neither fast path is satisfied (the first requires`offset+size != hi`, the second requires`lo != offset`), so take the slow path`insertSegment(a, 1, 0, 100)` [FACT:src/allocator.cc:264]. After insertion`cuts = [0, 0, 100, 100]`, and after filtering it becomes`[]`，`count=0`. Back to the initial state.
 
-这个「插入后过滤」的设计避免了在分配/释放时做复杂的段合并逻辑，把复杂度集中在 `insertSegment` 一处。
+This "insert then filter" design avoids complex segment merging logic during allocation/free, concentrating the complexity in`insertSegment`in one place.
 
-### 设计思考与生产踩坑
+## Design Considerations and Production Pitfalls
 
-**为什么用 int64_t 而不是 size_t？** 因为 `ncclSpace` 管理的是「偏移量」而非「指针」，偏移量可能为负（虽然实际使用中不会），且需要与 CUDA 的 `CUdeviceptr` 宽度一致。用有符号类型便于在调试时发现越界。
+**Why use int64_t instead of size_t?**Because`ncclSpace`manages "offsets" rather than "pointers," offsets may be negative (although this does not happen in actual use), and it needs to match the width of CUDA's`CUdeviceptr`. Using a signed type makes out-of-bounds issues easier to spot during debugging.
 
-**性能陷阱**：`ncclSpaceFree` 的注释直言「This could be binary search, but since allocate is linear there's no point」[FACT:src/allocator.cc:245](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L245)。这意味着分配和释放都是 O(n) 扫描。如果某个通信域频繁分配释放大量小段，`cuts[]` 会膨胀，每次操作都变慢。生产环境中应尽量复用已注册的缓冲区，而不是反复注册/注销。
+**Performance Pitfall**：`ncclSpaceFree`The comment directly states, "This could be binary search, but since allocate is linear there's no point"[FACT:src/allocator.cc:245]. This means both allocation and free are O(n) scans. If a communication domain frequently allocates and frees a large number of small segments,`cuts[]`will grow, and every operation will become slower. In production environments, registered buffers should be reused as much as possible rather than repeatedly registered/unregistered.
 
-**对齐溢出风险**：`alignUp(lo, align)` 在 `lo` 接近 `INT64_MAX` 且 `align` 较大时可能溢出。源码没有显式检查，因为 `limit` 由调用方保证在合理范围内。
+**Alignment Overflow Risk**：`alignUp(lo, align)`when`lo`is close to`INT64_MAX`and`align`is large, overflow may occur. The source code does not explicitly check this because`limit`is guaranteed by the caller to be within a reasonable range.
 
-## 18.2 ncclShadowPool：设备对象与主机影子的配对管理
+# 18.2 ncclShadowPool: Paired Management of Device Objects and Host Shadows
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-GPU kernel 运行在设备上，无法直接访问主机内存中的 C++ 对象（比如 `ncclDevComm` 里的元数据）。`ncclShadowPool` 就像一个「翻译官」：它为每个设备侧对象分配一块显存，同时在主机侧分配一块对应的「影子」内存，并维护「设备地址 → 主机地址」的映射表。当 host 需要修改某个设备对象的配置时，先改主机影子，再拷贝到设备。若没有它，每次 kernel 要读元数据都得通过 `cudaMemcpy` 从 host 拉取，延迟高得无法接受。
+GPU kernels run on the device and cannot directly access C++ objects in host memory (such as the metadata in`ncclDevComm`).`ncclShadowPool`It acts like a "translator": it allocates a block of device memory for each device-side object, while simultaneously allocating a corresponding "shadow" memory block on the host side, and maintains a "device address → host address" mapping table. When the host needs to modify the configuration of a device object, it first modifies the host shadow, then copies it to the device. Without it, every time a kernel needs to read metadata it would have to pull it from the host via`cudaMemcpy`, resulting in unacceptably high latency.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-两个核心结构体 [FACT:src/allocator.cc:272-277](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L272-L277)：
+Two core structs[FACT:src/allocator.cc:272-277]：
 
 ```c
 struct ncclShadowPage {   // 最多 64 个对象的连续块
@@ -80,7 +79,7 @@ struct ncclShadowObject {
 };
 ```
 
-`ncclShadowPool` 本身 [FACT:src/include/allocator.h:42-47](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/allocator.h#L42-L47)：
+`ncclShadowPool`itself[FACT:src/include/allocator.h:42-47]：
 
 ```c
 struct ncclShadowPool {
@@ -91,114 +90,114 @@ struct ncclShadowPool {
 };
 ```
 
-**关键设计点：`freeMask` 是 uint64_t**，所以每页最多 64 个对象。这不是随意选的——64 位正好是一个缓存行的宽度，`popFirstOneBit` 可以用单条 `__builtin_ctzll` 指令找到第一个空闲槽位，无需循环。
+**Key design points:`freeMask`is uint64_t**, so each page holds at most 64 objects. This is not an arbitrary choice—64 bits is exactly the width of a cache line,`popFirstOneBit`and a single`__builtin_ctzll`instruction can be used to find the first free slot without looping.
 
-**哈希表增长策略**：源码注释「Maintain 2:1 object:bucket ratio」[FACT:src/allocator.cc:368](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L368)，即对象数超过桶数两倍时扩容。初始 `hbits=4`（16 个桶）[FACT:src/allocator.cc:363](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L363)，每次翻倍。
+**Hash Table Growth Strategy**: Source code comment "Maintain 2:1 object:bucket ratio"[FACT:src/allocator.cc:368], meaning it expands when the number of objects exceeds twice the number of buckets. Initial`hbits=4`(16 buckets)[FACT:src/allocator.cc:363], doubling each time.
 
-### Step-by-Step Walkthrough：一次分配如何选择页或直连
+## Step-by-Step Walkthrough: How a Single Allocation Chooses Between Page or Direct
 
-代入场景：`ncclShadowPoolAlloc(pool, size=1024, &devObj, &hostObj, stream)`。
+Scenario:`ncclShadowPoolAlloc(pool, size=1024, &devObj, &hostObj, stream)`。
 
-**第一步：惰性初始化** [FACT:src/allocator.cc:347-366](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L347-L366)。若 `hbits==0`，先查询设备是否支持内存池 [FACT:src/allocator.cc:352](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L352)，支持则创建 `cudaMemPool_t`，设置 `maxSize` 为参数 `SHADOW_MEMPOOL_MAX_SIZE`（默认 1GB）[FACT:src/allocator.cc:359](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L359)。然后分配 16 个桶的哈希表。
+**Step 1: Lazy initialization** [FACT:src/allocator.cc:347-366]. If`hbits==0`, first query whether the device supports memory pools[FACT:src/allocator.cc:352], and if supported, create`cudaMemPool_t`, set`maxSize`to the parameter`SHADOW_MEMPOOL_MAX_SIZE`(default 1GB)[FACT:src/allocator.cc:359]. Then allocate a hash table with 16 buckets.
 
-**第二步：检查是否需要扩容** [FACT:src/allocator.cc:369-386](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L369-L386)。若 `count+1 > 2<<hbits`，分配双倍桶数组，遍历旧表重新插入（`hashInsert` 用 `ncclHashPointer` 计算桶索引 [FACT:src/allocator.cc:333-337](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L333-L337)），释放旧表。
+**Step 2: Check whether expansion is needed** [FACT:src/allocator.cc:369-386]. If`count+1 > 2<<hbits`, allocate a double-sized bucket array, traverse the old table and reinsert (`hashInsert`using`ncclHashPointer`to compute the bucket index[FACT:src/allocator.cc:333-337]), and free the old table.
 
-**第三步：决定走页路径还是直连路径** [FACT:src/allocator.cc:390](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L390)。判断条件 `(64<<10)/size >= 3`，即 `size <= 21845` 时走页路径。对于 `size=1024`，`65536/1024=64 >= 3`，走页路径。
+**Step 3: Decide whether to take the page path or the direct path** [FACT:src/allocator.cc:390]. The condition is`(64<<10)/size >= 3`, i.e., when`size <= 21845`, take the page path. For`size=1024`，`65536/1024=64 >= 3`, take the page path.
 
-**第四步：计算页内对象大小** [FACT:src/allocator.cc:391-392](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L391-L392)。`shift = max(0, log2Down(1024)+1-4) = max(0, 10+1-4) = 7`。`pageObjSize = ((1024 + 127) >> 7) << 7 = 1024`。即页内对象大小按 2 的幂对齐到 128 字节的倍数。
+**Step 4: Compute the in-page object size** [FACT:src/allocator.cc:391-392]。`shift = max(0, log2Down(1024)+1-4) = max(0, 10+1-4) = 7`。`pageObjSize = ((1024 + 127) >> 7) << 7 = 1024`. That is, the in-page object size is aligned to a power of 2, rounded up to a multiple of 128 bytes.
 
-**第五步：查找或创建页** [FACT:src/allocator.cc:393-415](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L393-L415)。遍历 `pool->pages` 链表，找 `objSize == pageObjSize` 的页。若没有，创建新页：`pageSize = min(65536, 64*1024) = 65536`，`freeMask = uint64_t(-1) >> (64 - 65536/1024) = uint64_t(-1) >> 0 = 全 1`（64 个槽位全空）[FACT:src/allocator.cc:400](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L400)。用 `cudaMallocFromPoolAsync` 或 `cudaMalloc` 分配显存 [FACT:src/allocator.cc:403-404](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L403-L404)，并 `cudaMemsetAsync` 清零 [FACT:src/allocator.cc:405](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L405)。
+**Step 5: Find or create a page** [FACT:src/allocator.cc:393-415]. Traverse the`pool->pages`linked list to find a page with`objSize == pageObjSize`. If none exists, create a new page:`pageSize = min(65536, 64*1024) = 65536`，`freeMask = uint64_t(-1) >> (64 - 65536/1024) = uint64_t(-1) >> 0 = 全 1`(all 64 slots empty)[FACT:src/allocator.cc:400]. Use`cudaMallocFromPoolAsync`or`cudaMalloc`to allocate device memory[FACT:src/allocator.cc:403-404], and`cudaMemsetAsync`zero out[FACT:src/allocator.cc:405]。
 
-**第六步：从页中取槽位** [FACT:src/allocator.cc:408-412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L408-L412)。`popFirstOneBit(&page->freeMask)` 找到第一个空闲位，`devObj = page->devObjs + slot * pageObjSize`。若 `freeMask` 变为 0（页满），把页从空闲链表移除 [FACT:src/allocator.cc:411](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L411)。
+**Step 6: Take a slot from the page** [FACT:src/allocator.cc:408-412]。`popFirstOneBit(&page->freeMask)`to find the first free bit,`devObj = page->devObjs + slot * pageObjSize`. If`freeMask`becomes 0 (page full), remove the page from the free list[FACT:src/allocator.cc:411]。
 
-**第七步：分配主机影子对象** [FACT:src/allocator.cc:423-428](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L423-L428)。`malloc(sizeof(ncclShadowObject) + alignof(max_align_t)-1 + size)`，注意这里多分配了 `alignof(max_align_t)-1` 字节用于对齐填充。`hostObj = alignUp((char*)(obj+1), alignof(max_align_t))`，即对象头之后对齐到最大对齐边界。然后 `memset(hostObj, 0, size)` 清零。
+**Step 7: Allocate the host shadow object** [FACT:src/allocator.cc:423-428]。`malloc(sizeof(ncclShadowObject) + alignof(max_align_t)-1 + size)`, note that here extra`alignof(max_align_t)-1`bytes are allocated for alignment padding.`hostObj = alignUp((char*)(obj+1), alignof(max_align_t))`, i.e., after the object header, align to the maximum alignment boundary. Then`memset(hostObj, 0, size)`zero out.
 
-**第八步：插入哈希表并更新计数** [FACT:src/allocator.cc:429-430](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L429-L430)。
+**Step 8: Insert into the hash table and update the count** [FACT:src/allocator.cc:429-430]。
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-`ncclShadowPool` 本身**没有锁**。这意味着它只能在单线程上下文中使用，或者由调用方保证互斥。从 NCCL 的实际使用看，它主要在通信域初始化阶段被调用，此时是单线程的。
+`ncclShadowPool`itself**has no lock**. This means it can only be used in a single-threaded context, or mutual exclusion must be guaranteed by the caller. From NCCL's actual usage, it is mainly called during the communication domain initialization phase, which is single-threaded.
 
-`cudaMallocFromPoolAsync` 和 `cudaFreeAsync` 是异步操作，依赖 `stream` 参数保证顺序 [FACT:src/allocator.cc:403,459](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L403,459)。`ncclShadowPoolDestruct` 在释放所有资源后调用 `cudaStreamSynchronize(stream)` [FACT:src/allocator.cc:333-337](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L333-L337)，确保所有异步释放完成后再销毁内存池。
+`cudaMallocFromPoolAsync`and`cudaFreeAsync`are asynchronous operations, relying on the`stream`parameter to guarantee ordering[FACT:src/allocator.cc:403,459]。`ncclShadowPoolDestruct`is called after all resources are released`cudaStreamSynchronize(stream)` [FACT:src/allocator.cc:333-337], ensuring that all asynchronous frees complete before destroying the memory pool.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：页内对象大小对齐导致的内存浪费**。`pageObjSize` 按 2 的幂对齐，若 `size=1000`，`shift = log2Down(1000)+1-4 = 9+1-4 = 6`，`pageObjSize = ((1000+63)>>6)<<6 = 1024`。每个对象浪费 24 字节，页内 64 个对象浪费 1536 字节。对于大量小对象，这个开销不可忽视。
+**Pitfall 1: Memory waste caused by in-page object size alignment**。`pageObjSize`is aligned to a power of 2; if`size=1000`，`shift = log2Down(1000)+1-4 = 9+1-4 = 6`，`pageObjSize = ((1000+63)>>6)<<6 = 1024`. Each object wastes 24 bytes, and 64 objects in a page waste 1536 bytes. For a large number of small objects, this overhead cannot be ignored.
 
-**坑 2：`ncclShadowPoolFree` 找不到对象时的行为** [FACT:src/allocator.cc:442-445](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L442-L445)。它返回 `ncclInternalError` 并打印警告，但**不释放任何资源**。如果调用方忽略返回值，会导致内存泄漏。生产代码必须检查返回值。
+**Pitfall 2:`ncclShadowPoolFree`Behavior when an object cannot be found** [FACT:src/allocator.cc:442-445]. It returns`ncclInternalError`and prints a warning, but**does not release any resources**. If the caller ignores the return value, it will cause a memory leak. Production code must check the return value.
 
-**坑 3：`ncclShadowPoolDestruct` 中 `freeMask==0` 的页被回收** [FACT:src/allocator.cc:301-306](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L301-L306)。注意这里把 `freeMask` 设为 1（而非全 1），意味着只标记第一个槽位为空。这是为了把「满页」重新放入 `pool->pages` 链表，但页内其他槽位仍然被占用——实际上这些对象即将被释放，所以这个操作是安全的。但如果析构过程中有并发访问，会读到不一致状态。
+**Pitfall 3:`ncclShadowPoolDestruct`In`freeMask==0`, a page with** [FACT:src/allocator.cc:301-306]is reclaimed`freeMask`. Note that here`pool->pages`is set to 1 (rather than all 1s), meaning only the first slot is marked as free. This is to put the "full page" back into the
 
-## 18.3 ncclMemManager：动态内存的引用计数与挂起恢复
+# linked list, but the other slots in the page are still occupied—in fact, these objects are about to be released, so this operation is safe. However, if there is concurrent access during destruction, an inconsistent state will be read.
 
-### Intuitive Architectural Model
+## 18.3 ncclMemManager: Reference Counting and Suspend/Resume for Dynamic Memory
 
-训练任务可能运行数天，期间 GPU 可能被其他任务抢占，或者需要做检查点。`ncclMemManager` 就像一个「内存管家」：它记录所有动态分配的内存（scratch/offload），在需要时把 GPU 内存「挂起」（unmap 物理页，保留虚拟地址），把数据备份到 CPU，等恢复时再重新分配物理页、重新映射、恢复数据。若没有它，任务被抢占后只能从头开始，浪费数小时训练进度。
+Intuitive Model`ncclMemManager`Training tasks may run for days, during which the GPU may be preempted by other tasks, or checkpoints may need to be taken.
 
-### Data Structures & Memory Layout
+## It acts like a "memory steward": it records all dynamically allocated memory (scratch/offload), and when needed "suspends" GPU memory (unmaps physical pages, retains virtual addresses), backs up the data to the CPU, and upon resumption reallocates physical pages, remaps, and restores the data. Without it, after a task is preempted it can only start over from the beginning, wasting hours of training progress.
 
-`ncclMemManager` 的核心字段（从初始化代码推断）[FACT:src/mem_manager.cc:32-60](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L32-L60)：
+`ncclMemManager`Data Structures and Memory Layout[FACT:src/mem_manager.cc:32-60]：
 
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| `entries` | `ncclDynMemEntry*` | 动态内存条目链表头 |
-| `numEntries` | `int` | 链表长度 |
-| `released` | `int` | 0=活跃，1=已挂起 |
-| `refCount` | `int` | 引用计数（多个 comm 可共享） |
-| `totalPersist` | `size_t` | 持久内存总量（原子） |
-| `totalScratch` | `size_t` | scratch 内存总量（原子） |
-| `totalOffload` | `size_t` | offload 内存总量（原子） |
-| `cpuBackupUsage` | `size_t` | CPU 备份内存总量 |
-| `lock` | `std::mutex` | 保护 entries 链表 |
-| `initialized` | `int` | 原子标志，防止访问已销毁的 mutex |
+| Core fields of | (inferred from the initialization code) | Field |
+| --- | --- | --- |
+| `entries` | `ncclDynMemEntry*` | Type |
+| `numEntries` | `int` | Meaning |
+| `released` | `int` | Head of the dynamic memory entry linked list |
+| `refCount` | `int` | Linked list length |
+| `totalPersist` | `size_t` | 0=active, 1=suspended |
+| `totalScratch` | `size_t` | Reference count (multiple comms can share) |
+| `totalOffload` | `size_t` | Total persistent memory (atomic) |
+| `cpuBackupUsage` | `size_t` | Total scratch memory (atomic) |
+| `lock` | `std::mutex` | Total offload memory (atomic) |
+| `initialized` | `int` | Total CPU backup memory |
 
-**内存布局的关键设计**：`lock` 是一个 `std::mutex`，但 `ncclMemManager` 是用 `ncclCalloc` 分配的（C 风格），所以必须用 placement new 显式构造 [FACT:src/mem_manager.cc:39](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L39)，析构时显式调用 `~mutex()` [FACT:src/mem_manager.cc:120](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L120)。这是 C/C++ 混合编程的经典陷阱。
+**Protects the entries linked list**：`lock`Atomic flag to prevent accessing a destroyed mutex`std::mutex`Key design of the memory layout`ncclMemManager`is a`ncclCalloc`, but[FACT:src/mem_manager.cc:39]is allocated with`~mutex()` [FACT:src/mem_manager.cc:120](C style), so placement new must be used to explicitly construct
 
-**原子变量与锁的分工**：统计字段（`totalPersist` 等）用原子操作更新，不需要锁；`entries` 链表用 `lock` 保护。这样统计查询（`ncclCommMemStats`）可以无锁读取 [FACT:src/mem_manager.cc:1117-1130](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L1117-L1130)，而链表操作必须持锁。
+**, and**must be explicitly called during destruction. This is a classic pitfall of mixed C/C++ programming.`totalPersist`Division of labor between atomic variables and locks`entries`: Statistical fields (`lock`, etc.) are updated with atomic operations and do not need locks;`ncclCommMemStats`the linked list is protected by[FACT:src/mem_manager.cc:1117-1130]. In this way, statistical queries (
 
-### Step-by-Step Walkthrough：挂起与恢复的完整流程
+## Step-by-Step Walkthrough: The Complete Suspend and Resume Flow
 
-**挂起流程** `ncclCommMemSuspend` [FACT:src/mem_manager.cc:418-540](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L418-L540)：
+**Suspend Flow** `ncclCommMemSuspend` [FACT:src/mem_manager.cc:418-540]：
 
-**第一步：前置检查** [FACT:src/mem_manager.cc:419-430](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L419-L430)。检查内存管理器是否禁用、comm 是否为空、是否已经挂起。
+**Step 1: Pre-checks** [FACT:src/mem_manager.cc:419-430]. Check whether the memory manager is disabled, whether comm is empty, and whether it is already suspended.
 
-**第二步：设备同步与 barrier** [FACT:src/mem_manager.cc:440-441](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L440-L441)。`cudaDeviceSynchronize()` 确保所有 GPU 操作完成，然后 `bootstrapBarrier` 确保所有 rank 同步。barrier tag 是 `0xBEEF`。
+**Step 2: Device Synchronization and Barrier** [FACT:src/mem_manager.cc:440-441]。`cudaDeviceSynchronize()`Ensure all GPU operations are complete, then`bootstrapBarrier`Ensure all ranks are synchronized. The barrier tag is`0xBEEF`。
 
-**第三步：第一遍扫描——unmap 所有 peer 导入的缓冲区** [FACT:src/mem_manager.cc:444-465](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L444-L465)。对每个 `isImportedFromPeer && state==Active` 的条目，调用 `cuMemUnmap` 解除映射 [FACT:src/mem_manager.cc:451](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L451)，释放 handle [FACT:src/mem_manager.cc:456](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L456)，状态改为 `Released`。
+**Step 3: First Pass — Unmap All Peer-Imported Buffers** [FACT:src/mem_manager.cc:444-465]. For each`isImportedFromPeer && state==Active`entry, call`cuMemUnmap`to unmap[FACT:src/mem_manager.cc:451], release the handle[FACT:src/mem_manager.cc:456], and change the state to`Released`。
 
-**第四步：第二遍扫描——offload 本地内存** [FACT:src/mem_manager.cc:468-526](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L468-L526)。跳过 peer 导入和已释放的条目。对 `ncclMemOffload` 类型，先分配 CPU 备份 [FACT:src/mem_manager.cc:484](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L484)，然后 `cudaMemcpy` 从 GPU 拷贝到 CPU [FACT:src/mem_manager.cc:492](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L492)。对 `ncclMemScratch` 类型，只累加统计。然后关闭 shareable FD [FACT:src/mem_manager.cc:508-513](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L508-L513)，`cuMemUnmap` [FACT:src/mem_manager.cc:516](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L516)，`cuMemRelease` [FACT:src/mem_manager.cc:519](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L519)，状态改为 `Released`。
+**Step 4: Second Pass — Offload Local Memory** [FACT:src/mem_manager.cc:468-526]. Skip peer-imported and already-released entries. For`ncclMemOffload`type, first allocate a CPU backup[FACT:src/mem_manager.cc:484], then`cudaMemcpy`copy from GPU to CPU[FACT:src/mem_manager.cc:492]. For`ncclMemScratch`type, only accumulate statistics. Then close the shareable FD[FACT:src/mem_manager.cc:508-513]，`cuMemUnmap` [FACT:src/mem_manager.cc:516]，`cuMemRelease` [FACT:src/mem_manager.cc:519], and change the state to`Released`。
 
-**第五步：标记已挂起** [FACT:src/mem_manager.cc:528](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L528)。
+**Step 5: Mark as Suspended** [FACT:src/mem_manager.cc:528]。
 
-**恢复流程** `ncclCommMemResume` [FACT:src/mem_manager.cc:550-942](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L550-L942)：
+**Resume Flow** `ncclCommMemResume` [FACT:src/mem_manager.cc:550-942]：
 
-**第一步：恢复本地内存** [FACT:src/mem_manager.cc:577-668](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L577-L668)。对每个 `!isImportedFromPeer && state==Released` 的条目，重新 `cuMemCreate` [FACT:src/mem_manager.cc:599](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L599)，`ncclCuMemMapAndSetAccess` 映射到相同虚拟地址 [FACT:src/mem_manager.cc:602](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L602)，恢复 peer 访问权限 [FACT:src/mem_manager.cc:610-626](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L610-L626)，对 offload 类型从 CPU 备份恢复数据 [FACT:src/mem_manager.cc:632-643](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L632-L643)，重新导出 FABRIC handle [FACT:src/mem_manager.cc:646-658](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L646-L658)。
+**Step 1: Restore Local Memory** [FACT:src/mem_manager.cc:577-668]. For each`!isImportedFromPeer && state==Released`entry, re-`cuMemCreate` [FACT:src/mem_manager.cc:599]，`ncclCuMemMapAndSetAccess`map to the same virtual address[FACT:src/mem_manager.cc:602], restore peer access permissions[FACT:src/mem_manager.cc:610-626], restore data from the CPU backup for offload types[FACT:src/mem_manager.cc:632-643], and re-export the FABRIC handle[FACT:src/mem_manager.cc:646-658]。
 
-**第二步：barrier 同步** [FACT:src/mem_manager.cc:671-679](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L671-L679)。tag 仍是 `0xBEEF`。
+**Step 2: Barrier Synchronization** [FACT:src/mem_manager.cc:671-679]. The tag is still`0xBEEF`。
 
-**第三步：交换新 handle 信息** [FACT:src/mem_manager.cc:688-816](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L688-L816)。统计每个 rank 有多少本地缓冲区需要广播 [FACT:src/mem_manager.cc:689-696](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L689-L696)，用 `bootstrapAllGather` 交换计数 [FACT:src/mem_manager.cc:710](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L710)，计算偏移 [FACT:src/mem_manager.cc:724-728](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L724-L728)，然后先 `bootstrapSend` 再 `bootstrapRecv`（注释明确「send first, then receive to avoid deadlock」[FACT:src/mem_manager.cc:783](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L783)）。
+**Step 3: Exchange New Handle Information** [FACT:src/mem_manager.cc:688-816]. Count how many local buffers each rank needs to broadcast[FACT:src/mem_manager.cc:689-696], use`bootstrapAllGather`to exchange counts[FACT:src/mem_manager.cc:710], compute offsets[FACT:src/mem_manager.cc:724-728], then first`bootstrapSend`then`bootstrapRecv`(the comment explicitly states "send first, then receive to avoid deadlock"[FACT:src/mem_manager.cc:783]）。
 
-**第四步：重新导入 peer 缓冲区** [FACT:src/mem_manager.cc:822-911](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L822-L911)。对每个 `isImportedFromPeer && state==Released` 的条目，在交换结果中查找匹配的 handle 信息 [FACT:src/mem_manager.cc:829-835](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L829-L835)。POSIX FD 类型需要检查 hostHash 是否相同 [FACT:src/mem_manager.cc:853-859](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L853-L859)，然后通过 proxy 获取 FD [FACT:src/mem_manager.cc:866](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L866)，`cuMemImportFromShareableHandle` 导入 [FACT:src/mem_manager.cc:873](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L873)。FABRIC 类型直接导入 [FACT:src/mem_manager.cc:878](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L878)。然后 `ncclCuMemMapAndSetAccess` 重新映射 [FACT:src/mem_manager.cc:893](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L893)。
+**Step 4: Re-import Peer Buffers** [FACT:src/mem_manager.cc:822-911]. For each`isImportedFromPeer && state==Released`entry, look up the matching handle information in the exchange results[FACT:src/mem_manager.cc:829-835]. For POSIX FD type, check whether hostHash is the same[FACT:src/mem_manager.cc:853-859], then obtain the FD through the proxy[FACT:src/mem_manager.cc:866]，`cuMemImportFromShareableHandle`import[FACT:src/mem_manager.cc:873]. For FABRIC type, import directly[FACT:src/mem_manager.cc:878]. Then`ncclCuMemMapAndSetAccess`remap[FACT:src/mem_manager.cc:893]。
 
-**第五步：最终 barrier** [FACT:src/mem_manager.cc:916-928](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L916-L928)。tag 是 `0xCAFE`，与前面的 `0xBEEF` 区分。
+**Step 5: Final Barrier** [FACT:src/mem_manager.cc:916-928]. The tag is`0xCAFE`, distinguished from the earlier`0xBEEF`.
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-**引用计数保护生命周期**：`ncclMemManagerDestroy` 先递减 `refCount` [FACT:src/mem_manager.cc:76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L76)，若仍大于 0 则只清除当前 comm 的指针 [FACT:src/mem_manager.cc:81](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L81)，不释放资源。这允许多个 comm 共享同一个内存管理器（比如 split_share 场景）。
+**Reference Counting Protects the Lifecycle**：`ncclMemManagerDestroy`First decrement`refCount` [FACT:src/mem_manager.cc:76], and if it is still greater than 0, only clear the pointer for the current comm[FACT:src/mem_manager.cc:81], without releasing resources. This allows multiple comms to share the same memory manager (such as in the split_share scenario).
 
-**原子 initialized 标志**：所有操作前都检查 `COMPILER_ATOMIC_LOAD(&manager->initialized, memory_order_acquire)` [FACT:src/mem_manager.cc:136,242,338,358](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L136,242,338,358)，防止访问已销毁的 mutex。销毁时用 `memory_order_release` 存储 0 [FACT:src/mem_manager.cc:87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L87)，确保之前的写操作对其他线程可见。
+**Atomic initialized Flag**: Check before all operations`COMPILER_ATOMIC_LOAD(&manager->initialized, memory_order_acquire)` [FACT:src/mem_manager.cc:136,242,338,358], to prevent accessing a destroyed mutex. During destruction, use`memory_order_release`to store 0[FACT:src/mem_manager.cc:87], ensuring that previous write operations are visible to other threads.
 
-**CUDA VMM API 的使用**：`cuMemCreate`/`cuMemMap`/`cuMemUnmap`/`cuMemRelease` 是 CUDA 虚拟内存管理 API，允许物理内存和虚拟地址分离。这是挂起/恢复的基础——挂起时 unmap 物理页但保留虚拟地址，恢复时重新映射到相同虚拟地址，这样所有已建立的指针关系都不需要修改。
+**Use of the CUDA VMM API**：`cuMemCreate`/`cuMemMap`/`cuMemUnmap`/`cuMemRelease`is the CUDA virtual memory management API, which allows physical memory and virtual addresses to be separated. This is the foundation of suspend/resume — during suspend, unmap the physical pages but retain the virtual addresses; during resume, remap to the same virtual addresses, so that all established pointer relationships do not need to be modified.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：split_share 通信域不支持挂起** [FACT:src/mem_manager.cc:1014-1018](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L1014-L1018)。若 `refCount > 1`，直接返回 `ncclInvalidUsage`。因为多个 comm 共享内存管理器时，挂起一个 comm 会影响其他 comm 的内存。
+**Pitfall 1: The split_share communication domain does not support suspend** [FACT:src/mem_manager.cc:1014-1018]. If`refCount > 1`, directly return`ncclInvalidUsage`. Because when multiple comms share a memory manager, suspending one comm will affect the memory of other comms.
 
-**坑 2：POSIX FD 跨节点失效** [FACT:src/mem_manager.cc:853-859](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L853-L859)。POSIX 文件描述符只在同一节点内有效，跨节点恢复时必须跳过。源码用 `hostHash` 比较判断是否同节点。
+**Pitfall 2: POSIX FD becomes invalid across nodes** [FACT:src/mem_manager.cc:853-859]. POSIX file descriptors are only valid within the same node, and must be skipped when resuming across nodes. The source code uses`hostHash`comparison to determine whether they are on the same node.
 
-**坑 3：offload 数据恢复失败时保留备份** [FACT:src/mem_manager.cc:635](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L635)。若 `cudaMemcpy` 从 CPU 恢复到 GPU 失败，源码打印警告并保留 `cpuBackup`，不释放。这是为了给调用方一个重试的机会，但如果不重试就会泄漏 CPU 内存。
+**Pitfall 3: Keep the backup when offload data restoration fails** [FACT:src/mem_manager.cc:635]. If`cudaMemcpy`restoring from CPU to GPU fails, the source code prints a warning and keeps`cpuBackup`, without releasing it. This is to give the caller a chance to retry, but if no retry occurs, CPU memory will leak.
 
-**坑 4：`ncclMemUntrackDynamic` 中的 use-after-free 风险**。源码在持锁状态下找到条目、保存必要信息、释放条目 [FACT:src/mem_manager.cc:302](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L302)，然后在锁外更新统计 [FACT:src/mem_manager.cc:311-327](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L311-L327)。这个顺序是正确的，但如果 `info` 指针指向调用方的栈内存，且调用方在锁外读取，需要确保 `info` 的生命周期覆盖整个函数。
+**Pitfall 4:`ncclMemUntrackDynamic`use-after-free risk in**. The source code finds the entry while holding the lock, saves the necessary information, releases the entry[FACT:src/mem_manager.cc:302], and then updates statistics outside the lock[FACT:src/mem_manager.cc:311-327]. This order is correct, but if the`info`pointer points to the caller's stack memory and the caller reads it outside the lock, you need to ensure that`info`'s lifetime covers the entire function.
 
 ```mermaid
 flowchart TD
@@ -222,105 +221,106 @@ flowchart TD
     err1 --> done
 ```
 
-上图展示了挂起流程的控制流。注意两个关键分支：第一遍只处理 peer 导入的缓冲区，第二遍只处理本地缓冲区，顺序不能颠倒——必须先解除对 peer 内存的引用，再释放本地内存。
+The figure above shows the control flow of the suspend process. Note two key branches: the first pass only handles peer-imported buffers, and the second pass only handles local buffers. The order cannot be reversed — you must first release references to peer memory, and then release local memory.
 
-## 18.4 注册缓存：ncclRegister 如何避免重复 pin
+# 18.4 Registration Cache: How ncclRegister Avoids Repeated Pinning
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-网卡要直接读写 GPU 显存（GPUDirect RDMA），必须先「注册」这块内存——告诉网卡「这块地址你可以直接访问」。注册过程涉及 pin 页、建立 IOMMU 映射，开销很大（毫秒级）。如果每次 AllReduce 都重新注册，小消息通信的延迟会被注册开销完全淹没。`ncclRegister` 就是一个「注册缓存」：它把已注册的地址范围记录在有序数组里，下次遇到相同或包含的缓冲区，直接复用，不重复注册。
+For the NIC to directly read and write GPU memory (GPUDirect RDMA), the memory must first be "registered" — telling the NIC "you can directly access this address." The registration process involves pinning pages and establishing IOMMU mappings, and is very expensive (millisecond-level). If re-registration happens on every AllReduce, the latency of small-message communication will be completely overwhelmed by registration overhead.`ncclRegister`is a "registration cache": it records already-registered address ranges in an ordered array, and the next time it encounters the same or a contained buffer, it directly reuses it without re-registering.
 
-### Data Structures & Memory Layout
+## Data Structure and Memory Layout
 
-`ncclRegCache` 的核心是一个有序数组 `slots`，每个元素是 `ncclReg*`。`ncclReg` 的关键字段（从使用推断）：
+`ncclRegCache`The core of`slots`is an ordered array`ncclReg*`。`ncclReg`, where each element is
 
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| `begAddr` | `uintptr_t` | 页对齐的起始地址 |
-| `endAddr` | `uintptr_t` | 页对齐的结束地址 |
-| `localRefs` | `int` | 本地引用计数 |
-| `graphRefs` | `int` | 图引用计数 |
-| `state` | `int` | 注册状态位（NET/NVLS/COLLNET/IPC） |
-| `netHandleHead` | `ncclRegNetHandles*` | 网络 handle 链表 |
-| `ipcInfos` | `ncclIpcInfo**` | IPC 信息数组 |
+| 's key fields (inferred from usage): | Field | Type |
+| --- | --- | --- |
+| `begAddr` | `uintptr_t` | Meaning |
+| `endAddr` | `uintptr_t` | Page-aligned start address |
+| `localRefs` | `int` | Page-aligned end address |
+| `graphRefs` | `int` | Local reference count |
+| `state` | `int` | Graph reference count |
+| `netHandleHead` | `ncclRegNetHandles*` | Registration state bits (NET/NVLS/COLLNET/IPC) |
+| `ipcInfos` | `ncclIpcInfo**` | IPC information array |
 
-**页对齐**：`begAddr = (uintptr_t)data & -pageSize` [FACT:src/register/register.cc:31](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L31)，`endAddr = ((uintptr_t)data + size + pageSize - 1) & -pageSize` [FACT:src/register/register.cc:32](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L32)。`-pageSize` 是 `pageSize` 的二进制补码，等价于「向下对齐到 pageSize 的倍数」。这样做的原因是：注册的最小粒度是页，即使只注册 1 字节，也要注册整页。
+**Page alignment**：`begAddr = (uintptr_t)data & -pageSize` [FACT:src/register/register.cc:31]，`endAddr = ((uintptr_t)data + size + pageSize - 1) & -pageSize` [FACT:src/register/register.cc:32]。`-pageSize`is`pageSize`'s two's complement, equivalent to "rounding down to a multiple of pageSize". The reason for this is: the minimum granularity of registration is a page, so even if only 1 byte is registered, the entire page must be registered.
 
-### Step-by-Step Walkthrough：一次注册如何命中缓存
+## Step-by-Step Walkthrough: How a single registration hits the cache
 
-代入场景：`ncclCommRegister(comm, buff=0x7f0000001000, size=4096, &handle)`。
+Scenario:`ncclCommRegister(comm, buff=0x7f0000001000, size=4096, &handle)`。
 
-**第一步：参数检查与页对齐** [FACT:src/register/register.cc:18-24](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L18-L24)。`CommCheck` 验证 comm 有效性。假设 `pageSize=4096`，`begAddr = 0x7f0000001000 & -4096 = 0x7f0000001000`，`endAddr = (0x7f0000001000 + 4096 + 4095) & -4096 = 0x7f0000002000`。
+**Step 1: Parameter check and page alignment** [FACT:src/register/register.cc:18-24]。`CommCheck`Validate comm validity. Assume`pageSize=4096`，`begAddr = 0x7f0000001000 & -4096 = 0x7f0000001000`，`endAddr = (0x7f0000001000 + 4096 + 4095) & -4096 = 0x7f0000002000`。
 
-**第二步：系统内存检查** [FACT:src/register/register.cc:36-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L36-L64)。若 `ncclCuMemEnable()`，查询地址范围和内存类型。若 `memType == CU_MEMORYTYPE_HOST`，说明是 CPU 内存，跳过注册 [FACT:src/register/register.cc:58-61](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L58-L61)。否则检查是否有 Sysmem 段 [FACT:src/register/register.cc:50-55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L50-L55)。
+**Step 2: System memory check** [FACT:src/register/register.cc:36-64]. If`ncclCuMemEnable()`, query the address range and memory type. If`memType == CU_MEMORYTYPE_HOST`, it indicates CPU memory, skip registration[FACT:src/register/register.cc:58-61]. Otherwise check whether there is a Sysmem segment[FACT:src/register/register.cc:50-55]。
 
-**第三步：遍历缓存查找插入位置** [FACT:src/register/register.cc:66-89](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L66-L89)。循环 `slot` 从 0 开始：
-- 若 `slot == population`（到达末尾）或 `begAddr < slots[slot]->begAddr`（当前地址在缓存条目之前），说明需要新建条目 [FACT:src/register/register.cc:67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L67)。
-- 若 `slots[slot]->begAddr <= begAddr && slots[slot]->endAddr >= endAddr`，说明当前缓冲区被已有条目完全包含，直接增加引用计数 [FACT:src/register/register.cc:83-87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L83-L87)。
+**Step 3: Traverse the cache to find the insertion position** [FACT:src/register/register.cc:66-89]. Loop`slot`starting from 0:
 
-**第四步：新建条目** [FACT:src/register/register.cc:68-82](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L68-L82)。若缓存满，扩容（初始 32，之后翻倍）[FACT:src/register/register.cc:70](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L70)。用 `memmove` 在 `slot` 位置腾出空间 [FACT:src/register/register.cc:73](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L73)，`ncclCalloc` 分配新条目 [FACT:src/register/register.cc:74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L74)，设置 `begAddr`/`endAddr`，根据 `isGraph` 设置 `graphRefs` 或 `localRefs` 为 1 [FACT:src/register/register.cc:78-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L78-L79)，`population++`，返回 handle。
+- If`slot == population`(reached the end) or`begAddr < slots[slot]->begAddr`(the current address is before the cache entry), it indicates a new entry needs to be created[FACT:src/register/register.cc:67]。
+- If`slots[slot]->begAddr <= begAddr && slots[slot]->endAddr >= endAddr`, it indicates the current buffer is fully contained by an existing entry, directly increment the reference count[FACT:src/register/register.cc:83-87]。
 
-**第五步：注销** [FACT:src/register/register.cc:172-195](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L172-L195)。`commDeregister` 先找到 handle 对应的 slot [FACT:src/register/register.cc:180](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L180)，递减引用计数 [FACT:src/register/register.cc:185-186](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L185-L186)。若仍有引用，直接返回 [FACT:src/register/register.cc:187](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L187)。否则调用 `regCleanup` 清理所有底层注册 [FACT:src/register/register.cc:188](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L188)，释放条目，用 `memmove` 填补空洞 [FACT:src/register/register.cc:190](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L190)，`population--`。
+**Step 4: Create a new entry** [FACT:src/register/register.cc:68-82]. If the cache is full, expand it (initially 32, then double)[FACT:src/register/register.cc:70]. Use`memmove`at`slot`position to make room[FACT:src/register/register.cc:73]，`ncclCalloc`allocate a new entry[FACT:src/register/register.cc:74], set`begAddr`/`endAddr`, according to`isGraph`set`graphRefs`or`localRefs`to 1[FACT:src/register/register.cc:78-79]，`population++`, return handle.
 
-### 设计思考与生产踩坑
+**Step 5: Deregistration** [FACT:src/register/register.cc:172-195]。`commDeregister`First find the slot corresponding to the handle[FACT:src/register/register.cc:180], decrement the reference count[FACT:src/register/register.cc:185-186]. If there are still references, return directly[FACT:src/register/register.cc:187]. Otherwise call`regCleanup`to clean up all underlying registrations[FACT:src/register/register.cc:188], free the entry, use`memmove`to fill the hole[FACT:src/register/register.cc:190]，`population--`。
 
-**为什么用有序数组而不是哈希表？** 因为注册查询是「范围包含」查询，不是精确匹配。有序数组支持二分查找（虽然源码用线性扫描），且内存局部性好。哈希表无法高效处理「这个地址是否被某个更大的范围包含」这类查询。
+## Design considerations and production pitfalls
 
-**`regCleanup` 的状态位设计** [FACT:src/register/register.cc:95-134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L95-L134)。`state` 是一个位掩码，每个位对应一种注册类型（NET/NVLS/COLLNET/IPC）。清理时逐位检查，只清理已完成的注册。这种设计允许部分注册成功、部分失败的情况——比如网络注册成功但 IPC 注册失败，清理时只清理网络部分。
+**Why use a sorted array instead of a hash table?**Because registration queries are "range containment" queries, not exact matches. A sorted array supports binary search (although the source code uses linear scan), and has good memory locality. A hash table cannot efficiently handle queries like "is this address contained by some larger range".
 
-**生产陷阱：注册缓存不感知内存释放**。如果用户注册了一块缓冲区，然后在未注销的情况下 `cudaFree` 了它，缓存中仍然保留着这个条目。下次分配可能复用同一地址，导致缓存命中但实际内存已失效。NCCL 的约定是：注册和注销必须配对，用户负责保证注册期间内存不被释放。
+**`regCleanup`Status bit design of** [FACT:src/register/register.cc:95-134]。`state`is a bitmask, where each bit corresponds to a registration type (NET/NVLS/COLLNET/IPC). During cleanup, check bit by bit and only clean up completed registrations. This design allows partial registration success and partial failure—for example, network registration succeeds but IPC registration fails, and cleanup only cleans up the network part.
 
-**`ncclCommRegister` 的跳过条件** [FACT:src/register/register.cc:150-159](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L150-L159)。若 `LocalRegister=0` 或 `P2pUsesMemcpy=1`，直接返回 `NULL` handle。这意味着在某些配置下（比如 P2P 走 memcpy 而非 RDMA），注册被完全跳过。调用方必须检查 handle 是否为 NULL。
+**Production pitfall: the registration cache is unaware of memory release**. If the user registers a buffer and then, without deregistering,`cudaFree`it, the cache still retains this entry. The next allocation may reuse the same address, causing a cache hit but the actual memory is already invalid. NCCL's convention is: registration and deregistration must be paired, and the user is responsible for ensuring the memory is not freed during registration.
 
-## 18.5 集合通信注册：coll_reg 如何为不同算法选择注册策略
+**`ncclCommRegister`Skip conditions of** [FACT:src/register/register.cc:150-159]. If`LocalRegister=0`or`P2pUsesMemcpy=1`, directly return`NULL`handle. This means that under certain configurations (such as P2P using memcpy instead of RDMA), registration is completely skipped. The caller must check whether the handle is NULL.
 
-### Intuitive Architectural Model
+# 18.5 Collective communication registration: how coll_reg chooses registration strategies for different algorithms
 
-不同的集合通信算法走不同的传输路径：NVLS 走 NVLink SHARP，Ring 走 P2P 或网络，Tree 走树形拓扑。每条路径需要不同的注册方式：NVLS 需要注册到 NVLS 硬件，网络需要注册到网卡，IPC 需要注册到对端 GPU。`coll_reg.cc` 就是「注册策略路由器」：它根据算法、协议、缓冲区类型，决定调用哪些注册函数。若没有它，每种算法都得自己实现注册逻辑，代码重复且容易出错。
+## Intuitive model
 
-### Step-by-Step Walkthrough：Ring 算法的注册决策
+Different collective communication algorithms take different transport paths: NVLS uses NVLink SHARP, Ring uses P2P or the network, and Tree uses a tree topology. Each path requires a different registration method: NVLS needs to be registered with NVLS hardware, the network needs to be registered with the NIC, and IPC needs to be registered with the peer GPU.`coll_reg.cc`is the "registration strategy router": it decides which registration functions to call based on the algorithm, protocol, and buffer type. Without it, each algorithm would have to implement registration logic itself, resulting in duplicated code and being error-prone.
 
-代入场景：`ncclRegisterCollBuffers(comm, info, outRegBufSend, outRegBufRecv, cleanupQueue, regNeedConnect)`，其中 `info->algorithm == NCCL_ALGO_RING`，`info->protocol == NCCL_PROTO_SIMPLE`。
+## Step-by-Step Walkthrough: Registration decision for the Ring algorithm
 
-**第一步：前置检查** [FACT:src/register/coll_reg.cc:155-157](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L155-L157)。设置 `regBufType = NCCL_REGULAR_BUFFER`，`regNeedConnect = true`。若 `LocalRegister=0` 且非持久图注册，直接退出。
+Scenario:`ncclRegisterCollBuffers(comm, info, outRegBufSend, outRegBufRecv, cleanupQueue, regNeedConnect)`, where`info->algorithm == NCCL_ALGO_RING`，`info->protocol == NCCL_PROTO_SIMPLE`。
 
-**第二步：进入 Ring 分支** [FACT:src/register/coll_reg.cc:338](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L338)。初始化 `recvRegRecord`/`sendRegRecord` 为 NULL，分配 `sendNetConns`/`sendNetHandles`/`recvNetConns`/`recvNetHandles`/`srecvNetHandles` 数组 [FACT:src/register/coll_reg.cc:356-360](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L356-L360)。
+**Step 1: Pre-checks** [FACT:src/register/coll_reg.cc:155-157]. Set`regBufType = NCCL_REGULAR_BUFFER`，`regNeedConnect = true`. If`LocalRegister=0`and it is not persistent graph registration, exit directly.
 
-**第三步：查找已有注册记录** [FACT:src/register/coll_reg.cc:351-355](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L351-L355)。`ncclRegFind` 在缓存中查找 recv/send 缓冲区。若 recv 未找到且非持久图注册，退出 [FACT:src/register/coll_reg.cc:352](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L352)。若跨节点且 send 未找到且非持久图注册，退出 [FACT:src/register/coll_reg.cc:354](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L354)。
+**Step 2: Enter the Ring branch** [FACT:src/register/coll_reg.cc:338]. Initialize`recvRegRecord`/`sendRegRecord`to NULL, allocate`sendNetConns`/`sendNetHandles`/`recvNetConns`/`recvNetHandles`/`srecvNetHandles`array[FACT:src/register/coll_reg.cc:356-360]。
 
-**第四步：遍历所有 channel 收集 peer** [FACT:src/register/coll_reg.cc:362-393](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L362-L393)。对每个 channel，检查 `ring.prev` 和 `ring.next`。若连接标志包含 `NCCL_DIRECT_NIC`，记录到 `recvNetConns`/`sendNetConns` [FACT:src/register/coll_reg.cc:370-379](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L370-L379)。若包含 `NCCL_P2P_READ | NCCL_P2P_WRITE`，把 peer 加入 `peerRanks` 数组 [FACT:src/register/coll_reg.cc:382-391](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L382-L391)。
+**Step 3: Find existing registration records** [FACT:src/register/coll_reg.cc:351-355]。`ncclRegFind`Search the cache for recv/send buffers. If recv is not found and it is not persistent graph registration, exit[FACT:src/register/coll_reg.cc:352]. If cross-node and send is not found and it is not persistent graph registration, exit[FACT:src/register/coll_reg.cc:354]。
 
-**第五步：IPC 注册** [FACT:src/register/coll_reg.cc:394-407](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L394-L407)。若 `nPeers > 0 && comm->isAllDirectP2p`，先尝试图注册 [FACT:src/register/coll_reg.cc:395-399](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L395-L399)，失败则尝试本地注册 [FACT:src/register/coll_reg.cc:400-403](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L400-L403)。若成功，设置 `regBufType = NCCL_IPC_REG_BUFFER` [FACT:src/register/coll_reg.cc:406](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L406)。
+**Step 4: Traverse all channels to collect peers** [FACT:src/register/coll_reg.cc:362-393]. For each channel, check`ring.prev`and`ring.next`. If the connection flag contains`NCCL_DIRECT_NIC`, record it to`recvNetConns`/`sendNetConns` [FACT:src/register/coll_reg.cc:370-379]. If it contains`NCCL_P2P_READ | NCCL_P2P_WRITE`, add the peer to`peerRanks`array[FACT:src/register/coll_reg.cc:382-391]。
 
-**第六步：网络注册** [FACT:src/register/coll_reg.cc:409-457](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L409-L457)。检查 `!comm->useNetPXN && comm->useGdr && netDeviceType != UNPACK` 且非 AllReduce 的 PreMulSum/SumPostDiv [FACT:src/register/coll_reg.cc:415-418](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L415-L418)。先尝试图注册 [FACT:src/register/coll_reg.cc:419-430](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L419-L430)，失败则本地注册 [FACT:src/register/coll_reg.cc:431-442](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L431-L442)。若成功，设置 `regBufType |= NCCL_NET_REG_BUFFER`，保存 handle 数组 [FACT:src/register/coll_reg.cc:445-452](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L445-L452)。
+**Step 5: IPC registration** [FACT:src/register/coll_reg.cc:394-407]. If`nPeers > 0 && comm->isAllDirectP2p`, first try graph registration[FACT:src/register/coll_reg.cc:395-399], and if it fails, try local registration[FACT:src/register/coll_reg.cc:400-403]. If successful, set`regBufType = NCCL_IPC_REG_BUFFER` [FACT:src/register/coll_reg.cc:406]。
 
-**第七步：调整通道数** [FACT:src/register/coll_reg.cc:551-554](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L551-L554)。若只有 IPC 注册且单节点且通道数在 17-24 之间，降到 16。这是为了匹配 IPC 注册后的带宽特性。
+**Step 6: Network registration** [FACT:src/register/coll_reg.cc:409-457]. Check`!comm->useNetPXN && comm->useGdr && netDeviceType != UNPACK`and not AllReduce's PreMulSum/SumPostDiv[FACT:src/register/coll_reg.cc:415-418]. First try graph registration[FACT:src/register/coll_reg.cc:419-430], and if it fails, local registration[FACT:src/register/coll_reg.cc:431-442]. If successful, set`regBufType |= NCCL_NET_REG_BUFFER`, save the handle array[FACT:src/register/coll_reg.cc:445-452]。
 
-### 设计思考与生产踩坑
+**Step 7: Adjust the number of channels** [FACT:src/register/coll_reg.cc:551-554]. If only IPC registration exists and it is single-node and the number of channels is between 17-24, reduce it to 16. This is to match the bandwidth characteristics after IPC registration.
 
-**为什么 NVLS 和 Ring 的注册顺序相反？** NVLS 分支先尝试图注册再本地注册 [FACT:src/register/coll_reg.cc:86-94](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L86-L94)，而 Ring 分支先本地再图 [FACT:src/register/coll_reg.cc:395-403](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L395-L403)。这是因为 NVLS 的图注册更可能成功（NVLS 硬件对持久缓冲区有优化），而 Ring 的本地注册更轻量。
+## Design considerations and production pitfalls
 
-**`isMloPartBufRdmaCapable` 的全局决策** [FACT:src/register/coll_reg.cc:14-37](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L14-L37)。注释强调「Registration decision must be global, using communicator-wide guarantees」[FACT:src/register/coll_reg.cc:20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/coll_reg.cc#L20)。这意味着即使某个 rank 的缓冲区支持 RDMA，只要通信域内有一个 rank 不支持，整个通信域都不注册。这是为了避免部分 rank 注册、部分不注册导致的不一致。
+**Why are the registration orders of NVLS and Ring opposite?**The NVLS branch first tries graph registration and then local registration[FACT:src/register/coll_reg.cc:86-94], while the Ring branch first does local and then graph[FACT:src/register/coll_reg.cc:395-403]. This is because NVLS graph registration is more likely to succeed (NVLS hardware has optimizations for persistent buffers), while Ring local registration is more lightweight.
 
-**生产陷阱：注册失败时的静默降级**。`ncclRegisterCollBuffers` 在注册失败时不会报错，只是不设置 `regBufType` 的对应位。这意味着通信仍然能工作，只是性能下降。生产环境中如果发现性能不达预期，应该检查 `NCCL_REG` 日志确认注册是否成功。
+**`isMloPartBufRdmaCapable`Global decision of** [FACT:src/register/coll_reg.cc:14-37]. The comment emphasizes "Registration decision must be global, using communicator-wide guarantees"[FACT:src/register/coll_reg.cc:20]. This means that even if a certain rank's buffer supports RDMA, as long as one rank within the communication domain does not support it, the entire communication domain will not register. This is to avoid inconsistency caused by some ranks registering and others not registering.
+
+**Production pitfall: Silent degradation when registration fails**。`ncclRegisterCollBuffers`When registration fails, no error is reported; it simply does not set`regBufType`the corresponding bit. This means communication can still work, just with degraded performance. In production environments, if performance does not meet expectations, you should check`NCCL_REG`the logs to confirm whether registration succeeded.
 
 ```mermaid
 flowchart LR
     subgraph input["输入"]
-        task["ncclTaskColl<br/>algorithm=RING<br/>protocol=SIMPLE"]
+        task["ncclTaskCollalgorithm=RINGprotocol=SIMPLE"]
     end
     subgraph ipc["IPC 注册路径"]
-        find["ncclRegFind<br/>查找缓存"]
-        collect["遍历 channel<br/>收集 peerRanks"]
-        ipcReg["ncclIpcLocalRegisterBuffer<br/>或 GraphRegister"]
+        find["ncclRegFind查找缓存"]
+        collect["遍历 channel收集 peerRanks"]
+        ipcReg["ncclIpcLocalRegisterBuffer或 GraphRegister"]
     end
     subgraph net["网络注册路径"]
-        checkGdr{"useGdr &&<br/>!useNetPXN?"}
-        netReg["ncclNetLocalRegisterBuffer<br/>或 GraphRegister"]
+        checkGdr{"useGdr &&!useNetPXN?"}
+        netReg["ncclNetLocalRegisterBuffer或 GraphRegister"]
     end
     subgraph output["输出"]
-        regType["info->regBufType<br/>NCCL_IPC_REG_BUFFER<br/>NCCL_NET_REG_BUFFER"]
-        handles["info->sendNetHandles<br/>info->recvNetHandles"]
+        regType["info->regBufTypeNCCL_IPC_REG_BUFFERNCCL_NET_REG_BUFFER"]
+        handles["info->sendNetHandlesinfo->recvNetHandles"]
     end
     task --> find
     find --> collect
@@ -333,25 +333,25 @@ flowchart LR
     netReg --> handles
 ```
 
-上图展示了 Ring 算法下两条并行的注册路径：IPC 路径处理同节点 P2P 连接，网络路径处理跨节点 RDMA 连接。两条路径独立执行，最终都汇总到 `info->regBufType`。
+The above diagram shows two parallel registration paths under the Ring algorithm: the IPC path handles same-node P2P connections, and the network path handles cross-node RDMA connections. The two paths execute independently and ultimately both converge to`info->regBufType`。
 
-## 18.6 生产避坑与故障恢复链
+# 18.6 Production Pitfall Avoidance and Failure Recovery Chain
 
-### 坑 1：注册缓存与内存池的交互
+## Pitfall 1: Interaction between registration cache and memory pool
 
-当使用 `ncclMemAlloc` 分配内存时，底层走 CUDA VMM API [FACT:src/allocator.cc:38-94](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L38-L94)。这种分配方式创建的物理内存带有 `gpuDirectRDMACapable` 标志 [FACT:src/allocator.cc:54](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L54)，意味着它天然支持 RDMA。但 `ncclMemFree` 释放时，如果内存管理器已销毁，会走 `cudaFree` 回退路径 [FACT:src/allocator.cc:130-132](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L130-L132)。这可能导致 VMM 分配的内存被错误地用 `cudaFree` 释放。生产环境中必须确保 `ncclMemAlloc`/`ncclMemFree` 配对使用，且不要在内存管理器销毁后释放。
+When using`ncclMemAlloc`to allocate memory, the underlying implementation goes through the CUDA VMM API[FACT:src/allocator.cc:38-94]. The physical memory created by this allocation method carries the`gpuDirectRDMACapable`flag[FACT:src/allocator.cc:54], meaning it natively supports RDMA. But when`ncclMemFree`releases it, if the memory manager has already been destroyed, it will go through the`cudaFree`fallback path[FACT:src/allocator.cc:130-132]. This may cause VMM-allocated memory to be incorrectly freed with`cudaFree`. In production environments, you must ensure that`ncclMemAlloc`/`ncclMemFree`are used in pairs, and do not release after the memory manager has been destroyed.
 
-### 坑 2：挂起期间的通信请求
+## Pitfall 2: Communication requests during suspension
 
-`ncclCommMemSuspend` 执行期间，如果有新的通信请求到达，会怎样？源码在挂起前调用 `cudaDeviceSynchronize()` [FACT:src/mem_manager.cc:440](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L440)，确保所有已入队的 GPU 操作完成。但如果有 host 侧的通信请求正在入队，没有显式保护。生产环境中应该在挂起前停止所有通信线程，或者使用 group 语义确保挂起操作与其他操作串行。
+`ncclCommMemSuspend`During execution, what happens if new communication requests arrive? The source code calls`cudaDeviceSynchronize()` [FACT:src/mem_manager.cc:440]before suspension to ensure all queued GPU operations complete. However, if host-side communication requests are being enqueued, there is no explicit protection. In production environments, you should stop all communication threads before suspension, or use group semantics to ensure suspension operations are serialized with other operations.
 
-### 坑 3：FABRIC handle 的兼容性
+## Pitfall 3: Compatibility of FABRIC handle
 
-`ncclMemAlloc` 在 CUDA 12.3+ 上会尝试使用 FABRIC handle [FACT:src/allocator.cc:60-71](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L60-L71)。如果 `cuMemCreate` 返回 `CUDA_ERROR_NOT_PERMITTED` 或 `CUDA_ERROR_NOT_SUPPORTED`，会回退到 POSIX FD [FACT:src/allocator.cc:63-65](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L63-L65)。但恢复时，如果 handle 类型是 FABRIC 但导出失败，会直接报错并 unmap [FACT:src/mem_manager.cc:649-655](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L649-L655)。这意味着在混合环境中（部分 GPU 支持 FABRIC，部分不支持），挂起/恢复可能失败。
+`ncclMemAlloc`On CUDA 12.3+, it will attempt to use FABRIC handle[FACT:src/allocator.cc:60-71]. If`cuMemCreate`returns`CUDA_ERROR_NOT_PERMITTED`or`CUDA_ERROR_NOT_SUPPORTED`, it will fall back to POSIX FD[FACT:src/allocator.cc:63-65]. But during recovery, if the handle type is FABRIC but export fails, it will directly report an error and unmap[FACT:src/mem_manager.cc:649-655]. This means that in mixed environments (some GPUs support FABRIC, some do not), suspend/resume may fail.
 
-### 坑 4：引用计数泄漏
+## Pitfall 4: Reference count leak
 
-`ncclRegister` 每次命中缓存都会增加引用计数 [FACT:src/register/register.cc:84-85](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/register/register.cc#L84-L85)。如果调用方注册了 N 次但只注销了 M 次（M < N），引用计数永远不会归零，`regCleanup` 永远不会被调用，底层注册资源泄漏。生产代码必须严格配对 `ncclCommRegister`/`ncclCommDeregister`。
+`ncclRegister`Each cache hit increments the reference count[FACT:src/register/register.cc:84-85]. If the caller registers N times but only deregisters M times (M < N), the reference count will never reach zero,`regCleanup`will never be called, and the underlying registration resources will leak. Production code must strictly pair`ncclCommRegister`/`ncclCommDeregister`。
 
 ```mermaid
 sequenceDiagram
@@ -379,29 +379,20 @@ sequenceDiagram
     Net-->>App: 注册完成
 ```
 
-## 本章思考与自测
+# Chapter Review and Self-Test
 
-<details>
-<summary>Q1: 若将 `ncclSpaceFree` 中的 `if (a->count == 0 || a->cuts[a->count - 1] <= offset)` 检查 [FACT:src/allocator.cc:231-237](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L231-L237) 去掉，在什么场景下会触发越界访问？</summary>
+Q1: If the`ncclSpaceFree`in`if (a->count == 0 || a->cuts[a->count - 1] <= offset)`check[FACT:src/allocator.cc:231-237]is removed, under what scenarios would out-of-bounds access be triggered?
 
-**参考解析**：这个检查有两个作用。第一，`a->count == 0` 防止空数组访问 `cuts[-1]`。第二，`a->cuts[a->count-1] <= offset` 防止 `offset` 超出已分配范围。如果去掉，当 `count == 0` 时，`a->cuts[a->count - 1]` 会读取 `cuts[-1]`，这是未定义行为，可能读到堆元数据或触发段错误。更隐蔽的是，即使 `count > 0`，如果 `offset` 大于最后一个切割点，后续的 `while (a->cuts[i] <= offset) i += 2` 循环 [FACT:src/allocator.cc:247](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/allocator.cc#L247) 会一直递增 `i` 直到越界，因为 `cuts[]` 中不存在大于 `offset` 的元素。这在生产中的触发场景是：调用方传入了一个从未分配过的偏移量（比如缓冲区被外部释放后再次调用 free），或者 `ncclSpace` 被并发修改导致状态不一致。修复方式是保留这个检查，并在返回错误时打印 `offset` 和 `count` 便于排查。
+**Reference analysis**: This check has two purposes. First,`a->count == 0`prevents empty array access`cuts[-1]`. Second,`a->cuts[a->count-1] <= offset`prevents`offset`from exceeding the allocated range. If removed, when`count == 0`,`a->cuts[a->count - 1]`will read`cuts[-1]`, which is undefined behavior and may read heap metadata or trigger a segmentation fault. More subtly, even if`count > 0`, if`offset`is greater than the last split point, the subsequent`while (a->cuts[i] <= offset) i += 2`loop[FACT:src/allocator.cc:247]will keep incrementing`i`until out of bounds, because`cuts[]`does not contain any element greater than`offset`. The triggering scenario in production is: the caller passes in an offset that was never allocated (for example, calling free again after the buffer has been externally released), or`ncclSpace`is concurrently modified causing inconsistent state. The fix is to keep this check and print`offset`and`count`when returning an error for easier troubleshooting.
 
-</details>
+Q2: `ncclMemManagerDestroy`In`refCount`, if[FACT:src/mem_manager.cc:78-83]is still greater than 0 after decrementing, only the current comm's pointer is cleared without releasing resources`ncclMemTrack`. If at this time another comm is calling
 
-<details>
-<summary>Q2: `ncclMemManagerDestroy` 中，如果 `refCount` 递减后仍大于 0，只清除当前 comm 的指针而不释放资源 [FACT:src/mem_manager.cc:78-83](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L78-L83)。如果此时另一个 comm 正在调用 `ncclMemTrack`，会发生什么？</summary>
+**, what will happen?**：`ncclMemTrack`Reference analysis`manager->initialized` [FACT:src/mem_manager.cc:136]First checks`refCount > 0`. Since`initialized = 0`does not set`manager->lock`, the check passes. Then it will acquire`entries`and modify the[FACT:src/mem_manager.cc:188-192]linked list`refCount > 0`. This is safe because`ncclMemManagerDestroy`means at least one comm still holds a reference, and the memory manager will not be destroyed. The real risk is: if the last comm calls`refCount`,`initialized = 0` [FACT:src/mem_manager.cc:87]decrements to 0, it will set`ncclMemTrack`and release all resources. If at this time another thread is in`initialized`and has already passed the`manager->lock`check but has not yet acquired the lock, it will access the already-freed`memory_order_acquire`/`release`, causing use-after-free. The source code mitigates this problem through
 
-**参考解析**：`ncclMemTrack` 首先检查 `manager->initialized` [FACT:src/mem_manager.cc:136](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L136)。由于 `refCount > 0` 时不会设置 `initialized = 0`，所以检查通过。然后它会获取 `manager->lock` 并修改 `entries` 链表 [FACT:src/mem_manager.cc:188-192](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L188-L192)。这是安全的，因为 `refCount > 0` 意味着至少还有一个 comm 持有引用，内存管理器不会被销毁。真正的风险在于：如果最后一个 comm 调用 `ncclMemManagerDestroy` 时，`refCount` 递减到 0，它会设置 `initialized = 0` [FACT:src/mem_manager.cc:87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L87) 并释放所有资源。如果此时另一个线程正在 `ncclMemTrack` 中已经通过了 `initialized` 检查但还没获取锁，它会访问已释放的 `manager->lock`，导致 use-after-free。源码通过 `memory_order_acquire`/`release` 配对来缓解这个问题，但严格来说仍存在竞态窗口。生产环境中应该确保所有通信线程在销毁内存管理器前已停止。
+pairing, but strictly speaking there is still a race window. In production environments, you should ensure all communication threads have stopped before destroying the memory manager.`ncclCommMemResume`Q3: In[FACT:src/mem_manager.cc:853-859], POSIX FD type peer buffers are skipped when crossing nodes`restoredPeerCount`. If all peer buffers are skipped,`manager->released`is 0, but[FACT:src/mem_manager.cc:913]is still set to 0
 
-</details>
+**. What consequences will this cause?**：`manager->released = 0`Reference analysis`state`indicates that the memory manager considers recovery complete. But if peer buffers were skipped, their`ncclDynMemStateReleased`，`handle`is still`ncclCommMemStats`is still 0. If subsequent communication accesses these buffers, it will trigger a CUDA error (accessing unmapped virtual addresses). More seriously,`ncclStatGpuMemSuspended`querying[FACT:src/mem_manager.cc:1130]will return 0 (active)`entries`In this case, the correct approach is to mark cross-node POSIX FD entries as unrecoverable at suspend time, or to return an error at resume time rather than silently skipping them. In production, if POSIX FD is used across nodes, FABRIC handles should be used instead, or suspend/resume should be ensured to occur only within a single node.
 
-<details>
-<summary>Q3: 在 `ncclCommMemResume` 中，POSIX FD 类型的 peer 缓冲区在跨节点时被跳过 [FACT:src/mem_manager.cc:853-859](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L853-L859)。如果所有 peer 缓冲区都被跳过，`restoredPeerCount` 为 0，但 `manager->released` 仍被设为 0 [FACT:src/mem_manager.cc:913](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L913)。这会导致什么后果？</summary>
+Memory management is the invisible pillar of NCCL performance:`ncclSpace`It uses a minimalist split-point array to manage the address space,`ncclShadowPool`uses a 64-bit bitmap and hash table to manage device/host object pairing,`ncclMemManager`uses reference counting and the CUDA VMM API to implement suspend/resume,`ncclRegister`and uses a sorted array to cache registration results and avoid repeated pinning. These four layers of mechanisms together support the key performance guarantee that "memory does not need to be re-registered before communication." In the next chapter, we will move on to the device-side communicator and ABI compatibility, and see`devcomm`how these host-side memory layouts are mapped into structures accessible to GPU kernels.
 
-**参考解析**：`manager->released = 0` 表示内存管理器认为恢复已完成。但如果有 peer 缓冲区被跳过，它们的 `state` 仍然是 `ncclDynMemStateReleased`，`handle` 仍然是 0。后续通信如果访问这些缓冲区，会触发 CUDA 错误（访问未映射的虚拟地址）。更严重的是，`ncclCommMemStats` 查询 `ncclStatGpuMemSuspended` 会返回 0（活跃）[FACT:src/mem_manager.cc:1130](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/mem_manager.cc#L1130)，但实际有部分内存未恢复。这个问题的根源是：跨节点 POSIX FD 本身就不应该被导入——在挂起前，这些缓冲区就不应该存在于 `entries` 中。正确的做法是在挂起时就把跨节点的 POSIX FD 条目标记为不可恢复，或者在恢复时返回错误而非静默跳过。生产环境中，如果使用 POSIX FD 且跨节点，应该改用 FABRIC handle 或确保挂起/恢复只在单节点内进行。
-
-</details>
-
-内存管理是 NCCL 性能的隐形支柱：`ncclSpace` 用极简的切割点数组管理地址空间，`ncclShadowPool` 用 64 位位图和哈希表管理设备/主机对象配对，`ncclMemManager` 用引用计数和 CUDA VMM API 实现挂起恢复，`ncclRegister` 用有序数组缓存注册结果避免重复 pin。这四层机制共同支撑起「通信前不需要重新注册内存」这一关键性能保证。下一章我们将进入设备侧通信器与 ABI 兼容，看 `devcomm` 如何把这些 host 侧的内存布局映射到 GPU kernel 可访问的结构中。
-
-上图展示了注册的时序：缓存命中时只增加引用计数，不调用底层注册；缓存未命中时才创建新条目并触发底层注册。至此，host 侧的内存管理机制已经清晰。但通信最终发生在 GPU 上，kernel 需要直接访问对端 rank 的地址和连接状态。下一章将进入设备侧通信器与 ABI 兼容，看 devcomm 如何把 host 侧 ncclComm 的元数据映射到设备侧可访问的结构，以及版本化 ABI 如何保证新旧 kernel 与库的兼容。
+The figure above shows the registration timing: on a cache hit, only the reference count is incremented and the underlying registration is not called; only on a cache miss is a new entry created and the underlying registration triggered. At this point, the host-side memory management mechanism is already clear. But communication ultimately happens on the GPU, and the kernel needs direct access to the peer rank's address and connection state. The next chapter will move on to the device-side communicator and ABI compatibility, to see how devcomm maps the metadata of the host-side ncclComm into structures accessible on the device side, and how the versioned ABI ensures compatibility between old and new kernels and the library.

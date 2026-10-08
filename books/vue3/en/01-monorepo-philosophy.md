@@ -1,20 +1,20 @@
-# Chapter 01: Macro Cognition: Engineering Philosophy of the core Repository
+# Chapter 1: Macro Cognition: The Engineering Design Philosophy of the Core Repository
 
+Before we begin tracing any single line of reactivity or virtual DOM implementation, we must first understand the engineering substrate upon which this code depends for its existence. Opening the Vue core repository, the first thing that catches the eye is not the framework's core logic, but`package.json`and`pnpm-workspace.yaml`and other engineering configuration files—they contain no runtime functionality whatsoever, yet they determine whether the entire framework can be correctly built, tested, and released. This chapter aims to answer precisely this preliminary question: what exactly is the core repository. It is not`@vue/runtime-core`that npm package, but rather the engineering substrate that hosts`runtime-core`、`reactivity`、`compiler-sfc`and more than a dozen publicly released packages, plus`sfc-playground`、`template-explorer`and other private experimental packages. Understanding how this substrate is organized is the prerequisite for all subsequent chapters (build, types, release, size budget). This chapter will unfold along three main threads: the dual-directory structure of the workspace, the unified constraints of root-level TypeScript and Rollup, and the decoupling philosophy between the "source repository" and "release artifacts."
 
-在开始追踪任何一行响应式或虚拟 DOM 的实现之前，我们首先需要理解这些代码赖以生存的工程化母体。打开 Vue core 仓库，最先映入眼帘的并非框架核心逻辑，而是 `package.json` 与 `pnpm-workspace.yaml` 这类工程配置文件——它们不包含任何运行时功能，却决定了整个框架能否被正确构建、测试与发布。本章要回答的正是这个前置问题：core 仓库到底是什么。它并非 `@vue/runtime-core` 那个 npm 包，而是承载 `runtime-core`、`reactivity`、`compiler-sfc` 等十余个公开发布包，外加 `sfc-playground`、`template-explorer` 等私有实验包的工程化母体。理解这个母体的组织方式，是后续所有章节（构建、类型、发布、体积预算）的前提。本章将沿三条主线展开：workspace 的Dual-Directory Workspace Architecture、根级 TypeScript 与 Rollup 的统一约束，以及「源码仓库」与「发布产物」的解耦哲学。
+# I. Dual-Directory Structure: Physical Isolation Between packages and packages-private
 
+## Intuitive Model
 
-## Intuitive Architectural Model
+Imagine the core repository as an R&D building.`packages/`is the official product line, where what is produced must be branded and sold to the market;`packages-private/`is the internal laboratory, where samples are used only for debugging and demonstration and are never shipped externally. Both share the same utilities (dependencies, build tools), but the access control system (release process) treats them differently.
 
-把 core 仓库想象成一栋研发大楼。`packages/` 是正式产品线，生产出来的东西要贴上商标卖到市场上；`packages-private/` 是内部试验室，里面的样品只用于调试和演示，绝不对外发货。两者共用同一套水电（依赖、构建工具），但门禁系统（发布流程）对它们区别对待。
+Without this layer of physical isolation, an internal debugging playground package could easily be mistakenly published to npm—this is not a hypothetical, but a classic monorepo incident.
 
-若没有这层物理隔离，一个内部调试用的 playground 包很容易被误发布到 npm——这不是假设，而是 monorepo 的经典事故。
+## Data Structure and Memory Layout
 
-## Data Structures & Memory Layout
+The workspace boundary is defined by`pnpm-workspace.yaml`. It has only three effective declarations:
 
-workspace 的边界由 `pnpm-workspace.yaml` 定义。它只有三行有效声明：
-
-[FACT:pnpm-workspace.yaml:1-3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L1-L3)
+[FACT:pnpm-workspace.yaml:1-3]
 
 ```yaml
 packages:
@@ -22,11 +22,11 @@ packages:
   - 'packages-private/*'
 ```
 
-这两条 glob 告诉 pnpm：`packages/` 和 `packages-private/` 下的每个子目录都是一个独立包。pnpm 会为它们建立符号链接，使 `@vue/runtime-core` 引用 `@vue/reactivity` 时直接指向本地源码目录，而非从 registry 下载。
+These two globs tell pnpm:`packages/`and`packages-private/`each subdirectory under is an independent package. pnpm will create symbolic links for them, so that`@vue/runtime-core`when referencing`@vue/reactivity`points directly to the local source directory, rather than downloading from the registry.
 
-紧接着的 `catalog:` 段是 pnpm 的**依赖版本目录**机制：
+Immediately following is the`catalog:`section, which is pnpm's**dependency version catalog**mechanism:
 
-[FACT:pnpm-workspace.yaml:5-13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L5-L13)
+[FACT:pnpm-workspace.yaml:5-13]
 
 ```yaml
 catalog:
@@ -40,38 +40,38 @@ catalog:
   '@vitejs/plugin-vue': ^6.0.9
 ```
 
-根 `package.json` 中对应写的是 `"@babel/parser": "catalog:"` [FACT:package.json:65-65](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L65-L65)。`catalog:` 是一个占位符，pnpm 在安装时把它替换为 catalog 段中声明的版本。这样做的收益是：`@babel/parser` 的版本只在 `pnpm-workspace.yaml` 一处维护，所有引用它的包自动对齐，杜绝了「A 包用 7.28、B 包用 7.29」的版本漂移。
+Root`package.json`corresponds to`"@babel/parser": "catalog:"` [FACT:package.json:65-65]。`catalog:`is a placeholder, which pnpm replaces with the version declared in the catalog section during installation. The benefit of doing this is:`@babel/parser`the version of is maintained in only`pnpm-workspace.yaml`one place, and all packages referencing it automatically align, eliminating version drift where "Package A uses 7.28, Package B uses 7.29."
 
-## 场景驱动 Walkthrough：一次 `pnpm install` 之后发生了什么
+## Scenario-Driven Walkthrough: What Happens After a`pnpm install`Once
 
-假设你在仓库根目录执行 `pnpm install`。代入这个场景，逐步追踪：
+Suppose you execute`pnpm install`in the repository root. Plug into this scenario and trace step by step:
 
-**第一步：preinstall 门禁。** pnpm 在安装前会触发根 `package.json` 的 `preinstall` 脚本：
+**Step 1: preinstall gate.**pnpm triggers the root`package.json`'s`preinstall`script before installation:
 
-[FACT:package.json:45-45](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L45-L45)
+[FACT:package.json:45-45]
 
 ```json
 "preinstall": "npx only-allow pnpm"
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `only-allow pnpm` 会检查当前包管理器是否为 pnpm，若不是则直接报错退出。这行脚本的存在意味着：用 npm 或 yarn 安装 core 仓库会失败。为什么必须锁死 pnpm？ 因为 core 仓库依赖 pnpm 的 workspace 符号链接与 catalog 机制，npm 的 workspaces 不支持 `catalog:` 语法，yarn 的 PnP 模式又会改变模块解析路径，导致构建脚本中的 `createRequire` 行为不一致。
+> **[Design Inference & Architectural Trade-offs]**
+> `only-allow pnpm`checks whether the current package manager is pnpm, and if not, directly errors out and exits. The existence of this script means: installing the core repository with npm or yarn will fail. Why must pnpm be locked in? Because the core repository relies on pnpm's workspace symlinks and catalog mechanism, npm's workspaces do not support`catalog:`syntax, and yarn's PnP mode changes module resolution paths, causing`createRequire`behavior in build scripts to be inconsistent.
 
-**第二步：解析 workspace。** pnpm 读取 `pnpm-workspace.yaml`，扫描 `packages/*` 与 `packages-private/*`，为每个含 `package.json` 的目录建立包记录。
+**Step 2: Resolve workspace.**pnpm reads`pnpm-workspace.yaml`, scans`packages/*`and`packages-private/*`, and for each directory containing`package.json`creates a package record.
 
-**第三步：应用 catalog 替换。** 根 `package.json` 中所有 `catalog:` 占位符被替换为 catalog 段的实际版本，随后统一安装。
+**Step 3: Apply catalog replacement.**Root`package.json`all in`catalog:`The placeholders are replaced with the actual versions from the catalog section, then installed uniformly.
 
-**第四步：postinstall 钩子。** 安装完成后触发：
+**Step 4: postinstall hook.**Triggered after installation completes:
 
-[FACT:package.json:46-46](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L46-L46)
+[FACT:package.json:46-46]
 
 ```json
 "postinstall": "simple-git-hooks"
 ```
 
-`simple-git-hooks` 读取根 `package.json` 中的 `simple-git-hooks` 字段，把 Git 钩子写入 `.git/hooks/`：
+`simple-git-hooks`Read the root`package.json`in the`simple-git-hooks`field, write the Git hook to`.git/hooks/`：
 
-[FACT:package.json:48-51](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L48-L51)
+[FACT:package.json:48-51]
 
 ```json
 "simple-git-hooks": {
@@ -80,16 +80,16 @@ catalog:
 }
 ```
 
-`pre-commit` 钩子在每次提交前跑 lint-staged 与类型检查，`commit-msg` 钩子校验提交信息格式（Vue 使用 conventional commits）。注意 `preinstall` 与 `postinstall` 的对称性：前者守门（只允许 pnpm），后者布防（安装 Git 钩子）。
+`pre-commit`The hook runs lint-staged and type checking before every commit,`commit-msg`The hook validates commit message format (Vue uses conventional commits). Note the`preinstall`and`postinstall`symmetry: the former guards the gate (only allows pnpm), the latter sets up defenses (installs Git hooks).
 
-## 设计思考与踩坑
+## Design thinking and pitfalls
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **为什么用两条 glob 而非一条 `packages*/`？**  显式列出两个目录，是为了让「公开」与「私有」的语义在配置层面就可见。任何新加入的开发者读到 `pnpm-workspace.yaml` 第一眼就知道仓库有两类包。若写成 `packages*/`，这个语义就被隐藏了。
+> **[Design Inference & Architectural Trade-offs]**
+> **Why use two globs instead of one`packages*/`？**Explicitly listing two directories makes the semantics of "public" and "private" visible at the configuration level. Any new developer reading`pnpm-workspace.yaml`immediately knows the repository has two types of packages. If written as`packages*/`, this semantics is hidden.
 
-**`allowBuilds` 与供应链安全。** 注意这段配置：
+**`allowBuilds`and supply chain security.**Note this configuration:
 
-[FACT:pnpm-workspace.yaml:15-21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L15-L21)
+[FACT:pnpm-workspace.yaml:15-21]
 
 ```yaml
 allowBuilds:
@@ -101,20 +101,20 @@ allowBuilds:
   'unrs-resolver': true
 ```
 
-pnpm 默认禁止依赖包执行安装脚本（postinstall），因为这是供应链攻击的常见入口。`allowBuilds` 是白名单：只有列出的包才被允许运行构建脚本。`@swc/core`、`esbuild` 需要下载平台相关的原生二进制，`puppeteer` 需要下载 Chromium，`simple-git-hooks` 需要写 Git 钩子——这些都是合法的构建期行为，因此被显式放行。
+pnpm by default forbids dependency packages from executing install scripts (postinstall), because this is a common entry point for supply chain attacks.`allowBuilds`is a whitelist: only the listed packages are allowed to run build scripts.`@swc/core`、`esbuild`needs to download platform-specific native binaries,`puppeteer`needs to download Chromium,`simple-git-hooks`needs to write Git hooks—these are all legitimate build-time behaviors, so they are explicitly allowed.
 
-**`minimumReleaseAge: 1440` 的深意。** 这行配置要求新发布的依赖版本必须「满 24 小时」（1440 分钟）才允许被安装：
+**`minimumReleaseAge: 1440`The deeper meaning of.**This line of configuration requires that newly published dependency versions must be "at least 24 hours old" (1440 minutes) before they are allowed to be installed:
 
-[FACT:pnpm-workspace.yaml:33-33](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L33-L33)
+[FACT:pnpm-workspace.yaml:33-33]
 
 ```yaml
 minimumReleaseAge: 1440
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这是防御 npm 供应链投毒的冷却期机制。攻击者劫持某个包并发布恶意版本后，通常会在数小时内被发现并撤下。设置 24 小时冷却期，可以让 core 仓库避开这个窗口。而 `minimumReleaseAgeExclude` 则允许对特定安全补丁破例：
+> **[Design Inference & Architectural Trade-offs]**
+> This is a cooldown mechanism to defend against npm supply chain poisoning. After an attacker hijacks a package and publishes a malicious version, it is usually discovered and taken down within hours. Setting a 24-hour cooldown allows the core repository to avoid this window. And`minimumReleaseAgeExclude`allows exceptions for specific security patches:
 
-[FACT:pnpm-workspace.yaml:36-38](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L36-L38)
+[FACT:pnpm-workspace.yaml:36-38]
 
 ```yaml
 minimumReleaseAgeExclude:
@@ -122,20 +122,21 @@ minimumReleaseAgeExclude:
   - vitest@4.1.11
 ```
 
-注释明确说明这是 Renovate 触发的安全更新，需要立即生效，因此豁免冷却期。
+The comment explicitly states that this is a security update triggered by Renovate and needs to take effect immediately, so the cooldown is exempted.
 
 ---
 
+# Part Two: Root-level tsconfig: uniformly constraining the type boundaries of all subpackages
 
-## Intuitive Architectural Model
+## Intuitive model
 
-如果每个子包各自维护一份 tsconfig，就会出现「A 包用 `strict: false`、B 包用 `strict: true`」的裂缝。根级 tsconfig 是**宪法**：它规定所有子包共同遵守的类型规则，子包只能在此基础上追加，不能违背。
+If each subpackage maintains its own tsconfig, there will be cracks like "package A uses`strict: false`, package B uses`strict: true`". The root-level tsconfig is the**constitution**: it defines the type rules that all subpackages must jointly obey, and subpackages can only append on top of it, not violate it.
 
-## Data Structures & Memory Layout
+## Data structures and memory layout
 
-根 `tsconfig.json` 的 `compilerOptions` 是整个仓库类型系统的地基。挑出几个关键字段：
+The root`tsconfig.json`'s`compilerOptions`is the foundation of the entire repository's type system. Pick out a few key fields:
 
-[FACT:tsconfig.json:5-29](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L5-L29)
+[FACT:tsconfig.json:5-29]
 
 ```json
 "target": "es2016",
@@ -153,25 +154,25 @@ minimumReleaseAgeExclude:
 }
 ```
 
-逐条解读：
+Field-by-field interpretation:
 
-- `target: es2016`：输出语法降级到 ES2016。这与 Rollup 配置中 esbuild 的 `target` 相呼应（`isServerRenderer || isCJSBuild ? 'es2019' : 'es2016'` [FACT:rollup.config.js:337-337](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L337-L337)）。
-- `moduleResolution: bundler`：采用打包器风格的模块解析，允许省略扩展名、支持 `exports` 字段。
-- `strict: true`：开启全部严格检查，包括 `strictNullChecks`、`noImplicitAny` 等。
-- `noUnusedLocals: true`：未使用的局部变量直接报错。这条规则配合 Tree-shaking 有实际意义——未使用的变量往往是死代码的信号。
-- `isolatedModules: true`：要求每个文件可独立转译。这是 esbuild/swc 这类「逐文件转译、不做跨文件类型分析」工具的前提。
-- `isolatedDeclarations: true`：要求所有导出必须显式标注类型。这条规则直接服务于 `.d.ts` 生成流水线——只有显式标注才能让 `tsc` 快速生成声明文件而不做完整类型推断。
-- `composite: true`：开启项目引用（project references）所需的增量构建元数据。
+- `target: es2016`: output syntax downgraded to ES2016. This echoes the esbuild`target`in the Rollup configuration (`isServerRenderer || isCJSBuild ? 'es2019' : 'es2016'` [FACT:rollup.config.js:337-337]）。
+- `moduleResolution: bundler`: uses bundler-style module resolution, allowing omitted extensions and supporting the`exports`field.
+- `strict: true`: enables all strict checks, including`strictNullChecks`、`noImplicitAny`, etc.
+- `noUnusedLocals: true`: unused local variables directly error. This rule has practical significance in conjunction with Tree-shaking—unused variables are often a signal of dead code.
+- `isolatedModules: true`: requires each file to be independently transpilable. This is a prerequisite for tools like esbuild/swc that "transpile file by file without cross-file type analysis."
+- `isolatedDeclarations: true`: requires all exports to explicitly annotate types. This rule directly serves the`.d.ts`generation pipeline—only explicit annotations allow`tsc`to quickly generate declaration files without full type inference.
+- `composite: true`: enables the incremental build metadata required for project references.
 
-`paths` 字段是 workspace 的**类型层镜像**：`@vue/*` 映射到 `./packages/*/src`，让 TypeScript 在编译期直接解析到源码，而非 `node_modules` 中的符号链接。这与 pnpm 的运行时符号链接形成互补——运行时靠 pnpm，编译时靠 paths。
+`paths`The field is the workspace's**type-layer mirror**：`@vue/*`mapped to`./packages/*/src`, allowing TypeScript to resolve directly to source code at compile time, rather than the symlinks in`node_modules`. This complements pnpm's runtime symlinks—runtime relies on pnpm, compile time relies on paths.
 
-## 场景驱动 Walkthrough：一次 `pnpm check` 的类型检查
+## Scenario-driven Walkthrough: one`pnpm check`type check
 
-`check` 脚本是 `tsc --incremental --noEmit` [FACT:package.json:15-15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L15-L15)。代入这个场景：
+`check`The script is`tsc --incremental --noEmit` [FACT:package.json:15-15]. Substituting into this scenario:
 
-**第一步：读取 include 范围。** tsconfig 的 `include` 决定了哪些文件参与检查：
+**Step 1: Read the include scope.**tsconfig's`include`determines which files participate in checking:
 
-[FACT:tsconfig.json:31-39](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L31-L39)
+[FACT:tsconfig.json:31-39]
 
 ```json
 "include": [
@@ -185,47 +186,48 @@ minimumReleaseAgeExclude:
 ]
 ```
 
-注意 `scripts/*` 与 `rollup.*.js` 也在检查范围内。这意味着构建脚本本身也受类型约束——`rollup.config.js` 顶部的 `// @ts-check` [FACT:rollup.config.js:1-1](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L1-L1) 配合 JSDoc 类型注解，让这个纯 JS 文件也能被 `tsc` 检查。
+Note that`scripts/*`and`rollup.*.js`are also within the checking scope. This means the build scripts themselves are also subject to type constraints—`rollup.config.js`at the top of`// @ts-check` [FACT:rollup.config.js:1-1]combined with JSDoc type annotations allows this pure JS file to also be checked by`tsc`.
 
-**第二步：应用 exclude 排除。**
+**Step 2: Apply exclude exclusions.**
 
-[FACT:tsconfig.json:40-40](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L40-L40)
+[FACT:tsconfig.json:40-40]
 
 ```json
 "exclude": ["packages-private/sfc-playground/src/vue-dev-proxy*"]
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `sfc-playground` 中的 `vue-dev-proxy` 文件被排除。为什么？ 这类文件通常是运行时动态生成的代理代码，其类型形状不稳定，纳入检查会产生噪音。
+> **[Design Inference & Architectural Trade-offs]**
+> `sfc-playground`The`vue-dev-proxy`files in are excluded. Why? Such files are usually dynamically generated proxy code at runtime, whose type shapes are unstable, and including them in checks would create noise.
 
-**第三步：增量检查。** `--incremental` 让 `tsc` 把上次检查结果缓存到 `.tsbuildinfo`，只重新检查变更的文件。`--noEmit` 表示只检查不输出——类型检查与产物生成是两条独立的流水线。
+**Step 3: Incremental checking.** `--incremental`lets`tsc`cache the previous check results to`.tsbuildinfo`, and only rechecks changed files.`--noEmit`means check only without output—type checking and artifact generation are two independent pipelines.
 
-## 设计思考与踩坑
+## Design thinking and pitfalls
 
-**`isolatedDeclarations` 的代价与收益。** 开启这条规则后，任何导出都必须显式标注返回类型，例如 `export function foo(): number` 而非 `export function foo() { return 1 }`。这增加了书写成本，但换来的是 `.d.ts` 生成速度的大幅提升——`tsc` 无需做跨文件推断即可产出声明文件。这与 `build-dts` 脚本 `tsc -p tsconfig.build.json --noCheck` 中的 `--noCheck` 标志形成呼应：既然类型已显式标注，生成声明文件时甚至可以跳过检查。
+**`isolatedDeclarations`The cost and benefit of.**After enabling this rule, any export must explicitly annotate the return type, for example`export function foo(): number`instead of`export function foo() { return 1 }`. This increases writing cost, but in exchange for a substantial increase in`.d.ts`generation speed—`tsc`declaration files can be produced without cross-file inference. This echoes the`build-dts`in the`tsc -p tsconfig.build.json --noCheck`script`--noCheck`: since types are already explicitly annotated, checking can even be skipped when generating declaration files.
 
-**`types` 字段的全局注入。**
+**`types`Global injection of the field.**
 
-[FACT:tsconfig.json:21-21](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/tsconfig.json#L21-L21)
+[FACT:tsconfig.json:21-21]
 
 ```json
 "types": ["vitest/globals", "puppeteer", "node"]
 ```
 
-这三个类型包被全局注入，意味着测试文件可以直接使用 `describe`、`it`、`expect` 而无需 import，e2e 测试可以直接使用 `puppeteer` 的类型。这是便利性与污染性的权衡——全局类型越多，命名冲突风险越大，但测试代码的书写体验越好。
+These three type packages are globally injected, meaning test files can directly use`describe`、`it`、`expect`without importing, and e2e tests can directly use the types of`puppeteer`. This is a trade-off between convenience and pollution—the more global types there are, the greater the risk of naming conflicts, but the better the writing experience for test code.
 
 ---
 
+# 3. Rollup Configuration: A Unified Factory from buildOptions to Multi-Format Artifacts
 
-## Intuitive Architectural Model
+## Intuitive Model
 
-Rollup 配置是 core 仓库的**总装车间**。它不关心某个包具体做什么，只关心「这个包要产出哪些格式、每种格式的入口文件在哪、哪些依赖要外部化」。每个子包的 `package.json` 中的 `buildOptions` 字段是贴在包裹上的发货单，总装车间照着单子干活。
+The Rollup configuration is the core repository's**final assembly plant**. It doesn't care what a specific package does; it only cares about "which formats this package needs to produce, where the entry file for each format is, and which dependencies should be externalized." The`package.json`in each sub-package's`buildOptions`field is the shipping manifest attached to the package, and the assembly plant works according to the manifest.
 
-## Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-配置文件的入口处就确立了「按包构建」的模型：
+The entry point of the configuration file establishes the "build by package" model:
 
-[FACT:rollup.config.js:32-44](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L32-L44)
+[FACT:rollup.config.js:32-44]
 
 ```js
 if (!process.env.TARGET) {
@@ -244,13 +246,13 @@ const packageOptions = pkg.buildOptions || {}
 const name = packageOptions.filename || path.basename(packageDir)
 ```
 
-关键设计：`TARGET` 环境变量指定要构建哪个包。配置通过 `fs.readdirSync('packages-private')` 判断该包属于公开目录还是私有目录，从而决定 `pkgBase`。这是一个**运行时目录探测**——不需要维护一份「哪些包是私有的」清单，目录结构本身就是真相。
+Key design points:`TARGET`The environment variable specifies which package to build. The configuration uses`fs.readdirSync('packages-private')`to determine whether the package belongs to a public or private directory, thereby deciding`pkgBase`. This is a**runtime directory probe**—there's no need to maintain a list of "which packages are private"; the directory structure itself is the truth.
 
-`buildOptions` 是子包 `package.json` 中的自定义字段，`packageOptions.filename` 决定产物文件名前缀，`packageOptions.formats` 决定默认构建格式。
+`buildOptions`is a custom field in the sub-package's`package.json`,`packageOptions.filename`determines the artifact filename prefix,`packageOptions.formats`determines the default build format.
 
-格式到产物的映射由 `outputConfigs` 定义：
+The mapping from format to artifact is defined by`outputConfigs`:
 
-[FACT:rollup.config.js:58-88](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L58-L88)
+[FACT:rollup.config.js:58-88]
 
 ```js
 const outputConfigs = {
@@ -264,15 +266,15 @@ const outputConfigs = {
 }
 ```
 
-七种格式，覆盖三类消费场景：`esm-bundler` 给 Vite/webpack 等打包器消费，`esm-browser` 给浏览器原生 ESM 消费，`global` 给 `<script>` 标签消费。带 `-runtime` 后缀的是「仅运行时」构建，只对主 `vue` 包开放。
+Seven formats covering three consumption scenarios:`esm-bundler`for consumption by bundlers like Vite/webpack,`esm-browser`for native browser ESM consumption,`global`for`<script>`tag consumption. Those with the`-runtime`suffix are "runtime-only" builds, open only to the main`vue`package.
 
-## 场景驱动 Walkthrough：一次 `pnpm build vue` 的完整决策流
+## Scenario-Driven Walkthrough: The Complete Decision Flow of a Single`pnpm build vue`
 
-代入执行 `node scripts/build.js vue` 的场景。`TARGET=vue`，追踪 `createConfig` 内部的决策：
+Let's walk through the scenario of executing`node scripts/build.js vue`.`TARGET=vue`, tracing the decisions inside`createConfig`:
 
-**第一步：确定格式列表。**
+**Step 1: Determine the format list.**
 
-[FACT:rollup.config.js:91-92](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L91-L92)
+[FACT:rollup.config.js:91-92]
 
 ```js
 const defaultFormats = ['esm-bundler', 'cjs']
@@ -283,11 +285,11 @@ const packageConfigs = process.env.PROD_ONLY
   : packageFormats.map(format => createConfig(format, outputConfigs[format]))
 ```
 
-优先级：命令行 `FORMATS` > 子包 `buildOptions.formats` > 默认 `['esm-bundler', 'cjs']`。`PROD_ONLY` 环境变量若为真，则跳过非生产构建，只保留后续追加的 `.prod.js` 配置。
+Priority: command line`FORMATS`> sub-package`buildOptions.formats`> default`['esm-bundler', 'cjs']`。`PROD_ONLY`If the environment variable is true, skip non-production builds and keep only the subsequently appended`.prod.js`configuration.
 
-**第二步：计算构建标志位。** `createConfig` 内部根据格式字符串推导出一组布尔标志：
+**Step 2: Compute build flags.** `createConfig`Internally derives a set of boolean flags from the format string:
 
-[FACT:rollup.config.js:131-142](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L131-L142)
+[FACT:rollup.config.js:131-142]
 
 ```js
 const isProductionBuild = process.env.__DEV__ === 'false' || /\.prod\.js$/.test(output.file)
@@ -303,11 +305,11 @@ const isBrowserBuild =
   !packageOptions.enableNonBrowserBranches
 ```
 
-这些标志位是后续所有决策的**单一真相源**：入口文件选择、define 替换、external 判定、插件装配，全部依赖它们。
+These flags are the**single source of truth**for all subsequent decisions: entry file selection, define replacement, external determination, plugin assembly—all depend on them.
 
-**第三步：选择入口文件。**
+**Step 3: Select the entry file.**
 
-[FACT:rollup.config.js:159-168](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L159-L168)
+[FACT:rollup.config.js:159-168]
 
 ```js
 let entryFile = /runtime$/.test(format) ? `src/runtime.ts` : `src/index.ts`
@@ -319,11 +321,11 @@ if (isCompatPackage && (isBrowserESMBuild || isBundlerESMBuild)) {
 }
 ```
 
-默认入口是 `src/index.ts`，仅运行时构建用 `src/runtime.ts`。compat 包（`@vue/compat`，即 Vue 2 兼容构建）需要同时提供 default 和 named 导出，这会让 Rollup 对非 ESM 目标报错，因此为 ESM 构建单独使用 `esm-index.ts` / `esm-runtime.ts` 入口。
+The default entry is`src/index.ts`, and runtime-only builds use`src/runtime.ts`. The compat package (`@vue/compat`, i.e., the Vue 2 compatibility build) needs to provide both default and named exports, which causes Rollup to error on non-ESM targets, so a separate`esm-index.ts` / `esm-runtime.ts`entry is used for the ESM build.
 
-**第四步：生成 define 替换表。** `resolveDefine` 把源码中的 `__DEV__`、`__BROWSER__` 等编译期常量替换为字面量：
+**Step 4: Generate the define replacement table.** `resolveDefine`Replaces compile-time constants like`__DEV__`、`__BROWSER__`in the source code with literals:
 
-[FACT:rollup.config.js:170-201](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L170-L201)
+[FACT:rollup.config.js:170-201]
 
 ```js
 const replacements = {
@@ -344,11 +346,11 @@ const replacements = {
 }
 ```
 
-这里有一个精妙的分层：**feature flags 在 esm-bundler 构建中不硬编码，而是保留为 `__VUE_OPTIONS_API__` 这样的标识符**，交给最终用户的打包器去替换。这样用户可以通过 `define: { __VUE_OPTIONS_API__: false }` 关闭 Options API 支持，从而 Tree-shake 掉相关代码。而在 global/esm-browser 构建中，这些 flag 被硬编码为 `true`/`false`，因为浏览器直接消费的产物没有打包器介入。
+There's an elegant layering here:**feature flags are not hardcoded in the esm-bundler build, but kept as identifiers like`__VUE_OPTIONS_API__`**, left for the end user's bundler to replace. This way users can disable Options API support via`define: { __VUE_OPTIONS_API__: false }`, thereby tree-shaking the related code. In global/esm-browser builds, however, these flags are hardcoded to`true`/`false`, because artifacts consumed directly by the browser have no bundler involved.
 
-**第五步：允许环境变量覆盖。**
+**Step 5: Allow environment variable overrides.**
 
-[FACT:rollup.config.js:208-216](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L208-L216)
+[FACT:rollup.config.js:208-216]
 
 ```js
 // allow inline overrides like
@@ -362,11 +364,11 @@ Object.keys(replacements).forEach(key => {
 })
 ```
 
-任何 define 键都可以通过同名环境变量覆盖。注释给出的例子是 `__RUNTIME_COMPILE__=true pnpm build runtime-core`——用于调试特定编译分支。
+Any define key can be overridden by an environment variable of the same name. The example given in the comments is`__RUNTIME_COMPILE__=true pnpm build runtime-core`—used for debugging specific compilation branches.
 
-**第六步：装配插件链。**
+**Step 6: Assemble the plugin chain.**
 
-[FACT:rollup.config.js:324-342](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L324-L342)
+[FACT:rollup.config.js:324-342]
 
 ```js
 plugins: [
@@ -386,11 +388,11 @@ plugins: [
 ],
 ```
 
-插件顺序有讲究：`json` 先处理 JSON 导入，`alias` 把 `@vue/*` 映射到源码路径，`enumPlugin` 做枚举内联，`replace` 做字符串替换，`esbuild` 做 TS 转译。注意 `esbuild` 的 `tsconfig` 指向根 tsconfig——**所有子包共用同一份类型配置**，这正是第二节讨论的「宪法」在构建期的体现。
+Plugin order matters:`json`handles JSON imports first,`alias`maps`@vue/*`to source paths,`enumPlugin`does enum inlining,`replace`does string replacement,`esbuild`does TS transpilation. Note that`esbuild`'s`tsconfig`points to the root tsconfig—**all sub-packages share the same type configuration**, which is precisely the build-time manifestation of the "constitution" discussed in Section 2.
 
-**第七步：生产构建追加。** 若 `NODE_ENV=production`：
+**Step 7: Append production builds.**If`NODE_ENV=production`：
 
-[FACT:rollup.config.js:97-114](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L97-L114)
+[FACT:rollup.config.js:97-114]
 
 ```js
 if (process.env.NODE_ENV === 'production') {
@@ -408,9 +410,9 @@ if (process.env.NODE_ENV === 'production') {
 }
 ```
 
-CJS 格式追加一个 `.prod.js` 版本（用 `__DEV__=false` 替换），global 与 esm-browser 格式追加一个压缩版本（用 swc 做 minify）。`packageOptions.prod === false` 的包可以退出这个机制。
+The CJS format appends a`.prod.js`version (replacing with`__DEV__=false`), and the global and esm-browser formats append a minified version (minified with swc).`packageOptions.prod === false`Packages with
 
-整个决策流可以用下面的控制流图概括：
+can opt out of this mechanism.
 
 ```mermaid
 flowchart TD
@@ -442,11 +444,11 @@ flowchart TD
     add_prod --> done
 ```
 
-## 设计思考与踩坑
+## Copy
 
-**`external` 的三分支策略。** `resolveExternal` 根据构建类型返回不同的外部化列表：
+**`external`Design Reflections and Pitfalls** `resolveExternal`'s three-branch strategy.
 
-[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
+[FACT:rollup.config.js:257-283]
 
 ```js
 function resolveExternal() {
@@ -467,11 +469,11 @@ function resolveExternal() {
 }
 ```
 
-浏览器构建（global/esm-browser）把所有依赖内联，只把 `treeShakenDeps` 列为 external 以抑制警告——这些依赖在浏览器分支中不会被实际引用，会被 Tree-shaking 移除。Node/esm-bundler 构建则把所有 `dependencies` 和 `peerDependencies` 外部化，让消费方自己管理依赖版本。
+Copy`treeShakenDeps`Browser builds (global/esm-browser) inline all dependencies, listing only`dependencies`as external to suppress warnings—these dependencies are never actually referenced in the browser branch and will be removed by tree-shaking. Node/esm-bundler builds externalize all`peerDependencies`and
 
-**`onwarn` 过滤循环依赖。**
+**`onwarn`, letting consumers manage dependency versions themselves.**
 
-[FACT:rollup.config.js:344-348](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L344-L348)
+[FACT:rollup.config.js:344-348]
 
 ```js
 onwarn: (msg, warn) => {
@@ -481,11 +483,11 @@ onwarn: (msg, warn) => {
 },
 ```
 
-循环依赖警告被静默。Vue 的 `runtime-core` 与 `reactivity` 之间存在合法的循环引用（响应式系统需要引用组件实例类型），这些循环在运行时是安全的，因此被过滤。
+Copy`runtime-core`Circular dependency warnings are silenced. Vue's`reactivity`and
 
-**`treeshake.moduleSideEffects: false` 的激进假设。**
+**`treeshake.moduleSideEffects: false`have a legitimate circular reference (the reactivity system needs to reference the component instance type), and these cycles are safe at runtime, so they are filtered.**
 
-[FACT:rollup.config.js:355-355](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L355-L355)
+[FACT:rollup.config.js:355-355]
 
 ```js
 treeshake: {
@@ -493,11 +495,11 @@ treeshake: {
 },
 ```
 
-这告诉 Rollup：所有模块都没有副作用，可以放心移除未引用的导入。这是一个**激进假设**——如果某个模块在顶层执行了副作用代码（如注册全局变量），它可能被错误移除。Vue 源码通过约定保证所有模块都是纯的，因此可以开启这个优化。
+Copy**This tells Rollup: all modules have no side effects, so unreferenced imports can be safely removed. This is an**aggressive assumption
 
-**swc-minify 的 `pure_getters` 陷阱。**
+**—if a module executes side-effect code at the top level (such as registering a global variable), it might be incorrectly removed. Vue's source code guarantees by convention that all modules are pure, so this optimization can be enabled.`pure_getters`swc-minify's**
 
-[FACT:rollup.config.js:373-388](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L373-L388)
+[FACT:rollup.config.js:373-388]
 
 ```js
 async renderChunk(contents, _, { format }) {
@@ -512,58 +514,62 @@ async renderChunk(contents, _, { format }) {
 }
 ```
 
-`pure_getters: true` 告诉压缩器「属性访问没有副作用」，可以安全移除未使用的 getter 调用。这对 Vue 的响应式代码是危险的——`obj.foo` 可能触发 getter 并收集依赖。但这里只用于 global/esm-browser 的生产构建，且 Vue 源码中依赖收集通过显式函数调用（`track()`）而非隐式 getter 副作用完成，因此是安全的。`map: null` 表示压缩后不生成 sourcemap——生产产物不需要调试映射。
+`pure_getters: true`Copy`obj.foo`Tells the minifier that "property access has no side effects," so unused getter calls can be safely removed. This is dangerous for Vue's reactive code—`track()`) rather than implicit getter side effects, so it is safe.`map: null`indicates that no sourcemap is generated after compression—production artifacts do not need debugging mappings.
 
 ---
 
+# Design thinking: why the source repository and release artifacts must be decoupled
 
-回到本章的核心命题。core 仓库的工程化设计有一条贯穿始终的主线：**源码仓库的职责是「生产」，发布产物的职责是「消费」，两者通过构建流水线解耦**。
+Returning to the core proposition of this chapter. The engineering design of the core repository has a main thread running throughout:**The responsibility of the source repository is "production," and the responsibility of release artifacts is "consumption." The two are decoupled through the build pipeline.**。
 
-具体体现在三个层面：
+This is specifically reflected in three aspects:
 
-**第一，源码不直接发布。** `package.json` 的 `private: true` [FACT:package.json:2-2](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L2-L2) 表明根包永不发布。每个子包的 `package.json` 中 `main`/`module`/`exports` 字段指向 `dist/` 下的产物，而非 `src/`。用户安装 `vue` 时拿到的是构建后的 `.js` 与 `.d.ts`，源码留在仓库里。
+**First, source code is not published directly.** `package.json`The`private: true` [FACT:package.json:2-2]indicates that the root package is never published. In each subpackage's`package.json`the`main`/`module`/`exports`field points to`dist/`artifacts under, rather than`src/`. When users install`vue`what they get is the built`.js`and`.d.ts`, while the source code remains in the repository.
 
-**第二，产物格式由消费场景决定。** 七种格式不是随意罗列，而是对应七种真实的消费路径：Vite 用户拿 `esm-bundler`，CDN 用户拿 `global`，Node SSR 用户拿 `cjs`。格式的选择逻辑集中在 `rollup.config.js` 一处，子包只需在 `buildOptions.formats` 中声明需要哪些。
+**Second, the artifact format is determined by the consumption scenario.**The seven formats are not listed arbitrarily, but correspond to seven real consumption paths: Vite users get`esm-bundler`, CDN users get`global`, Node SSR users get`cjs`. The format selection logic is centralized in`rollup.config.js`one place, and subpackages only need to declare in`buildOptions.formats`which ones are needed.
 
-**第三，类型与实现分离。** `build-dts` 脚本 `tsc -p tsconfig.build.json --noCheck && rollup -c rollup.dts.config.js` [FACT:package.json:9-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/package.json#L9-L9) 表明 `.d.ts` 生成是独立流水线。`isolatedDeclarations: true` 让声明文件生成可以跳过类型检查（`--noCheck`），因为类型已显式标注。
+**Third, types and implementation are separated.** `build-dts`The script`tsc -p tsconfig.build.json --noCheck && rollup -c rollup.dts.config.js` [FACT:package.json:9-9]indicates that`.d.ts`generation is an independent pipeline.`isolatedDeclarations: true`allows declaration file generation to skip type checking (`--noCheck`), because the types have already been explicitly annotated.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种解耦的深层动机是：**源码的组织方式服务于开发者，产物的组织方式服务于消费者，两者的最优解不同**。源码需要清晰的目录结构、完整的类型信息、可调试的 sourcemap；产物需要最小的体积、正确的模块格式、稳定的 API 表面。强行统一两者（例如直接发布 TS 源码）会同时损害两端的体验。
-
----
-
-
-本章从三个维度建立了对 core 仓库的宏观认知：
-
-1. **Dual-Directory Workspace Architecture**：`packages/` 与 `packages-private/` 的物理隔离，配合 pnpm workspace 的符号链接与 catalog 版本目录，实现了「公开包」与「私有包」的清晰边界。`preinstall` 门禁、`allowBuilds` 白名单、`minimumReleaseAge` 冷却期共同构成供应链安全防线。
-
-2. **根级 tsconfig**：作为所有子包的类型宪法，通过 `paths` 映射实现编译期的 workspace 解析，通过 `isolatedDeclarations` 与 `composite` 支撑增量构建与快速声明文件生成。
-
-3. **Rollup 统一工厂**：以 `TARGET` 环境变量为入口，通过 `buildOptions` 读取子包元信息，通过一组布尔标志位驱动入口选择、define 替换、external 判定与插件装配，最终产出七种格式的产物。
-
-核心哲学是**源码仓库与发布产物的解耦**：仓库负责生产，产物负责消费，构建流水线是两者之间的唯一桥梁。
+> **[Design Inference & Architectural Trade-offs]**
+> The deeper motivation for this decoupling is:**The way source code is organized serves developers, and the way artifacts are organized serves consumers; the optimal solutions for the two are different**. Source code needs a clear directory structure, complete type information, and debuggable sourcemaps; artifacts need minimal size, the correct module format, and a stable API surface. Forcing the two to be unified (for example, directly publishing TS source code) would harm the experience on both ends at the same time.
 
 ---
 
+# Chapter summary
 
-本章回答了「core 仓库是什么」。但仓库的静态结构只是舞台，真正的戏剧发生在一次构建请求的执行过程中：`scripts/build.js` 如何解析命令行参数、如何调用 Rollup API、如何处理构建失败与并发。下一章将追踪一次构建请求从输入到产物的端到端旅程，把本章建立的静态认知转化为动态的执行视图。
+This chapter established a macro-level understanding of the core repository from three dimensions:
 
+1. **Dual-directory structure**：`packages/`and`packages-private/`physical isolation, combined with pnpm workspace symlinks and the catalog version directory, achieves a clear boundary between "public packages" and "private packages."`preinstall`gatekeeping,`allowBuilds`whitelist,`minimumReleaseAge`and cooldown period together form the supply chain security defense line.
 
-Q1: 若把 `pnpm-workspace.yaml` 中的 `minimumReleaseAge: 1440` 改为 `0`，在依赖升级场景下会引入什么风险？为什么 `minimumReleaseAgeExclude` 的存在是必要的？
+2. **Root-level tsconfig**: as the type constitution for all subpackages, it implements compile-time workspace resolution through`paths`mapping, and supports incremental builds and fast declaration file generation through`isolatedDeclarations`and`composite`.
 
-**参考解析**：
+3. **Rollup unified factory**: with the`TARGET`environment variable as the entry point, it reads subpackage metadata through`buildOptions`, and uses a set of boolean flags to drive entry selection, define replacement, external determination, and plugin assembly, ultimately producing artifacts in seven formats.
 
-`minimumReleaseAge: 1440` [FACT:pnpm-workspace.yaml:33-33](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L33-L33) 要求新发布的依赖版本必须满 24 小时才允许安装。若改为 `0`，则任何刚发布的版本都可立即被拉入。
+The core philosophy is**the decoupling of the source repository and release artifacts**: the repository is responsible for production, artifacts are responsible for consumption, and the build pipeline is the only bridge between the two.
 
-风险场景：攻击者劫持某个传递依赖（例如 `@babel/parser` 的某个 patch 版本），发布含恶意 postinstall 脚本的版本。在 24 小时冷却期内，社区通常会发现问题并撤下该版本；若冷却期为 0，core 仓库的 CI 可能在攻击窗口内自动升级并执行恶意脚本。
+---
 
-`minimumReleaseAgeExclude` [FACT:pnpm-workspace.yaml:36-38](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L36-L38) 的存在是因为冷却期机制会与安全补丁的紧迫性冲突。注释中的 `vitest@4.1.11` 是 Renovate 检测到的安全更新——这类更新需要立即生效，等待 24 小时反而延长了暴露窗口。因此需要一个显式的豁免清单，让安全更新绕过冷却期。这体现了「默认保守、例外显式」的安全设计原则。
+# Chapter transition
 
-Q2: `rollup.config.js` 中 `resolveDefine` 对 `__FEATURE_OPTIONS_API__` 的处理是 `isBundlerESMBuild ? '__VUE_OPTIONS_API__' : 'true'`。如果错误地改成对所有格式都返回 `'true'`，会对最终用户产生什么影响？
+This chapter answered "what the core repository is." But the static structure of the repository is only the stage; the real drama happens during the execution of a build request:`scripts/build.js`how command-line arguments are parsed, how the Rollup API is called, and how build failures and concurrency are handled. The next chapter will trace the end-to-end journey of a build request from input to artifact, transforming the static understanding established in this chapter into a dynamic execution view.
 
-**参考解析**：
+# Chapter reflection and self-test
 
-[FACT:rollup.config.js:192-194](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L192-L194)
+Q1: If in`pnpm-workspace.yaml`the`minimumReleaseAge: 1440`were changed to`0`, what risk would be introduced in dependency upgrade scenarios? Why is`minimumReleaseAgeExclude`necessary?
+
+**Reference analysis**：
+
+`minimumReleaseAge: 1440` [FACT:pnpm-workspace.yaml:33-33]requires that newly published dependency versions must be at least 24 hours old before they are allowed to be installed. If changed to`0`, then any just-published version can be pulled in immediately.
+
+Risk scenario: an attacker hijacks a transitive dependency (for example, a patch version of`@babel/parser`) and publishes a version containing a malicious postinstall script. During the 24-hour cooldown period, the community usually discovers the problem and removes that version; if the cooldown period is 0, the core repository's CI may automatically upgrade and execute the malicious script within the attack window.
+
+`minimumReleaseAgeExclude` [FACT:pnpm-workspace.yaml:36-38]exists because the cooldown mechanism conflicts with the urgency of security patches. The`vitest@4.1.11`in the comment is a security update detected by Renovate—such updates need to take effect immediately, and waiting 24 hours would instead extend the exposure window. Therefore, an explicit exemption list is needed to let security updates bypass the cooldown period. This reflects the security design principle of "conservative by default, explicit for exceptions."
+
+Q2: `rollup.config.js`In`resolveDefine`the handling of`__FEATURE_OPTIONS_API__`is`isBundlerESMBuild ? '__VUE_OPTIONS_API__' : 'true'`. If it were incorrectly changed to return`'true'`for all formats, what impact would that have on end users?
+
+**Reference analysis**：
+
+[FACT:rollup.config.js:192-194]
 
 ```js
 __FEATURE_OPTIONS_API__: isBundlerESMBuild
@@ -571,18 +577,18 @@ __FEATURE_OPTIONS_API__: isBundlerESMBuild
   : `true`,
 ```
 
-在 esm-bundler 构建中，`__FEATURE_OPTIONS_API__` 被保留为标识符 `__VUE_OPTIONS_API__`，交给最终用户的打包器替换。用户可以在自己的构建配置中设置 `define: { __VUE_OPTIONS_API__: false }`，从而让 Tree-shaking 移除所有 Options API 相关代码（`data`、`methods`、`computed` 等选项的处理逻辑），显著减小产物体积。
+In the esm-bundler build,`__FEATURE_OPTIONS_API__`is preserved as the identifier`__VUE_OPTIONS_API__`and left for the end user's bundler to replace. Users can set`define: { __VUE_OPTIONS_API__: false }`in their own build configuration, thereby allowing Tree-shaking to remove all Options API-related code (`data`、`methods`、`computed`handling logic for options such as), significantly reducing artifact size.
 
-若改成对所有格式都返回 `'true'`，则 esm-bundler 产物中 Options API 代码被硬编码保留，用户的 `define` 配置失效，无法 Tree-shake。对于一个只用 Composition API 的项目，这会白白增加数 KB 的产物体积。
+If changed to return`'true'`for all formats, then the Options API code in the esm-bundler artifact would be hard-coded and retained, the user's`define`configuration would become ineffective, and Tree-shaking would be impossible. For a project that only uses the Composition API, this would add several KB to the artifact size for no reason.
 
-这个设计的关键洞察是：**esm-bundler 产物的最终形态由用户的打包器决定，因此 feature flag 必须延迟到用户构建期才解析**。而 global/esm-browser 产物直接运行在浏览器中，没有打包器介入，因此必须硬编码。
+The key insight of this design is:**the final form of the esm-bundler artifact is determined by the user's bundler, so feature flags must be deferred until the user's build time for resolution**. In contrast, global/esm-browser artifacts run directly in the browser, with no bundler involved, so they must be hard-coded.
 
-Q3: `rollup.config.js` 的 `resolveExternal` 中，浏览器构建只返回 `treeShakenDeps` 作为 external，而 Node 构建返回所有 `dependencies`。假设某天有人给 `runtime-core` 添加了一个新的运行时依赖 `foo-lib`，但忘记更新 `resolveExternal` 的逻辑。在浏览器构建中会发生什么？
+Q3: `rollup.config.js`of`resolveExternal`, the browser build only returns`treeShakenDeps`as external, while the Node build returns all`dependencies`. Suppose one day someone adds a new runtime dependency`runtime-core`to`foo-lib`, but forgets to update`resolveExternal`'s logic. What happens in the browser build?
 
-**参考解析**：
+**Reference Analysis**：
 
-[FACT:rollup.config.js:257-283](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L257-L283)
+[FACT:rollup.config.js:257-283]
 
-浏览器构建（`isGlobalBuild || isBrowserESMBuild`）在 `!packageOptions.enableNonBrowserBranches` 时只返回 `treeShakenDeps`（`source-map-js`、`@babel/parser`、`estree-walker`、`entities/decode`）。这意味着 `foo-lib` 不在 external 列表中，
+The browser build (`isGlobalBuild || isBrowserESMBuild`) only returns`!packageOptions.enableNonBrowserBranches`when`treeShakenDeps`（`source-map-js`、`@babel/parser`、`estree-walker`、`entities/decode`). This means`foo-lib`is not in the external list,
 
-至此，我们已经从宏观层面看清了 core 仓库作为工程化母体的整体设计哲学：双目录 workspace 结构划定了公开包与私有实验包的边界，根级 TypeScript 与 Rollup 配置提供了统一约束，而源码仓库与发布产物的解耦则让多格式输出成为可能。这些认知为后续深入具体工程链路铺平了道路。下一章，我们将把视线从静态结构转向动态流程，以 `node scripts/build.js vue` 为起点，追踪一次完整构建请求从命令行参数解析、目标包定位、Rollup 配置生成到产物落盘的端到端旅程，看看 build.js 如何通过 parseArgs 解析 formats/devOnly/release 等标志位，如何动态 require 目标包的 package.json 并读取 buildOptions，最终驱动 rollup.config.js 产出 esm-bundler、cjs、global 等多格式产物。
+At this point, we have seen from a macro level the overall design philosophy of the core repository as an engineering mothership: the dual-directory workspace structure defines the boundary between public packages and private experimental packages, the root-level TypeScript and Rollup configurations provide unified constraints, and the decoupling of the source repository from published artifacts makes multi-format output possible. These insights pave the way for deeper exploration of specific engineering pipelines later. In the next chapter, we will shift our view from static structure to dynamic flow, starting from`node scripts/build.js vue`as the starting point, tracing the end-to-end journey of a complete build request from command-line argument parsing, target package location, Rollup configuration generation, to artifact writing to disk, and seeing how build.js parses flags such as formats/devOnly/release through parseArgs, how it dynamically requires the target package's package.json and reads buildOptions, and ultimately drives rollup.config.js to produce multi-format artifacts such as esm-bundler, cjs, and global.

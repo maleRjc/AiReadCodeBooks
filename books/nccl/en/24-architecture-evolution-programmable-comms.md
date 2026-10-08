@@ -1,53 +1,53 @@
-# Chapter 24: Architectural Evolution: From Static Communication to Programmable Fabric
+# Chapter 24: Architectural Evolution and Future Directions: From Static Communication to Programmable Communication
 
+In the previous chapter we saw how the community builds a surrounding ecosystem around the NCCL core: Python bindings, Rust bindings, expert-parallel communication, ultra-bandwidth primitives, and communication checkpoints. These projects all reuse NCCL's stable API, but their demands have already gone beyond the scope of traditional collective communication—expert parallelism requires fine-grained point-to-point send/receive, checkpoints require pausing/resuming communication state, and ultra-bandwidth primitives require bypassing standard collective operations to directly operate the network. These demands point to the same problem: NCCL's fixed collective operation model is being stretched to the breaking point by more flexible communication needs. In this chapter we will no longer look at a single module, but instead start from the traces of evolution that have already appeared in the source code and discuss where NCCL is heading. Specifically, we will analyze three intertwined forces of evolution: communication primitives moving from fixed collectives to programmable—the RMA task scheduling in src/rma/rma.cc allows upper layers to compose Put/Signal/WaitSignal primitives instead of only calling AllReduce; network initiation moving from host proxy to GPU direct issue—the GIN backend management in src/gin/gin_host.cc allows GPU kernels to directly drive the NIC; and the memory model moving from registered buffers to symmetric memory—the symmetric memory kernel selection in src/sym_kernels.cc allows all ranks to use the same set of virtual addresses to access each other's buffers. These three forces are not isolated; they share the same infrastructure: the team abstraction in src/nccl_device/core.cc and the versioned DevComm in src/devcomm/devcomm_v23100.cc. Understanding how they mesh together means understanding the evolution logic of NCCL from a "collective communication library" to a "programmable communication engine."
 
-上一章我们看到社区如何围绕 NCCL 核心构建周边生态：Python 绑定、Rust 绑定、专家并行通信、超带宽原语、通信检查点。这些项目都在复用 NCCL 的稳定 API，但它们的诉求已经超出了传统集合通信的范畴——专家并行需要细粒度的点对点收发，检查点需要暂停/恢复通信状态，超带宽原语需要绕过标准集合操作直接操作网络。这些诉求指向同一个问题：NCCL 的固定集合操作模型，正在被更灵活的通信需求撑破。本章我们不再看某个单一模块，而是从源码中已经出现的演进痕迹出发，讨论 NCCL 正在走向何方。具体来说，我们将剖析三股交织的演进力量：通信原语从固定集合走向可编程——src/rma/rma.cc 中的 RMA 任务调度，让上层可以组合 Put/Signal/WaitSignal 原语，而不是只能调用 AllReduce；网络发起从 host proxy 走向 GPU 直发——src/gin/gin_host.cc 中的 GIN 后端管理，让 GPU kernel 直接驱动网卡；内存模型从注册缓冲区走向对称内存——src/sym_kernels.cc 中的对称内存 kernel 选择，让所有 rank 用同一套虚拟地址访问彼此的缓冲区。这三股力量不是孤立的，它们共享同一个基础设施：src/nccl_device/core.cc 中的 team 抽象和 src/devcomm/devcomm_v23100.cc 中的版本化 DevComm。理解它们如何咬合，就理解了 NCCL 从「集合通信库」到「可编程通信引擎」的演进逻辑。
+# 1. Programmable Communication Primitives: How RMA Turns a "Fixed Recipe" into a "Buffet"
 
-## 一、可编程通信原语：RMA 如何把「固定菜谱」变成「自助餐」
+## Intuitive model
 
-### Intuitive Architectural Model
+Traditional NCCL collective communication is like a fixed set meal: you order AllReduce, and the kitchen just follows the AllReduce procedure to completion. But in expert parallelism (MoE) scenarios, each token needs to be sent to a different expert, and the sending pattern is completely unknown at compile time—this is like a buffet, where you have to decide what to take, how much to take, and when to take it.
 
-传统 NCCL 的集合通信像一份固定套餐：你点 AllReduce，厨房就按 AllReduce 的流程做完。但专家并行（MoE）场景下，每个 token 要发给不同的专家，发送模式在编译期根本不知道——这就像自助餐，你得自己决定拿什么、拿多少、什么时候拿。
+RMA is the "buffet counter" that NCCL provides to upper layers: Put (write data to the peer's memory), Signal (notify the peer), WaitSignal (wait for the peer's signal). Upper-layer frameworks can freely combine these three primitives to implement arbitrary communication patterns.
 
-RMA 就是 NCCL 给上层提供的「自助餐台」：Put（把数据写到对端内存）、Signal（通知对端）、WaitSignal（等待对端信号）。上层框架可以自由组合这三个原语，实现任意通信模式。
+Without RMA, MoE's all-to-all can only be simulated through multiple small-scale collective operations, each requiring the full kernel launch and synchronization process, resulting in unacceptably high latency.
 
-如果没有 RMA，MoE 的 all-to-all 只能靠多次小规模集合操作模拟，每次都要走完整的 kernel 启动和同步流程，延迟高得无法接受。
+## Data Structures and Memory Layout
 
-### Data Structures & Memory Layout
+The core data structures of RMA are`ncclTaskRma`(task description) and`ncclRmaArgs`(plan parameters). Let's first look at`ncclRmaArgs`'s fields, which are initialized in`scheduleRmaTasksToPlan`.
 
-RMA 的核心数据结构是 `ncclTaskRma`（任务描述）和 `ncclRmaArgs`（计划参数）。我们先看 `ncclRmaArgs` 的字段，它在 `scheduleRmaTasksToPlan` 中被初始化。
-
-[FACT:src/rma/rma.cc:166-171](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L166-L171)
+[FACT:src/rma/rma.cc:166-171]
 
 ```cpp
 plan->isRma = true;
-plan->rmaArgs = ncclMemoryStackAlloc<struct ncclRmaArgs>(&comm->memScoped);
+plan->rmaArgs = ncclMemoryStackAlloc(&comm->memScoped);
 plan->rmaArgs->func = firstTask->func;
 plan->rmaArgs->nRmaTasks = 0;
 plan->rmaArgs->nRmaTasksProxy = 0;
 plan->rmaArgs->nRmaTasksCe = 0;
 ```
 
-这里的关键字段是 `nRmaTasksProxy` 和 `nRmaTasksCe`。它们把 RMA 任务分成两条执行路径：
+The key fields here are`nRmaTasksProxy`and`nRmaTasksCe`. They split RMA tasks into two execution paths:
 
-- **CE 路径**（Copy Engine，拷贝引擎）：目标 rank 在 LSA（Local Symmetric Access，本地对称访问）范围内，可以用 GPU 的拷贝引擎直接完成，不需要网络。
-- **Proxy 路径**：目标 rank 不在 LSA 范围内，必须走 host proxy 线程驱动网络。
+- **CE path**(Copy Engine): The target rank is within the LSA (Local Symmetric Access) range, which can be completed directly using the GPU's copy engine without needing the network.
+- **Proxy path**: The target rank is not within the LSA range and must go through a host proxy thread to drive the network.
 
-[INFERENCE] 这种二分法的设计动机很直接：LSA 范围内的通信走 NVLink 或 PCIe，带宽高、延迟低，用 CE 异步拷贝最划算；跨机通信必须走网卡，只能由 proxy 线程驱动。把两类任务分开调度，才能让 CE 和 proxy 并行执行，而不是串行等待。
+> **[Design Inference & Architectural Trade-offs]**
+> The motivation behind this dichotomy is straightforward: communication within the LSA range goes over NVLink or PCIe, which has high bandwidth and low latency, making asynchronous copy with CE the most cost-effective; cross-machine communication must go through the NIC and can only be driven by proxy threads. Only by scheduling the two types of tasks separately can CE and proxy execute in parallel, rather than waiting serially.
 
-`ncclTaskRma` 本身包含 `peers`、`nsignals`、`signalIdxs` 三个数组指针，分别记录对端 rank、信号数量、信号索引。对于 WaitSignal 任务，一个任务可以等待多个 peer；对于 Put/Signal 任务，一个任务只针对一个 peer。
+`ncclTaskRma`itself contains`peers`、`nsignals`、`signalIdxs`three array pointers, recording the peer rank, signal count, and signal index respectively. For WaitSignal tasks, one task can wait for multiple peers; for Put/Signal tasks, one task targets only one peer.
 
-### Step-by-Step Walkthrough：一次 WaitSignal 的调度
+## Step-by-Step Walkthrough: Scheduling of a WaitSignal
 
-我们代入一个具体场景：rank 0 调用 `ncclWaitSignal`，等待 rank 1 和 rank 3 的信号。假设 rank 1 在 LSA 范围内，rank 3 不在。
+Let's plug in a concrete scenario: rank 0 calls`ncclWaitSignal`, waiting for signals from rank 1 and rank 3. Assume rank 1 is within the LSA range and rank 3 is not.
 
-**第一步：找到第一个非空上下文队列。**
+**Step 1: Find the first non-empty context queue.**
 
-[FACT:src/rma/rma.cc:148-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L148-L158)
+[FACT:src/rma/rma.cc:148-158]
 
 ```cpp
 int ctx = -1;
-for (int i = 0; i < comm->config.numRmaCtx; i++) {
+for (int i = 0; i config.numRmaCtx; i++) {
   if (!ncclIntruQueueEmpty(&planner->rmaTaskQueues[i])) {
     ctx = i;
     break;
@@ -56,27 +56,27 @@ for (int i = 0; i < comm->config.numRmaCtx; i++) {
 if (ctx == -1) return ncclSuccess;
 ```
 
-RMA 任务按 context 分队列，每个 context 是一个独立的 RMA 通道。这里找到第一个有任务的 context，取出它的队列。
+RMA tasks are queued by context, and each context is an independent RMA channel. Here, find the first context that has tasks and take out its queue.
 
-**第二步：取出第一个任务，判断类型。**
+**Step 2: Take out the first task and determine its type.**
 
-[FACT:src/rma/rma.cc:163-168](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L163-L168)
+[FACT:src/rma/rma.cc:163-168]
 
 ```cpp
 struct ncclTaskRma* firstTask = ncclIntruQueueDequeue(ctxQueue);
 plan->isRma = true;
-plan->rmaArgs = ncclMemoryStackAlloc<struct ncclRmaArgs>(&comm->memScoped);
+plan->rmaArgs = ncclMemoryStackAlloc(&comm->memScoped);
 plan->rmaArgs->func = firstTask->func;
 ```
 
-`firstTask->func` 是 `ncclFuncWaitSignal`，进入 WaitSignal 分支。
+`firstTask->func`is`ncclFuncWaitSignal`, enter the WaitSignal branch.
 
-**第三步：按 LSA 可达性拆分 peer。**
+**Step 3: Split peers by LSA reachability.**
 
-[FACT:src/rma/rma.cc:187-204](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L187-L204)
+[FACT:src/rma/rma.cc:187-204]
 
 ```cpp
-for (int i = 0; i < firstTask->npeers; i++) {
+for (int i = 0; i npeers; i++) {
   int peerRank = firstTask->peers[i];
   bool lsaAccessible = isLsaAccessible(comm, peerRank);
   if (lsaAccessible) {
@@ -93,11 +93,11 @@ for (int i = 0; i < firstTask->npeers; i++) {
 }
 ```
 
-`isLsaAccessible` 遍历 `comm->devrState.lsaRankList`，判断 peer 是否在 LSA 团队内。rank 1 在 LSA 内，进 CE 列表；rank 3 不在，进 Proxy 列表。
+`isLsaAccessible`iterates over`comm->devrState.lsaRankList`, determining whether the peer is within the LSA team. Rank 1 is within LSA, so it goes into the CE list; rank 3 is not, so it goes into the Proxy list.
 
-**第四步：为 CE 和 Proxy 各创建一个新任务。**
+**Step 4: Create a new task for each of CE and Proxy.**
 
-[FACT:src/rma/rma.cc:206-246](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L206-L246)
+[FACT:src/rma/rma.cc:206-246]
 
 ```cpp
 if (npeersCe > 0) {
@@ -116,24 +116,24 @@ if (npeersProxy > 0) {
 }
 ```
 
-原来的一个 WaitSignal 任务被拆成两个：CE 任务等 rank 1，Proxy 任务等 rank 3。两个任务可以并行执行——CE 路径在 GPU 上等，Proxy 路径在 host 线程上等。
+The original single WaitSignal task is split into two: the CE task waits for rank 1, and the Proxy task waits for rank 3. The two tasks can execute in parallel—the CE path waits on the GPU, and the Proxy path waits on the host thread.
 
-**第五步：释放原任务。**
+**Step 5: Release the original task.**
 
-[FACT:src/rma/rma.cc:249-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L249-L251)
+[FACT:src/rma/rma.cc:249-251]
 
 ```cpp
 planner->nTasksRma -= 1;
 ncclMemoryPoolFree(&comm->memPool_ncclTaskRma, firstTask);
 ```
 
-原任务已经拆成两个新任务，释放回内存池。
+The original task has already been split into two new tasks, so it is released back to the memory pool.
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-RMA 的并行执行体现在 `ncclRmaWaitSignal` 中。
+The parallel execution of RMA is reflected in`ncclRmaWaitSignal`.
 
-[FACT:src/rma/rma.cc:43-74](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L43-L74)
+[FACT:src/rma/rma.cc:43-74]
 
 ```cpp
 if (plan->rmaArgs->nRmaTasksProxy > 0 && plan->rmaArgs->nRmaTasksCe > 0) {
@@ -148,17 +148,18 @@ if (plan->rmaArgs->nRmaTasksProxy > 0 && plan->rmaArgs->nRmaTasksCe > 0) {
 }
 ```
 
-这段代码用 CUDA event 做流间同步：先在输入流上记录 event，让 CE 流等待这个 event，然后在两个流上分别启动 proxy 和 CE 任务，最后让输入流等待 CE 流的 event。这样两条路径并行推进，但对外表现为一个同步操作。
+This code uses CUDA events for inter-stream synchronization: first record an event on the input stream, let the CE stream wait for this event, then launch the proxy and CE tasks on the two streams respectively, and finally let the input stream wait for the CE stream's event. In this way, the two paths advance in parallel, but externally it appears as a single synchronous operation.
 
-[INFERENCE] 这里的设计权衡是：并行执行能降低延迟，但引入了额外的 event 记录和流同步开销。对于小消息，这个开销可能超过并行收益；对于大消息，并行收益显著。NCCL 没有在这里做自适应判断，而是统一走并行路径——因为 RMA 的典型场景就是大消息的细粒度通信。
+> **[Design Inference & Architectural Trade-offs]**
+> The design trade-off here is: parallel execution can reduce latency, but it introduces additional event recording and stream synchronization overhead. For small messages, this overhead may exceed the parallel benefit; for large messages, the parallel benefit is significant. NCCL does not make an adaptive judgment here, but uniformly takes the parallel path—because the typical scenario for RMA is fine-grained communication of large messages.
 
-### 生产避坑指南
+## Production Pitfall Avoidance Guide
 
-**坑 1：LSA 可达性判断错误导致任务走错路径。** `isLsaAccessible` 遍历 `lsaRankList`，如果 `lsaSize` 为 0（比如单 rank 通信域），所有 peer 都会被判为不可达，全部走 Proxy 路径。这在小规模测试时不会暴露，但在大规模部署时会导致性能骤降。排查方法是看 `scheduleRmaTasksToPlan` 的 INFO 日志中 `nRmaTasksProxy` 和 `nRmaTasksCe` 的比例。
+**Pitfall 1: Incorrect LSA reachability judgment causes tasks to take the wrong path.** `isLsaAccessible`iterates over`lsaRankList`, if`lsaSize`is 0 (for example, a single-rank communication domain), all peers will be judged unreachable and all will take the Proxy path. This will not be exposed during small-scale testing, but it will cause a sharp performance drop in large-scale deployments. The troubleshooting method is to look at`scheduleRmaTasksToPlan`'s INFO logs for the ratio of`nRmaTasksProxy`and`nRmaTasksCe`.
 
-**坑 2：WaitSignal 任务拆分后 peer 数组的生命周期。** CE 路径的 `peersCe` 用 `ncclMemoryStackAlloc` 分配，生命周期跟随 `comm->memScoped`；Proxy 路径的 `peersProxy` 用 `ncclCalloc` 分配，在任务执行完后需要手动 `free`。如果 Proxy 任务创建失败，`fail` 分支会释放这些数组。
+**Pitfall 2: The lifetime of the peer array after a WaitSignal task is split.**The CE path's`peersCe`uses`ncclMemoryStackAlloc`allocation, and its lifetime follows`comm->memScoped`; the Proxy path's`peersProxy`uses`ncclCalloc`allocation, and after the task finishes executing it needs to be manually`free`. If Proxy task creation fails,`fail`branch will release these arrays.
 
-[FACT:src/rma/rma.cc:302-308](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L302-L308)
+[FACT:src/rma/rma.cc:302-308]
 
 ```cpp
 exit:
@@ -170,13 +171,13 @@ fail:
   goto exit;
 ```
 
-**坑 3：Put/Signal 任务的跨 context 批量。** 在 Put/Signal 分支中，NCCL 会把所有 context 的 put/signal 任务拉进同一个 plan，但遇到 WaitSignal 就停止。
+**Pitfall 3: Cross-context batching of Put/Signal tasks.**In the Put/Signal branch, NCCL pulls put/signal tasks from all contexts into the same plan, but stops when it encounters a WaitSignal.
 
-[FACT:src/rma/rma.cc:279-295](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L279-L295)
+[FACT:src/rma/rma.cc:279-295]
 
 ```cpp
-for (int c = 0; c < comm->config.numRmaCtx; c++) {
-  struct ncclIntruQueue<struct ncclTaskRma, &ncclTaskRma::next>* q = &planner->rmaTaskQueues[c];
+for (int c = 0; c config.numRmaCtx; c++) {
+  struct ncclIntruQueue* q = &planner->rmaTaskQueues[c];
   while (!ncclIntruQueueEmpty(q)) {
     struct ncclTaskRma* task = ncclIntruQueueHead(q);
     if (!isRmaPutOrSignal(task->func)) break;
@@ -186,23 +187,23 @@ for (int c = 0; c < comm->config.numRmaCtx; c++) {
 }
 ```
 
-这个设计的意图是：一次 kernel 启动覆盖所有 context 的 put/signal，减少启动开销。但每个 context 的队列只消费到第一个 WaitSignal 为止，保证 per-context FIFO 顺序。如果上层在同一个 context 里交替调用 put 和 waitSignal，批量效果会大打折扣——这是使用 RMA 时需要注意的模式。
+The intent of this design is: a single kernel launch covers put/signal for all contexts, reducing launch overhead. But each context's queue only consumes up to the first WaitSignal, ensuring per-context FIFO ordering. If the upper layer alternates put and waitSignal calls within the same context, the batching effect is greatly diminished—this is a pattern to watch out for when using RMA.
 
 ---
 
-## 二、GPU 直发网络：GIN 如何让 kernel 绕过 host proxy
+# II. GPU Direct Network: How GIN Lets Kernels Bypass the Host Proxy
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-传统 NCCL 的网络通信像寄信：GPU kernel 把数据放到缓冲区，host proxy 线程把数据交给网卡，网卡发出去。GIN 则是让 GPU kernel 直接把信投进对方信箱——kernel 直接写网卡的发送队列，网卡直接读 GPU 显存。
+Traditional NCCL network communication is like mailing a letter: the GPU kernel puts data into a buffer, the host proxy thread hands the data to the NIC, and the NIC sends it out. GIN, on the other hand, lets the GPU kernel drop the letter directly into the recipient's mailbox—the kernel writes directly to the NIC's send queue, and the NIC reads directly from GPU memory.
 
-如果没有 GIN，每次网络通信都要经过 host 内存中转，延迟至少多一个 PCIe 往返。对于 MoE 这种细粒度通信，这个延迟是致命的。
+Without GIN, every network communication must go through host memory as an intermediary, adding at least one PCIe round-trip of latency. For fine-grained communication like MoE, this latency is fatal.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-GIN 的核心状态是 `ncclGinState`，它管理多个后端（backend）和多个 DevComm。我们先看后端版本兼容表。
+The core state of GIN is`ncclGinState`, which manages multiple backends and multiple DevComms. Let's first look at the backend version compatibility table.
 
-[FACT:src/gin/gin_host.cc:27-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L27-L33)
+[FACT:src/gin/gin_host.cc:27-33]
 
 ```cpp
 const int proxyBackendMinVersions[] = {0, NCCL_VERSION(2, 30, 3), NCCL_VERSION(2, 30, 5), NCCL_VERSION(2, 32, 0)};
@@ -211,19 +212,20 @@ const int gpiBackendMinVersions[] = {0, NCCL_VERSION(2, 30, 5)};
 constexpr int efaGdaBackendMinVersions[] = {0, NCCL_VERSION(2, 31, 0), NCCL_VERSION(2, 32, 0)};
 ```
 
-这些数组的索引是后端版本号，值是兼容的最低 NCCL 版本。比如 `proxyBackendMinVersions[3]` 对应后端版本 3，要求 NCCL 至少 2.32.0。这个设计让 NCCL 可以在运行时根据设备代码版本选择合适后端版本，而不是编译期绑定。
+The index of these arrays is the backend version number, and the value is the minimum compatible NCCL version. For example,`proxyBackendMinVersions[3]`corresponds to backend version 3, requiring NCCL at least 2.32.0. This design allows NCCL to select the appropriate backend version at runtime based on the device code version, rather than binding at compile time.
 
-[INFERENCE] 这种版本兼容表的设计动机是：GIN 后端（网卡驱动、固件）和 NCCL 库的版本演进节奏不同。如果硬编码版本要求，任何一方升级都会导致不兼容。用数组做版本映射，可以在运行时动态选择，向后兼容旧后端。
+> **[Design Inference & Architectural Trade-offs]**
+> The motivation behind this version compatibility table design is: the GIN backend (NIC driver, firmware) and the NCCL library evolve at different paces. If version requirements were hardcoded, an upgrade on either side would cause incompatibility. Using arrays for version mapping allows dynamic selection at runtime, maintaining backward compatibility with older backends.
 
-`ncclGinStateDevComm` 是每个 DevComm 的 GIN 状态，包含 `contextCount`、`backendIndex`、`ginCtx[]`、`devHandles[]` 等字段。它被串成链表挂在 `ginState->devComms` 上。
+`ncclGinStateDevComm`is the GIN state for each DevComm, containing`contextCount`、`backendIndex`、`ginCtx[]`、`devHandles[]`and other fields. It is chained into a linked list attached to`ginState->devComms`.
 
-### Step-by-Step Walkthrough：一次 GIN 连接建立
+## Step-by-Step Walkthrough: Establishing a GIN Connection
 
-我们代入一个场景：rank 0 初始化通信域，需要建立 GIN 连接。
+Let's walk through a scenario: rank 0 initializes the communication domain and needs to establish a GIN connection.
 
-**第一步：检查 GIN 是否启用和支持。**
+**Step 1: Check whether GIN is enabled and supported.**
 
-[FACT:src/gin/gin_host.cc:96-107](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L96-L107)
+[FACT:src/gin/gin_host.cc:96-107]
 
 ```cpp
 if (ginState->connected) return ncclSuccess;
@@ -237,11 +239,11 @@ if (!ginState->supported) {
 }
 ```
 
-`ncclParamGinEnable()` 读取环境变量 `NCCL_GIN_ENABLE`，默认 1。如果用户显式禁用，直接返回错误。
+`ncclParamGinEnable()`reads the environment variable`NCCL_GIN_ENABLE`, defaulting to 1. If the user explicitly disables it, return an error directly.
 
-**第二步：检查对称内存支持。**
+**Step 2: Check symmetric memory support.**
 
-[FACT:src/gin/gin_host.cc:111-114](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L111-L114)
+[FACT:src/gin/gin_host.cc:111-114]
 
 ```cpp
 if (!comm->symmetricSupport) {
@@ -250,11 +252,11 @@ if (!comm->symmetricSupport) {
 }
 ```
 
-GIN 依赖对称内存——因为 GPU kernel 需要知道对端缓冲区的虚拟地址，只有对称内存才能保证地址一致。
+GIN relies on symmetric memory—because the GPU kernel needs to know the virtual address of the peer's buffer, and only symmetric memory can guarantee address consistency.
 
-**第三步：获取本地 GIN 设备列表。**
+**Step 3: Get the local GIN device list.**
 
-[FACT:src/gin/gin_host.cc:116-122](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L116-L122)
+[FACT:src/gin/gin_host.cc:116-122]
 
 ```cpp
 int nLocalGinDevs;
@@ -266,11 +268,11 @@ if (nLocalGinDevs > NCCL_GIN_MAX_CONNECTIONS) {
 }
 ```
 
-`ncclTopoGetLocalGinDevs` 从拓扑图中找出所有支持 GIN 的网卡。如果超过 `NCCL_GIN_MAX_CONNECTIONS`，只取前几个并打印警告。
+`ncclTopoGetLocalGinDevs`finds all NICs that support GIN from the topology graph. If it exceeds`NCCL_GIN_MAX_CONNECTIONS`, only take the first few and print a warning.
 
-**第四步：计算 GIN 团队。**
+**Step 4: Compute the GIN team.**
 
-[FACT:src/gin/gin_host.cc:138-149](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L138-L149)
+[FACT:src/gin/gin_host.cc:138-149]
 
 ```cpp
 ginTeam = ncclTeamWorld(comm);
@@ -281,24 +283,11 @@ if (ginState->ginConnectionType != NCCL_GIN_CONNECTION_FULL) {
     .stride = comm->contiguousRanksPerHost,
   };
 }
-for (int r = 0; r < ginTeam.nRanks; r++) {
-  int worldRank = ncclTeamRankToWorld(comm, ginTeam, r);
-  handles[r] = allHandles + worldRank * NCCL_NET_HANDLE_MAXSIZE;
-}
-```
-
-如果连接类型是 FULL，GIN 团队就是整个世界团队；否则只连接每个 host 的第一个 rank（rail 连接）。`ncclTeamRankToWorld` 把团队内 rank 转成世界 rank。
-
-**第五步：逐后端建立连接。**
-
-[FACT:src/gin/gin_host.cc:151-202](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L151-L202)
-
-```cpp
-for (int backendIdx = 0; backendIdx < ginState->numActiveBackends; backendIdx++) {
+for (int r = 0; r numActiveBackends; backendIdx++) {
   backend = &ginState->backends[backendIdx];
   NCCLCHECKGOTO(backend->ncclGin->devices(&ndev), ret, fail);
   ...
-  for (int commIdx = 0; commIdx < backend->ginCommCount; commIdx++) {
+  for (int commIdx = 0; commIdx ginCommCount; commIdx++) {
     NCCLCHECKGOTO(backend->ncclGin->listen(...), ret, fail);
     NCCLCHECKGOTO(backend->ncclGin->getProperties(...), ret, fail);
     NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, allHandles, NCCL_NET_HANDLE_MAXSIZE), ret, fail);
@@ -308,13 +297,13 @@ for (int backendIdx = 0; backendIdx < ginState->numActiveBackends; backendIdx++)
 }
 ```
 
-每个后端先调用 `devices` 获取设备数量，然后对每个连接执行 listen→getProperties→allGather→connect→closeListen 的流程。`bootstrapAllGather` 在所有 rank 之间交换 handle，这样每个 rank 都知道对端的连接信息。
+Each backend first calls`devices`to get the device count, then performs the listen→getProperties→allGather→connect→closeListen flow for each connection.`bootstrapAllGather`exchanges handles among all ranks, so that each rank knows the connection information of its peers.
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-GIN 的进度线程是核心并发机制。
+The GIN progress thread is the core concurrency mechanism.
 
-[FACT:src/gin/gin_host.cc:56-87](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L56-L87)
+[FACT:src/gin/gin_host.cc:56-87]
 
 ```cpp
 void* ncclGinProgress(struct ncclGinState* ginState, int threadIdx) {
@@ -328,11 +317,11 @@ void* ncclGinProgress(struct ncclGinState* ginState, int threadIdx) {
       continue;
     }
     {
-      std::shared_lock<std::shared_timed_mutex> rlock(ginState->devCommRwMutex);
+      std::shared_lock rlock(ginState->devCommRwMutex);
       struct ncclGinStateDevComm* dc = ginState->devComms;
       while (dc) {
         struct ncclGinBackendState* backend = &ginState->backends[dc->backendIndex];
-        for (int commIdx = threadIdx; commIdx < backend->ginCommCount; commIdx += ginState->proxyNthreads) {
+        for (int commIdx = threadIdx; commIdx ginCommCount; commIdx += ginState->proxyNthreads) {
           if (dc->devHandles[commIdx]->needsProxyProgress) {
             ncclResult_t ret = backend->ncclGin->ginProgress(dc->ginCtx[commIdx]);
             if (ret != ncclSuccess) {
@@ -349,14 +338,17 @@ void* ncclGinProgress(struct ncclGinState* ginState, int threadIdx) {
 }
 ```
 
-这里有几个关键设计：
+There are several key design points here:
 
-1. **CPU 亲和性**：`ncclOsSetAffinity` 把进度线程绑定到指定 CPU 核，避免线程迁移带来的缓存失效。
-2. **写锁退避**：`writePending` 是一个原子标志，主线程要修改 `devComms` 链表时先置位，进度线程看到后主动 yield，避免锁竞争。
-3. **读写锁**：`devCommRwMutex` 是 `shared_timed_mutex`，进度线程持读锁遍历链表，主线程持写锁修改链表。
-4. **线程分工**：线程 t 负责连接 t, t+proxyNthreads, t+2*proxyNthreads, ...，通过 stride 循环实现负载均衡。
+1. **CPU Affinity**：`ncclOsSetAffinity`binds the progress thread to a specified CPU core, avoiding cache invalidation caused by thread migration.
 
-[FACT:src/gin/gin_host.cc:43-47](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L43-L47)
+2. **Write Lock Backoff**：`writePending`is an atomic flag. When the main thread needs to modify the`devComms`linked list, it sets this flag first, and the progress thread yields voluntarily upon seeing it, avoiding lock contention.
+
+3. **Read-Write Lock**：`devCommRwMutex`is`shared_timed_mutex`. The progress thread holds the read lock to traverse the linked list, and the main thread holds the write lock to modify the linked list.
+
+4. **Thread Division of Labor**: thread t is responsible for connections t, t+proxyNthreads, t+2*proxyNthreads, ..., achieving load balancing through a stride loop.
+
+[FACT:src/gin/gin_host.cc:43-47]
 
 ```cpp
 static void ginProgressWriteLock(struct ncclGinState* ginState) {
@@ -369,27 +361,27 @@ static void ginProgressWriteUnlock(struct ncclGinState* ginState) {
 }
 ```
 
-这个写锁的实现假设只有一个写者（主线程），所以不需要额外的互斥。`writePending` 先置位再拿锁，确保进度线程在拿锁前就能看到写意图，主动退避。
+This write lock implementation assumes there is only one writer (the main thread), so no additional mutex is needed.`writePending`sets the flag first before acquiring the lock, ensuring the progress thread can see the write intent before acquiring the lock and voluntarily back off.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：GIN 连接数不匹配导致 AllGather 死锁。** 每个 rank 的 `ginCommCount` 可能不同（取决于本地网卡数量），NCCL 通过 `bootstrapAllGather` 取所有 rank 的最小值。
+**Pitfall 1: Mismatched GIN connection counts causing AllGather deadlock.**Each rank's`ginCommCount`may differ (depending on the number of local NICs), and NCCL takes the minimum across all ranks via`bootstrapAllGather`.
 
-[FACT:src/gin/gin_host.cc:176-180](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L176-L180)
+[FACT:src/gin/gin_host.cc:176-180]
 
 ```cpp
 ginCommCountHandles[comm->rank] = backend->ginCommCount;
 NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, ginCommCountHandles, sizeof(int)), ret, fail);
-for (int r = 0; r < comm->nRanks; r++) {
+for (int r = 0; r nRanks; r++) {
   backend->ginCommCount = std::min(backend->ginCommCount, ginCommCountHandles[r]);
 }
 ```
 
-如果某个 rank 的网卡数量少于其他 rank，所有 rank 都会降到最小值。这保证了连接对称，但会浪费网卡资源。
+If a rank has fewer NICs than other ranks, all ranks drop to the minimum. This guarantees connection symmetry but wastes NIC resources.
 
-**坑 2：proxyNthreads 超过 ginCommCount 导致线程空转。** 如果用户设置了 `NCCL_GIN_PROXY_NTHREADS` 大于 `ginCommCount`，多余的线程会在 stride 循环中空转。
+**Pitfall 2: proxyNthreads exceeding ginCommCount causes thread spinning.**If the user sets`NCCL_GIN_PROXY_NTHREADS`greater than`ginCommCount`the excess threads will spin in the stride loop.
 
-[FACT:src/gin/gin_host.cc:181-183](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L181-L183)
+[FACT:src/gin/gin_host.cc:181-183]
 
 ```cpp
 // After cross-rank min, proxyNthreads may exceed ginCommCount if ranks disagree
@@ -397,11 +389,11 @@ for (int r = 0; r < comm->nRanks; r++) {
 // Extra threads simply idle in the stride loop; no correctness issue.
 ```
 
-这不是正确性问题，但会浪费 CPU 资源。排查方法是看 `NCCL_GIN_PROXY_NTHREADS` 是否大于实际网卡数。
+This is not a correctness issue, but it wastes CPU resources. The way to troubleshoot is to check whether`NCCL_GIN_PROXY_NTHREADS`is greater than the actual number of NICs.
 
-**坑 3：DevComm 释放时的竞态。** `ncclGinDevCommFree` 先从链表摘除 DevComm，再销毁 context。
+**Pitfall 3: race condition when releasing DevComm.** `ncclGinDevCommFree`First remove DevComm from the linked list, then destroy the context.
 
-[FACT:src/gin/gin_host.cc:464-475](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L464-L475)
+[FACT:src/gin/gin_host.cc:464-475]
 
 ```cpp
 ginProgressWriteLock(ginState);
@@ -409,70 +401,53 @@ if (prevDc) prevDc->next = dc->next;
 else ginState->devComms = dc->next;
 ginProgressWriteUnlock(ginState);
 struct ncclGinBackendState* backend = &ginState->backends[dc->backendIndex];
-for (int commIdx = 0; commIdx < backend->ginCommCount; commIdx++) {
+for (int commIdx = 0; commIdx ginCommCount; commIdx++) {
   NCCLCHECK(backend->ncclGin->destroyContext(dc->ginCtx[commIdx]));
 }
 ```
 
-摘除后，进度线程再也看不到这个 DevComm，所以销毁 context 是安全的。但如果销毁过程中有 in-flight 的网络操作，可能会导致未定义行为——这是使用 GIN 时需要确保的：释放 DevComm 前必须确保所有操作已完成。
+After removal, the progress thread can no longer see this DevComm, so destroying the context is safe. However, if there are in-flight network operations during destruction, it may lead to undefined behavior—this is what must be ensured when using GIN: before releasing DevComm, all operations must be confirmed complete.
 
 ---
 
-## 三、对称内存 kernel：从「注册缓冲区」到「统一地址空间」
+# III. Symmetric memory kernel: from "registered buffers" to "unified address space"
 
-### Intuitive Architectural Model
+## Intuitive model
 
-传统 NCCL 的缓冲区是「注册制」：每个 rank 注册自己的缓冲区，通信时通过 handle 交换地址。对称内存则是「统一地址空间」：所有 rank 约定同一套虚拟地址，rank 0 的地址 A 和 rank 1 的地址 A 指向各自的物理内存，但代码里用同一个地址就能访问。
+Traditional NCCL buffers are "registration-based": each rank registers its own buffer, and addresses are exchanged via handles during communication. Symmetric memory, by contrast, is a "unified address space": all ranks agree on the same set of virtual addresses; address A on rank 0 and address A on rank 1 point to their respective physical memory, but the same address can be used in code to access them.
 
-这就像大家约定「第 3 排第 5 座」在每个人家里都指同一个位置，找东西时不用先问「你家第 3 排第 5 座在哪」。
+This is like everyone agreeing that "row 3, seat 5" refers to the same location in each person's home, so when looking for something you don't have to first ask "where is row 3, seat 5 in your home?"
 
-如果没有对称内存，每个 kernel 都要先解析对端地址，增加了指令开销和寄存器压力。
+Without symmetric memory, every kernel would have to resolve the peer address first, increasing instruction overhead and register pressure.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-对称内存 kernel 的核心是 kernel mask——一个位图，标记哪些 kernel 在当前通信域中可用。
+The core of the symmetric memory kernel is the kernel mask—a bitmap that marks which kernels are available in the current communication domain.
 
-[FACT:src/sym_kernels.cc:17-63](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L17-L63)
+[FACT:src/sym_kernels.cc:17-63]
 
 ```cpp
 constexpr uint32_t kernelMask_STMC =
-  1 << ncclSymkKernelId_AllGather_LLMC | 1 << ncclSymkKernelId_AllGather_STMC |
-  ...
-constexpr uint32_t kernelMask_LDMC = ...;
-constexpr uint32_t kernelMask_LL = ...;
-constexpr uint32_t kernelMask_AG = ...;
-constexpr uint32_t kernelMask_AR = ...;
-constexpr uint32_t kernelMask_RS = ...;
-constexpr uint32_t kernelMask_LSA = ...;
-constexpr uint32_t kernelMask_Gin = ...;
-constexpr uint32_t kernelMask_Tma = ...;
-```
+  1  **[Design Inference & Architectural Trade-offs]**
+> The advantage of this bitmap design is that bitwise operations can quickly filter available kernels. For example,`kmask &= ~kernelMask_STMC`a single line can disable all STMC kernels without traversing the list.
 
-每个 mask 是一个 32 位整数，第 i 位为 1 表示 kernel i 可用。这些 mask 按不同维度分组：
+## Step-by-Step Walkthrough: one kernel mask computation
 
-- **按协议**：STMC（Simple TMA Multimem Copy）、LDMC（Low-latency Direct Multimem Copy）、LL（Low Latency）
-- **按操作**：AG（AllGather）、AR（AllReduce）、RS（ReduceScatter）
-- **按硬件**：LSA（Local Symmetric Access）、Gin（GPU-Initiated Networking）、Tma（Tensor Memory Accelerator）
+Let's plug in a scenario: rank 0 wants to execute AllReduce, the data type is float16, the message size is 1MB, the communication domain has 8 ranks, and all are interconnected via NVLink.
 
-[INFERENCE] 这种位图设计的好处是：可以用位运算快速筛选可用 kernel。比如 `kmask &= ~kernelMask_STMC` 一行就能禁用所有 STMC kernel，不需要遍历列表。
+**Step 1: Get the base mask corresponding to the operation.**
 
-### Step-by-Step Walkthrough：一次 kernel mask 计算
-
-我们代入一个场景：rank 0 要执行 AllReduce，数据类型是 float16，消息大小 1MB，通信域有 8 个 rank，全部 NVLink 互联。
-
-**第一步：获取操作对应的基础 mask。**
-
-[FACT:src/sym_kernels.cc:304-306](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L304-L306)
+[FACT:src/sym_kernels.cc:304-306]
 
 ```cpp
 uint32_t kmask = kernelMask_coll(coll);
 ```
 
-`kernelMask_coll(ncclFuncAllReduce)` 返回 `kernelMask_AR`，包含 5 个 AllReduce kernel。
+`kernelMask_coll(ncclFuncAllReduce)`returns`kernelMask_AR`containing 5 AllReduce kernels.
 
-**第二步：检查 STMC 和 LDMC 可用性。**
+**Step 2: Check STMC and LDMC availability.**
 
-[FACT:src/sym_kernels.cc:308-334](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L308-L334)
+[FACT:src/sym_kernels.cc:308-334]
 
 ```cpp
 bool hasSTMC = comm->symkState.hasLsaMultimem;
@@ -490,50 +465,26 @@ if (!hasSTMC) kmask &= ~kernelMask_STMC;
 if (!hasLDMC) kmask &= ~kernelMask_LDMC;
 ```
 
-`hasLsaMultimem` 在 `ncclSymkInitOnce` 中计算，要求 NVLS 对称多播可用且 LSA 团队大于 2 个 rank。float16 支持 LDMC，所以如果 `hasLsaMultimem` 为真，LDMC kernel 保留。
+`hasLsaMultimem`is computed in`ncclSymkInitOnce`requiring NVLS symmetric multicast to be available and the LSA team to have more than 2 ranks. float16 supports LDMC, so if`hasLsaMultimem`is true, the LDMC kernel is retained.
 
-**第三步：检查消息大小限制。**
+**Step 3: Check the message size limit.**
 
-[FACT:src/sym_kernels.cc:336-342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L336-L342)
+[FACT:src/sym_kernels.cc:336-342]
 
 ```cpp
 size_t nBytes = alignUp(nElts * ncclTypeSize(ty), NCCL_SYM_KERNEL_CELL_SIZE);
 size_t nBusBytes = (coll == ncclFuncAllReduce ? 1 : comm->nRanks) * nBytes;
-if (nBusBytes >= (size_t(2) << 30)) kmask &= ~kernelMask_LL;
-if (nBusBytes >= 32 * (size_t(2) << 30)) kmask = 0;
-```
-
-LL kernel 用 32 位整数跟踪元素计数，所以总线字节数超过 2GB 时禁用。如果超过 64GB，所有 kernel 都禁用（32 位整数溢出）。
-
-**第四步：检查 TMA 可用性。**
-
-[FACT:src/sym_kernels.cc:344-345](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L344-L345)
-
-```cpp
-if (!ncclSymkTmaAvailable(comm)) kmask &= ~kernelMask_Tma;
-if (!symAligned16B) kmask &= ~kernelMask_Tma;
-```
-
-TMA 需要 SMEM 容量和计算能力 10.0+，且缓冲区 16 字节对齐。
-
-**第五步：检查 GIN 需求。**
-
-[FACT:src/sym_kernels.cc:347-350](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L347-L350)
-
-```cpp
-bool hasGin = ncclParamSymGinKernelsEnable() != 0;
-if (!hasGin) kmask &= ~kernelMask_Gin;
-bool needGin = ncclTeamLsa(comm).nRanks < comm->nRanks;
+if (nBusBytes >= (size_t(2) = 32 * (size_t(2) nRanks;
 kmask &= needGin ? kernelMask_Gin : ~kernelMask_Gin;
 ```
 
-如果 LSA 团队覆盖所有 rank，不需要 GIN；否则只保留 GIN kernel。
+If the LSA team covers all ranks, GIN is not needed; otherwise, only the GIN kernel is retained.
 
-### 并发控制与硬件交互
+## Concurrency control and hardware interaction
 
-对称内存 kernel 的初始化涉及 DevComm 创建和资源分配。
+Initialization of the symmetric memory kernel involves DevComm creation and resource allocation.
 
-[FACT:src/sym_kernels.cc:185-264](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L185-L264)
+[FACT:src/sym_kernels.cc:185-264]
 
 ```cpp
 ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
@@ -552,9 +503,9 @@ ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
 }
 ```
 
-这里的关键是 `ncclDevrCommCreateInternal`，它创建一个内部 DevComm，包含 LSA 多播、GIN inbox/outbox、信号等资源。`reqs.ginConnectionType = NCCL_GIN_CONNECTION_RAIL` 指定 GIN 用 rail 连接模式。
+The key here is`ncclDevrCommCreateInternal`which creates an internal DevComm containing resources such as LSA multicast, GIN inbox/outbox, and signals.`reqs.ginConnectionType = NCCL_GIN_CONNECTION_RAIL`specifies that GIN uses rail connection mode.
 
-[FACT:src/sym_kernels.cc:257-261](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L257-L261)
+[FACT:src/sym_kernels.cc:257-261]
 
 ```cpp
 symk->kcomm.workStarted = comm->profiler.symWorkStarted;
@@ -562,46 +513,38 @@ symk->kcomm.workCompleted = comm->profiler.symWorkCompleted;
 symk->kcomm.workPhases = comm->profiler.symWorkPhases;
 ```
 
-对称内存 kernel 使用独立的 profiler 缓冲区，避免与常规 kernel 的 workCounter 交错。
+The symmetric memory kernel uses an independent profiler buffer to avoid interleaving with the workCounter of regular kernels.
 
-### 生产避坑指南
+## Production pitfall avoidance guide
 
-**坑 1：TMA kernel 的 SMEM 需求。** TMA 需要每个 warp 约 8KB 的 SMEM scratch，16 个 warp 就是 128KB。
+**Pitfall 1: SMEM requirements of the TMA kernel.**TMA requires about 8KB of SMEM scratch per warp, so 16 warps means 128KB.
 
-[FACT:src/sym_kernels.cc:135-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L135-L142)
+[FACT:src/sym_kernels.cc:135-142]
 
 ```cpp
 bool ncclSymkTmaAvailable(struct ncclComm* comm) {
-  if (comm->maxSharedMemOptin < ncclTmaShmemScratchWarpSize() * 16) {
-    return false;
-  }
-  return comm->minCompCap >= 100 && ncclParamSymTmaEnable();
+  if (comm->maxSharedMemOptin minCompCap >= 100 && ncclParamSymTmaEnable();
 }
 ```
 
-如果 GPU 的 SMEM 容量不足（比如 MIG 实例），TMA kernel 会被禁用。排查方法是看 `maxSharedMemOptin` 是否小于 `ncclTmaShmemScratchWarpSize() * 16`。
+If the GPU's SMEM capacity is insufficient (such as in a MIG instance), the TMA kernel will be disabled. The way to troubleshoot is to check whether`maxSharedMemOptin`is less than`ncclTmaShmemScratchWarpSize() * 16`。
 
-**坑 2：GIN chunk size 的边界。** ReduceScatter GIN kernel 的 chunk size 有上下限。
+**Pitfall 2: boundaries of the GIN chunk size.**The chunk size of the ReduceScatter GIN kernel has upper and lower limits.
 
-[FACT:src/sym_kernels.cc:148-153](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L148-L153)
+[FACT:src/sym_kernels.cc:148-153]
 
 ```cpp
-static constexpr size_t ncclSymkRsGinDefaultChunkBytes = 128 << 10;
-static constexpr size_t ncclSymkRsGinMinChunkBytes = 128;
-static constexpr size_t ncclSymkRsGinMaxChunkBytes = size_t(1) << 30;
-size_t ncclSymkRsGinChunkBytes() {
-  int64_t param = ncclParamSymRsGinChunkSize();
-  size_t chunkBytes = param > 0 ? (size_t)param : ncclSymkRsGinDefaultChunkBytes;
+static constexpr size_t ncclSymkRsGinDefaultChunkBytes = 128  0 ? (size_t)param : ncclSymkRsGinDefaultChunkBytes;
   chunkBytes = std::max(ncclSymkRsGinMinChunkBytes, std::min(chunkBytes, ncclSymkRsGinMaxChunkBytes));
   return pow2Down(chunkBytes);
 }
 ```
 
-如果用户设置的 `NCCL_SYM_RS_GIN_CHUNK_SIZE` 超过 1GB，会被截断到 1GB；如果小于 128 字节，会被提升到 128 字节。最终值还会被向下取整到 2 的幂。
+If the user sets`NCCL_SYM_RS_GIN_CHUNK_SIZE`exceeding 1GB, it will be truncated to 1GB; if it is less than 128 bytes, it will be raised to 128 bytes. The final value will also be rounded down to a power of 2.
 
-**坑 3：对称内存注册类型不匹配。** `ncclGetSymRegType` 根据 sendWin 和 recvWin 的 `NCCL_WIN_COLL_SYMMETRIC` 标志判断注册类型。
+**Pitfall 3: Symmetric memory registration type mismatch.** `ncclGetSymRegType`Based on the flags of sendWin and recvWin,`NCCL_WIN_COLL_SYMMETRIC`determine the registration type.
 
-[FACT:src/sym_kernels.cc:395-412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L395-L412)
+[FACT:src/sym_kernels.cc:395-412]
 
 ```cpp
 if (!isSendSymmReg && !isRecvSymmReg) {
@@ -615,25 +558,25 @@ if (!isSendSymmReg && !isRecvSymmReg) {
 }
 ```
 
-如果 send 和 recv 的注册类型不一致，kernel 需要走不同的代码路径。这会影响性能，但不会导致错误。
+If the registration types of send and recv are inconsistent, the kernel needs to take different code paths. This affects performance but does not cause errors.
 
 ---
 
-## 四、Team 抽象与版本化 DevComm：演进的基础设施
+# IV. Team Abstraction and Versioned DevComm: Evolving Infrastructure
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-Team 抽象就像「分组」：世界团队是全班，LSA 团队是同桌，Rail 团队是同一列的座位。不同的通信模式需要不同的分组视角。
+The Team abstraction is like "grouping": the world team is the whole class, the LSA team is deskmates, and the Rail team is seats in the same column. Different communication patterns require different grouping perspectives.
 
-版本化 DevComm 就像「翻译官」：不同版本的设备代码说不同的「方言」，DevComm 兼容层负责翻译，让新旧代码能互相理解。
+Versioned DevComm is like a "translator": different versions of device code speak different "dialects," and the DevComm compatibility layer handles translation so old and new code can understand each other.
 
-如果没有 Team 抽象，每个 kernel 都要自己计算 rank 映射；如果没有版本化 DevComm，任何 ABI 变化都会导致所有设备代码重新编译。
+Without the Team abstraction, every kernel would have to compute rank mappings itself; without versioned DevComm, any ABI change would force all device code to be recompiled.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-Team 是一个简单的三元组：`nRanks`、`rank`、`stride`。
+A Team is a simple triple:`nRanks`、`rank`、`stride`。
 
-[FACT:src/nccl_device/core.cc:13-19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L13-L19)
+[FACT:src/nccl_device/core.cc:13-19]
 
 ```cpp
 ncclTeam_t ncclTeamWorld(ncclComm_t comm) {
@@ -645,9 +588,9 @@ ncclTeam_t ncclTeamWorld(ncclComm_t comm) {
 }
 ```
 
-世界团队的 stride 是 1，因为所有 rank 连续排列。
+The world team's stride is 1 because all ranks are arranged consecutively.
 
-[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
+[FACT:src/nccl_device/core.cc:70-79]
 
 ```cpp
 ncclTeam_t ncclTeamRail(ncclComm_t comm) {
@@ -660,11 +603,11 @@ ncclTeam_t ncclTeamRail(ncclComm_t comm) {
 }
 ```
 
-Rail 团队的 stride 是 `lsaSize`，因为每个 rail 上的 rank 间隔一个 LSA 团队的大小。
+The Rail team's stride is`lsaSize`, because ranks on each rail are separated by the size of one LSA team.
 
-版本化 DevComm 的核心是 `ncclDevCommCompat` 结构。
+The core of versioned DevComm is the`ncclDevCommCompat`structure.
 
-[FACT:src/devcomm/devcomm_v23100.cc:10-17](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/devcomm/devcomm_v23100.cc#L10-L17)
+[FACT:src/devcomm/devcomm_v23100.cc:10-17]
 
 ```cpp
 struct ncclDevCommCompat ncclDevCommCompat_v23100 = {
@@ -677,25 +620,25 @@ struct ncclDevCommCompat ncclDevCommCompat_v23100 = {
 };
 ```
 
-这个结构定义了版本 2.31.0 的兼容性规则。`minVersion` 和 `maxVersion` 定义了适用版本范围，后面四个函数指针定义了属性过滤和结构转换逻辑。如果都是 nullptr，表示这个版本没有特殊兼容需求。
+This structure defines the compatibility rules for version 2.31.0.`minVersion`and`maxVersion`define the applicable version range, and the following four function pointers define attribute filtering and structure conversion logic. If all are nullptr, it means this version has no special compatibility requirements.
 
-### Step-by-Step Walkthrough：一次 Team 转换
+## Step-by-Step Walkthrough: A Team Conversion
 
-我们代入一个场景：rank 5 在 8 rank 通信域中，LSA 团队大小是 4。要计算 rank 5 在 Rail 团队中的 rank。
+Let's use a scenario: rank 5 in an 8-rank communication domain, with an LSA team size of 4. We want to compute rank 5's rank in the Rail team.
 
-**第一步：初始化 DevR 状态。**
+**Step 1: Initialize DevR state.**
 
-[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
+[FACT:src/nccl_device/core.cc:70-79]
 
 ```cpp
 if (ncclSuccess != ncclDevrInitOnce(comm)) return ncclTeam_t{};
 ```
 
-`ncclDevrInitOnce` 计算 LSA 团队、CFT 团队等派生信息。如果失败，返回空团队。
+`ncclDevrInitOnce`Computes derived information such as the LSA team and CFT team. If it fails, returns an empty team.
 
-**第二步：计算 Rail 团队参数。**
+**Step 2: Compute Rail team parameters.**
 
-[FACT:src/nccl_device/core.cc:70-79](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L70-L79)
+[FACT:src/nccl_device/core.cc:70-79]
 
 ```cpp
 ncclTeam_t ans;
@@ -704,11 +647,11 @@ ans.rank = comm->rank / comm->devrState.lsaSize;       // 5 / 4 = 1
 ans.stride = comm->devrState.lsaSize;                  // 4
 ```
 
-rank 5 在 Rail 团队中的 rank 是 1，团队有 2 个 rank，stride 是 4。
+Rank 5's rank in the Rail team is 1, the team has 2 ranks, and the stride is 4.
 
-**第三步：转换回世界 rank。**
+**Step 3: Convert back to world rank.**
 
-[FACT:src/nccl_device/core.cc:82-84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L82-L84)
+[FACT:src/nccl_device/core.cc:82-84]
 
 ```cpp
 int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
@@ -716,13 +659,13 @@ int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
 }
 ```
 
-如果要把 Rail rank 0 转成世界 rank：`5 + (0 - 1) * 4 = 1`。验证：rank 1 和 rank 5 在同一个 rail 上（间隔 4）。
+If you want to convert Rail rank 0 to a world rank:`5 + (0 - 1) * 4 = 1`. Verification: rank 1 and rank 5 are on the same rail (separated by 4).
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-Team 抽象本身是无状态的，不需要并发控制。但 `ncclDevrInitOnce` 是懒加载的，第一次调用时会计算所有派生信息。
+The Team abstraction itself is stateless and requires no concurrency control. But`ncclDevrInitOnce`is lazily loaded, and all derived information is computed on the first call.
 
-[FACT:src/nccl_device/core.cc:22-33](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L22-L33)
+[FACT:src/nccl_device/core.cc:22-33]
 
 ```cpp
 ncclTeam_t ncclTeamLsa(ncclComm_t comm) {
@@ -735,13 +678,13 @@ ncclTeam_t ncclTeamLsa(ncclComm_t comm) {
 }
 ```
 
-注释说「Ignoring errors since if it fails ncclDevrInitOnce will try again」——如果初始化失败，返回空团队，下次调用会重试。
+The comment says "Ignoring errors since if it fails ncclDevrInitOnce will try again" — if initialization fails, it returns an empty team, and the next call will retry.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：Team 转换的 stride 假设。** `ncclTeamRankToWorld` 假设团队内 rank 是等差数列。
+**Pitfall 1: Stride assumptions in Team conversion.** `ncclTeamRankToWorld`assumes that ranks within a team form an arithmetic sequence.
 
-[FACT:src/nccl_device/core.cc:82-84](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L82-L84)
+[FACT:src/nccl_device/core.cc:82-84]
 
 ```cpp
 int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
@@ -749,13 +692,13 @@ int ncclTeamRankToWorld(ncclComm_t comm, ncclTeam_t team, int rank) {
 }
 ```
 
-如果团队不是等差数列（比如自定义的任意分组），这个函数会算错。NCCL 目前只支持规则团队。
+If the team is not an arithmetic sequence (for example, a custom arbitrary grouping), this function will compute incorrectly. NCCL currently only supports regular teams.
 
-**坑 2：版本化 DevComm 的空指针。** `ncclDevCommCompat_v23100` 的所有函数指针都是 nullptr，表示没有特殊兼容逻辑。如果未来版本需要转换，必须实现这些函数，否则新旧代码无法互操作。
+**Pitfall 2: Null pointers in versioned DevComm.** `ncclDevCommCompat_v23100`All function pointers in are nullptr, indicating there is no special compatibility logic. If a future version requires conversion, these functions must be implemented; otherwise, old and new code cannot interoperate.
 
-**坑 3：CFT 团队的层级模式。** `ncclTeamCft` 支持三种模式：FLAT、HIER_MULTIMEM、HIER_LSA。
+**Pitfall 3: Hierarchy modes of the CFT team.** `ncclTeamCft`supports three modes: FLAT, HIER_MULTIMEM, and HIER_LSA.
 
-[FACT:src/nccl_device/core.cc:36-55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/nccl_device/core.cc#L36-L55)
+[FACT:src/nccl_device/core.cc:36-55]
 
 ```cpp
 if (mode == NCCL_CFT_TEAM_FLAT) return flatTeam;
@@ -770,96 +713,92 @@ if (mode == NCCL_CFT_TEAM_HIER_MULTIMEM) {
 return ncclTeamOuterFactor(flatTeam, innerSize);
 ```
 
-如果传入无效模式，返回空团队。使用 CFT 团队时需要确保模式正确。
+If an invalid mode is passed in, it returns an empty team. When using a CFT team, you need to ensure the mode is correct.
 
 ---
 
-## 设计思考
+# Design Reflections
 
-**为什么 NCCL 要同时支持 RMA、GIN、对称内存三条演进路径？**
+**Why does NCCL support three evolution paths simultaneously: RMA, GIN, and symmetric memory?**
 
-[INFERENCE] 这三条路径解决的是不同层次的问题：
+> **[Design Inference & Architectural Trade-offs]**
+> These three paths solve problems at different levels:
 
-- **RMA** 解决「通信模式固定」的问题——让上层可以组合原语，实现任意通信模式。
-- **GIN** 解决「网络延迟高」的问题——让 GPU 直接驱动网卡，绕过 host proxy。
-- **对称内存** 解决「地址解析开销」的问题——让 kernel 直接用统一地址访问对端内存。
+- **RMA**solves the problem of "fixed communication patterns" — allowing upper layers to compose primitives and implement arbitrary communication patterns.
+- **GIN**solves the problem of "high network latency" — allowing the GPU to directly drive the NIC, bypassing the host proxy.
+- **Symmetric memory**solves the problem of "address resolution overhead" — allowing the kernel to directly access peer memory using a unified address.
 
-它们不是替代关系，而是互补关系。RMA 可以用 GIN 作为底层传输，GIN 依赖对称内存提供地址一致性。三者共同构成了「可编程通信引擎」的基础设施。
+They are not substitutes but complements. RMA can use GIN as the underlying transport, and GIN relies on symmetric memory to provide address consistency. Together, the three form the infrastructure of a "programmable communication engine."
 
-**版本化 DevComm 的设计哲学是什么？**
+**What is the design philosophy of versioned DevComm?**
 
-[INFERENCE] 版本化 DevComm 的核心思想是「ABI 稳定，API 演进」。设备代码（kernel）编译后嵌入二进制，不能随 NCCL 库升级而重新编译。所以 NCCL 必须保证旧设备代码能在新库上运行。`ncclDevCommCompat` 结构就是兼容层的入口：新库根据设备代码版本选择合适的兼容规则，必要时做结构转换。
-
----
-
-## 本章Summary
-
-本章我们从源码中的演进痕迹出发，剖析了 NCCL 从集合通信库走向可编程通信引擎的三股力量：
-
-1. **RMA**（`src/rma/rma.cc`）：通过 Put/Signal/WaitSignal 原语组合，让上层实现任意通信模式。核心设计是按 LSA 可达性把任务拆成 CE 和 Proxy 两条路径并行执行。
-2. **GIN**（`src/gin/gin_host.cc`）：通过 GPU 直发网络，绕过 host proxy。核心设计是多后端管理、版本兼容表、进度线程池。
-3. **对称内存 kernel**（`src/sym_kernels.cc`）：通过统一地址空间，消除地址解析开销。核心设计是 kernel mask 位图和 TMA/GIN 硬件加速。
-4. **Team 抽象与版本化 DevComm**（`src/nccl_device/core.cc`、`src/devcomm/devcomm_v23100.cc`）：为演进提供基础设施。Team 提供分组视角，版本化 DevComm 提供 ABI 兼容。
-
-这些变化对上层框架的影响是深远的：PyTorch 的 ProcessGroup 可以直接调用 RMA 原语实现自定义通信模式；Megatron 的专家并行可以利用 GIN 降低 all-to-all 延迟；对称内存让 kernel 代码更简洁。
-
-## 本章思考与自测
-
-<details>
-<summary>Q1：如果把 `scheduleRmaTasksToPlan` 中 WaitSignal 分支的 LSA 可达性判断去掉，所有 peer 都走 Proxy 路径，会有什么后果？在什么场景下会触发性能灾难？</summary>
-
-**参考解析**：
-
-LSA 可达性判断在 [FACT:src/rma/rma.cc:187-204](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/rma/rma.cc#L187-L204)，它把 peer 分成 CE 和 Proxy 两组。如果去掉这个判断，所有 peer 都走 Proxy 路径，`nRmaTasksCe` 始终为 0。
-
-后果是：CE 路径完全不被使用，所有 WaitSignal 都通过 host proxy 线程轮询网络。对于 LSA 范围内的 peer（同机 NVLink 互联），本来可以用 GPU 拷贝引擎异步等待，现在变成 host 线程轮询，延迟从微秒级升到毫秒级。
-
-性能灾难场景：MoE 训练中，每个 token 要等待多个专家的信号。如果所有信号都走 Proxy，host 线程成为瓶颈，GPU 大量时间在等 host 轮询。在 8 卡全 NVLink 的机器上，这个退化尤其明显——本来所有通信都可以走 CE，现在全部挤到 host。
-
-排查方法：看 `scheduleRmaTasksToPlan` 的 INFO 日志，如果 `nRmaTasksCe` 始终为 0 而 `nRmaTasksProxy` 很大，说明 LSA 判断有问题。
-
-</details>
-
-<details>
-<summary>Q2：`ncclGinProgress` 中 `writePending` 标志和 `devCommRwMutex` 读写锁的配合，如果去掉 `writePending` 检查，只保留读写锁，会有什么问题？</summary>
-
-**参考解析**：
-
-`writePending` 检查在 [FACT:src/gin/gin_host.cc:63-66](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/gin/gin_host.cc#L63-L66)，它让进度线程在主线程要写时主动 yield。如果去掉这个检查，进度线程会直接尝试拿读锁。
-
-问题在于：`std::shared_timed_mutex` 的读锁是共享的，多个进度线程可以同时持有。如果主线程要拿写锁，必须等所有读锁释放。在高负载下，进度线程频繁拿读锁，主线程可能长时间拿不到写锁，导致 `ncclGinDevCommSetup` 或 `ncclGinDevCommFree` 阻塞。
-
-更严重的是：如果主线程在 `ginProgressWriteLock` 中先置位 `writePending` 再拿锁，而进度线程不检查 `writePending`，那么进度线程可能在主线程置位后仍然拿读锁，导致主线程等待时间不可预测。
-
-`writePending` 的作用是「软性通知」：告诉进度线程「我要写了，你们先让让」。这比单纯依赖锁的公平性更高效，因为进度线程可以主动 yield 而不是阻塞在锁上。
-
-</details>
-
-<details>
-<summary>Q3：`ncclSymkMask` 中，如果 `nBusBytes >= 32 * (size_t(2) << 30)` 时把所有 kernel 都禁用（`kmask = 0`），此时 `ncclSymkAvailable` 返回 false，NCCL 会回退到什么路径？这个回退路径有什么性能影响？</summary>
-
-**参考解析**：
-
-`kmask = 0` 在 [FACT:src/sym_kernels.cc:342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L342)，此时 `ncclSymkAvailable` 返回 false（[FACT:src/sym_kernels.cc:354-361](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L354-L361)）。
-
-回退路径是：NCCL 会使用传统的集合通信 kernel（非对称内存 kernel）。这些 kernel 通过注册缓冲区的方式访问对端内存，需要先解析地址，指令开销更大。
-
-性能影响：对于超大消息（超过 64GB 总线字节），传统 kernel 的地址解析开销占比很小，因为数据传输本身占主导。但在边界情况下（刚好超过 64GB），传统 kernel 可能比对称内存 kernel 慢 10-20%。
-
-这个限制的根本原因是：对称内存 kernel 用 32 位整数跟踪 unrolled loop chunk，每个 chunk 至少 32 字节，所以最大可寻址范围是 32 * 2^31 = 64GB。超过这个范围会整数溢出。
-
-实际生产中，单次集合通信超过 64GB 的场景很少（通常是梯度累积后的 all-reduce），但并非不可能。如果遇到这种场景，可以考虑分片通信或使用传统 kernel。
-
-</details>
+> **[Design Inference & Architectural Trade-offs]**
+> The core idea of versioned DevComm is "stable ABI, evolving API." Device code (kernels) is compiled and embedded in binaries and cannot be recompiled as the NCCL library upgrades. Therefore, NCCL must ensure that old device code can run on the new library.`ncclDevCommCompat`The structure is the entry point of the compatibility layer: the new library selects the appropriate compatibility rules based on the device code version and performs structure conversion when necessary.
 
 ---
 
-## 章末过渡
+# Chapter Summary
 
-本章我们看到 NCCL 正在从「固定集合操作」走向「可编程通信引擎」：RMA 提供原语组合，GIN 提供 GPU 直发，对称内存提供统一地址空间，Team 和版本化 DevComm 提供基础设施。
+In this chapter, starting from the traces of evolution in the source code, we analyzed the three forces driving NCCL from a collective communication library toward a programmable communication engine:
 
-这些演进不是孤立的，它们共同指向一个目标：**让上层框架能够以更低的延迟、更高的灵活性实现自定义通信模式**。对于 PyTorch、Megatron 这样的框架，这意味着它们可以直接在 NCCL 之上构建 MoE all-to-all、流水线并行、专家并行等复杂通信模式，而不需要绕过 NCCL 自己实现网络层。
+1. **RMA**（`src/rma/rma.cc`): Through the combination of Put/Signal/WaitSignal primitives, upper layers can implement arbitrary communication patterns. The core design splits tasks into two parallel execution paths, CE and Proxy, based on LSA reachability.
 
-下一章是全书最后一章。我们将把一次 AllReduce 的完整链路重新走一遍——从 `ncclAllReduce` 调用开始，经过任务入队、算法选择、kernel 启动、proxy 推进、网络传输，直到结果返回。这次回顾会把前面 24 章的知识点串联起来，形成一个完整的认知地图。
+2. **GIN**（`src/gin/gin_host.cc`): Through GPU direct network transmission, bypassing the host proxy. The core design includes multi-backend management, version compatibility tables, and a progress thread pool.
 
-至此，我们看清了 NCCL 从固定集合操作向可编程通信引擎演进的三条主线：RMA 原语组合、GPU 直发网络、对称内存模型，以及支撑它们的 team 抽象与版本化 DevComm。这些机制共同指向一个更灵活、更贴近硬件能力的通信未来。然而，无论架构如何演进，一次 AllReduce 的完整链路始终是理解 NCCL 的基石。下一章我们将不引入新代码，而是把第 3 章到第 10 章的端到端流程重新串讲一遍——从 ncclAllReduce 调用，到通信域建立、拓扑搜索、算法选型、任务入队、kernel 启动、设备侧原语执行、结果回写。你将把分散在各章的机制重新组装成一个完整心智模型，并得到一份「遇到问题该查哪一章」的索引。
+3. **Symmetric memory kernel**（`src/sym_kernels.cc`): Through a unified address space, eliminating address resolution overhead. The core design includes kernel mask bitmaps and TMA/GIN hardware acceleration.
+
+4. **Team abstraction and versioned DevComm**（`src/nccl_device/core.cc`、`src/devcomm/devcomm_v23100.cc`): Providing infrastructure for evolution. Team provides a grouping perspective, and versioned DevComm provides ABI compatibility.
+
+The impact of these changes on upper-layer frameworks is profound: PyTorch's ProcessGroup can directly call RMA primitives to implement custom communication patterns; Megatron's expert parallelism can leverage GIN to reduce all-to-all latency; symmetric memory makes kernel code more concise.
+
+# Chapter Review and Self-Test
+
+Q1: If the`scheduleRmaTasksToPlan`LSA reachability check in the WaitSignal branch is removed, and all peers go through the Proxy path, what would be the consequences? In what scenarios would this trigger a performance disaster?
+
+**Reference Analysis**：
+
+The LSA reachability check is in[FACT:src/rma/rma.cc:187-204], which divides peers into two groups: CE and Proxy. If this check is removed, all peers go through the Proxy path,`nRmaTasksCe`is always 0.
+
+The consequence is: the CE path is completely unused, and all WaitSignal operations poll the network through host proxy threads. For peers within LSA range (same-machine NVLink interconnect), which could originally use GPU copy engines for asynchronous waiting, now become host thread polling, with latency rising from microseconds to milliseconds.
+
+Performance disaster scenario: In MoE training, each token needs to wait for signals from multiple experts. If all signals go through Proxy, the host thread becomes the bottleneck, and the GPU spends a large amount of time waiting for host polling. On an 8-GPU all-NVLink machine, this degradation is especially pronounced—all communication that could originally go through CE now crowds onto the host.
+
+Troubleshooting method: Check the`scheduleRmaTasksToPlan`INFO logs. If`nRmaTasksCe`is always 0 while`nRmaTasksProxy`is very large, it indicates a problem with the LSA check.
+
+Q2：`ncclGinProgress`In`writePending`flag and`devCommRwMutex`read-write lock coordination, if the`writePending`check is removed and only the read-write lock is kept, what problems would arise?
+
+**Reference Analysis**：
+
+`writePending`The check is in[FACT:src/gin/gin_host.cc:63-66], which makes the progress thread actively yield when the main thread wants to write. If this check is removed, the progress thread will directly attempt to acquire the read lock.
+
+The problem is:`std::shared_timed_mutex`'s read lock is shared, and multiple progress threads can hold it simultaneously. If the main thread wants to acquire the write lock, it must wait for all read locks to be released. Under high load, progress threads frequently acquire read locks, and the main thread may be unable to acquire the write lock for a long time, causing`ncclGinDevCommSetup`or`ncclGinDevCommFree`to block.
+
+More seriously: if the main thread first sets`ginProgressWriteLock`in`writePending`before acquiring the lock, and the progress thread does not check`writePending`, then the progress thread may still acquire the read lock after the main thread sets the flag, causing unpredictable wait times for the main thread.
+
+`writePending`The purpose of is a "soft notification": telling progress threads "I'm about to write, please yield." This is more efficient than relying solely on lock fairness, because progress threads can actively yield rather than block on the lock.
+
+Q3：`ncclSymkMask`In`nBusBytes >= 32 * (size_t(2) << 30)`, if all kernels are disabled when`kmask = 0`), at this point`ncclSymkAvailable`returns false, what path will NCCL fall back to? What performance impact does this fallback path have?
+
+**Reference Analysis**：
+
+`kmask = 0`In[FACT:src/sym_kernels.cc:342], at this point`ncclSymkAvailable`returns false ([FACT:src/sym_kernels.cc:354-361]）。
+
+The fallback path is: NCCL will use traditional collective communication kernels (non-symmetric memory kernels). These kernels access peer memory through registered buffers, requiring address resolution first, with higher instruction overhead.
+
+Performance impact: For very large messages (exceeding 64GB bus bytes), the address resolution overhead of traditional kernels is a small proportion, because data transfer itself dominates. But in boundary cases (just exceeding 64GB), traditional kernels may be 10-20% slower than symmetric memory kernels.
+
+The root cause of this limitation is: symmetric memory kernels use 32-bit integers to track unrolled loop chunks, with each chunk being at least 32 bytes, so the maximum addressable range is 32 * 2^31 = 64GB. Exceeding this range causes integer overflow.
+
+In actual production, scenarios where a single collective communication exceeds 64GB are rare (usually all-reduce after gradient accumulation), but not impossible. If such a scenario is encountered, consider sharded communication or using traditional kernels.
+
+---
+
+# Chapter Transition
+
+In this chapter, we have seen NCCL moving from "fixed collective operations" toward a "programmable communication engine": RMA provides primitive composition, GIN provides GPU direct transmission, symmetric memory provides a unified address space, and Team and versioned DevComm provide infrastructure.
+
+These evolutions are not isolated; they collectively point toward one goal:**Enable upper-layer frameworks to implement custom communication patterns with lower latency and greater flexibility**. For frameworks like PyTorch and Megatron, this means they can directly build complex communication patterns such as MoE all-to-all, pipeline parallelism, and expert parallelism on top of NCCL, without needing to bypass NCCL and implement the network layer themselves.
+
+The next chapter is the final chapter of the book. We will walk through the complete path of a single AllReduce once again—starting from the`ncclAllReduce`call, going through task enqueue, algorithm selection, kernel launch, proxy progression, network transmission, until the result is returned. This review will connect the knowledge points from the previous 24 chapters into a complete cognitive map.
+
+At this point, we have seen the three main lines of NCCL's evolution from fixed collective operations to a programmable communication engine: RMA primitive composition, GPU direct network transmission, symmetric memory model, and the team abstraction and versioned DevComm that support them. These mechanisms together point toward a more flexible communication future that is closer to hardware capabilities. However, no matter how the architecture evolves, the complete path of a single AllReduce remains the cornerstone of understanding NCCL. In the next chapter, we will not introduce new code, but instead re-narrate the end-to-end flow from Chapter 3 to Chapter 10—from the ncclAllReduce call, to communicator establishment, topology search, algorithm selection, task enqueue, kernel launch, device-side primitive execution, and result write-back. You will reassemble the mechanisms scattered across chapters into a complete mental model, and obtain an index of "which chapter to check when encountering a problem."

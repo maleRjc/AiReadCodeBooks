@@ -1,16 +1,16 @@
-# Chapter 13: Performance Optimization: Tree-shaking, Feature Flags & Rollup Plugins
+# Next chapter: Chapter 13 →
 
+Verification status: FACT line numbers truly anchored`packages-private/vite-debug`In the previous chapter, we used`packages`as an entry point and mastered the debugging paradigm of doing minimal reproduction on real source code. As this kind of internal debugging package grows in number, a practical problem surfaces: they coexist in the same workspace with officially published packages, so how do we ensure the release process does not accidentally affect them? This chapter will go deep into the boundary conditions of monorepo engineering, starting from the dual-directory contract of`packages-private`and
 
-上一章我们以 `packages-private/vite-debug` 为切口，掌握了在真实源码上做最小复现的调试范式。当这种内部调试包越来越多，一个现实问题便浮出水面：它们与对外发布的正式包共处同一 workspace，如何确保发布流程不会误伤？本章将深入 monorepo 工程化的边界条件，从 `packages` 与 `packages-private` 的双目录契约出发，剖析架构权衡背后的防御性设计，并给出可落地的避坑指南。
+# , analyze the defensive design behind architectural trade-offs, and provide an actionable pitfall-avoidance guide.
 
+## 13.2 The Iron Law of Timing: Enum Inlining Must Execute Before Rollup
 
-## Intuitive Architectural Model
+Intuitive model`build.js`Enum inlining is like "replacing the labels on parts with numbers before packing." If the packer (Rollup) has already started packing, and you then change the labels, the parts in the box and the labels will no longer match.`scanEnums()` / `removeCache()`uses the
 
-枚举内联就像「在装箱前把零件上的标签换成数字」。如果装箱工人（Rollup）已经开始打包，你再去改标签，箱子里的零件和标签就对不上了。`build.js` 用 `scanEnums()` / `removeCache()` 这对函数把内联严格夹在 Rollup 之前。
+## pair of functions to strictly sandwich inlining before Rollup.
 
-## 数据结构与生命周期
-
-`inline-enums.js` 导出的 `scanEnums()` 返回一个 `removeCache` 闭包，它扫描源码中的 enum 定义，生成临时文件供 Rollup 消费 [FACT:scripts/build.js:30-34](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L30-L34)。`build.js` 的 `run()` 用 `try/finally` 保证缓存清理 [FACT:scripts/build.js:81-112](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L81-L112)：
+`inline-enums.js`Data structure and lifecycle`scanEnums()`The exported`removeCache`returns a[FACT:scripts/build.js:30-34]。`build.js`closure, which scans enum definitions in the source code and generates temporary files for Rollup to consume.`run()`'s`try/finally`uses[FACT:scripts/build.js:81-112]：
 
 ```js
 const removeCache = scanEnums()
@@ -21,19 +21,19 @@ try {
 }
 ```
 
-`rollup.config.js` 在模块顶层调用 `inlineEnums()` 拿到 `[enumPlugin, enumDefines]` [FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)，其中 `enumPlugin` 插入 plugins 数组 [FACT:rollup.config.js:331-331](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L331-L331)，`enumDefines` 并入 replace 插件的替换表 [FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223)。
+`rollup.config.js`Copy`inlineEnums()`At the module top level, call`[enumPlugin, enumDefines]` [FACT:rollup.config.js:47-50]to get`enumPlugin`, where[FACT:rollup.config.js:331-331]，`enumDefines`is inserted into the plugins array[FACT:rollup.config.js:222-223]。
 
-## Step-by-Step：一次构建中枚举的完整生命周期
+## and merged into the replacement table of the replace plugin
 
-1. `build.js` 的 `run()` 首先调用 `scanEnums()`，扫描所有包的 enum 定义并写入临时缓存，返回 `removeCache` [FACT:scripts/build.js:87-87](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L87-L87)。
+1. `build.js`Step-by-Step: The complete lifecycle of an enum in one build`run()`'s`scanEnums()`first calls`removeCache` [FACT:scripts/build.js:87-87]。
 
-2. `buildAll` 并发启动多个 Rollup 进程 [FACT:scripts/build.js:119-121](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L119-L121)。
+2. `buildAll`, scans enum definitions in all packages and writes them to the temporary cache, returns[FACT:scripts/build.js:119-121]。
 
-3. 每个 Rollup 进程在配置加载阶段执行 `inlineEnums()`，读取上一步生成的缓存，得到 `enumPlugin` 与 `enumDefines` [FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)。
+and concurrently starts multiple Rollup processes`inlineEnums()`3. Each Rollup process executes`enumPlugin`during the config loading phase, reads the cache generated in the previous step, and obtains`enumDefines` [FACT:rollup.config.js:47-50]。
 
-4. `enumPlugin` 在 transform 阶段把源码中的 enum 引用替换为字面量；`enumDefines` 作为 replace 的补充，处理跨模块的常量替换 [FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223)。
+4. `enumPlugin`and`enumDefines`replaces enum references in the source code with literals during the transform phase;[FACT:rollup.config.js:222-223]。
 
-5. 构建结束，`finally` 块调用 `removeCache()` 清理临时文件 [FACT:scripts/build.js:119-121](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L119-L121)。
+serves as a supplement to replace, handling cross-module constant replacement`finally`5. When the build ends,`removeCache()`the block calls[FACT:scripts/build.js:119-121]。
 
 ```mermaid
 flowchart LR
@@ -47,23 +47,24 @@ flowchart LR
   bundle --> cleanup["removeCache()finally 块"]
 ```
 
-## 设计思考与踩坑
+## Copy
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么不用 Rollup 插件在 transform 阶段现扫现用？因为枚举内联需要**跨包全局视图**：`runtime-core` 引用的 enum 可能定义在 `shared` 中，单个 Rollup 进程只看到自己包的源码树，无法完成跨包替换。`scanEnums()` 在构建前建立全局缓存，正是为了解决这个可见性问题。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]**Why not use a Rollup plugin to scan and use on the fly during the transform phase? Because enum inlining requires**：`runtime-core`a cross-package global view`shared`. The referenced enum may be defined in`scanEnums()`, and a single Rollup process only sees its own package's source tree, so it cannot complete cross-package replacement.
 
-生产踩坑点：`removeCache()` 放在 `finally` 中，意味着即使构建中途抛错也会清理。但如果你在调试时手动中断进程（Ctrl+C），`finally` 可能不执行，残留的缓存文件会导致下次构建读到过期枚举。排查方法：检查 `temp/` 目录下是否有残留的 enum 缓存文件，手动删除后重试。
+Establishing a global cache before the build is precisely to solve this visibility problem.`removeCache()`Production pitfall:`finally`placing`finally`in`temp/`means it will be cleaned up even if the build throws an error midway. But if you manually interrupt the process while debugging (Ctrl+C),
 
 ---
 
+# may not execute, and the leftover cache files will cause the next build to read stale enums. Troubleshooting method: Check whether there are leftover enum cache files under the`release.js`directory, delete them manually, and retry.
 
-## Intuitive Architectural Model
+## 13.3 Release orchestrator:
 
-`release.js` 像婚礼总导演，`skipBuild` / `skipTests` / `skipGit` / `skipPrompts` 四个开关就是「跳过彩排」「跳过宣誓」「跳过拍照」「跳过确认」的按钮。每个按钮的存在都对应一种真实场景：CI 环境需要 `skipPrompts`，本地调试需要 `skipGit`，紧急热修需要 `skipTests`。
+`release.js`'s skip flag matrix`skipBuild` / `skipTests` / `skipGit` / `skipPrompts`Intuitive model`skipPrompts`is like the wedding director,`skipGit`and the four switches are the buttons for "skip rehearsal," "skip vows," "skip photos," and "skip confirmation." The existence of each button corresponds to a real scenario: CI environments need`skipTests`。
 
-## 标志位的数据结构与默认值
+## , local debugging needs
 
-四个 skip 标志在 `parseArgs` 中声明 [FACT:scripts/release.js:39-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L39-L50)，随后解构为局部变量 [FACT:scripts/release.js:64-66](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L64-L66)：
+, emergency hotfixes need`parseArgs`Data structure and default values of the flags[FACT:scripts/release.js:39-50]The four skip flags are declared in[FACT:scripts/release.js:64-66]：
 
 ```js
 let skipTests = args.skipTests
@@ -72,27 +73,27 @@ const skipPrompts = args.skipPrompts
 const skipGit = args.skipGit
 ```
 
-注意 `skipTests` 用 `let` 声明，因为它在 `runTestsIfNeeded()` 中会被动态改写 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)。
+Copy`skipTests`Note that`let`declaration, because it will be dynamically rewritten in`runTestsIfNeeded()`[FACT:scripts/release.js:281-317]。
 
-## Step-by-Step：一次 release 的完整决策流
+## Step-by-Step: The Complete Decision Flow of a Release
 
-`main()` 的执行顺序 [FACT:scripts/release.js:143-279](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L143-L279)：
+`main()`execution order[FACT:scripts/release.js:143-279]：
 
-1. **远程同步检查**：`isInSyncWithRemote()` 比对本地 HEAD 与远程分支 SHA，不一致时弹确认框 [FACT:scripts/release.js:337-363](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L337-L363)。
+1. **Remote sync check**：`isInSyncWithRemote()`Compare local HEAD with remote branch SHA, and show a confirmation dialog when they differ[FACT:scripts/release.js:337-363]。
 
-2. **版本选择**：无位置参数时弹出 `versionIncrements` 选择菜单 [FACT:scripts/release.js:152-176](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L152-L176)。
+2. **Version selection**: when there are no positional arguments, pop up`versionIncrements`selection menu[FACT:scripts/release.js:152-176]。
 
-3. **测试决策**：`runTestsIfNeeded()` 是 skip 逻辑最密集的地方 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)。
+3. **Test decision**：`runTestsIfNeeded()`is where the skip logic is most concentrated[FACT:scripts/release.js:281-317]。
 
-4. **版本更新**：`updateVersions()` 遍历所有包改写 `package.json` [FACT:scripts/release.js:377-398](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L377-L398)。
+4. **Version update**：`updateVersions()`Iterate over all packages and rewrite`package.json` [FACT:scripts/release.js:377-398]。
 
-5. **Changelog 生成**：调用 `pnpm run changelog` [FACT:scripts/release.js:211-212](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L211-L212)。
+5. **Changelog generation**: call`pnpm run changelog` [FACT:scripts/release.js:211-212]。
 
-6. **Git 提交**：`skipGit` 为真时整段跳过 [FACT:scripts/release.js:231-240](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L231-L240)。
+6. **Git commit**：`skipGit`When true, the entire section is skipped[FACT:scripts/release.js:231-240]。
 
-7. **发布**：仅当 `args.publish` 为真时执行 `buildPackages()` + `publishPackages()` [FACT:scripts/release.js:243-246](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L243-L246)。
+7. **Publish**: execute only when`args.publish`is true`buildPackages()` + `publishPackages()` [FACT:scripts/release.js:243-246]。
 
-`runTestsIfNeeded()` 的分支逻辑值得单独展开：
+`runTestsIfNeeded()`The branch logic of is worth expanding separately:
 
 ```mermaid
 flowchart TD
@@ -112,51 +113,54 @@ flowchart TD
   runLocal --> done
 ```
 
-## 设计思考与踩坑
+## Design reflections and pitfalls
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `skipTests` 用 `let` 而非 `const` 的设计，是为了支持「CI 已通过则自动跳过本地测试」的优化路径。这在 CI 发布场景下节省了大量时间——GitHub Actions 的 `release.yml` 已经跑过完整测试，本地再跑一遍纯属浪费。
+> **[Design Inference & Architectural Trade-offs]**
+> `skipTests`use`let`instead of`const`The design of is intended to support the optimization path of "skip local tests automatically if CI has passed." This saves a significant amount of time in CI release scenarios—GitHub Actions'`release.yml`has already run the full test suite, so running it again locally is pure waste.
 
-**发布顺序的隐藏契约**：`sortPackagesForPublishing` 把 `vue` 排到最后 [FACT:scripts/release.js:85-85](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L85-L85)，注释明确说明「用户不能在内部包可用之前安装新的入口包」。如果你修改了这个排序，用户 `npm install vue@next` 时可能拉到依赖尚未发布的版本，导致 `ERR_MODULE_NOT_FOUND`。
+**The hidden contract of publish order**：`sortPackagesForPublishing`puts`vue`last[FACT:scripts/release.js:85-85], and the comment explicitly states that "users must not be able to install the new entry package before the internal packages are available." If you change this ordering, users`npm install vue@next`may pull a version whose dependencies have not yet been published, causing`ERR_MODULE_NOT_FOUND`。
 
-**幂等性保护**：`publishPackage` 在发布前调用 `isPackagePublished` 检查 registry [FACT:scripts/release.js:453-458](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L453-L458)，发布失败时捕获 `previously published` 错误并降级为跳过 [FACT:scripts/release.js:480-488](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L480-L488)。这让 release 脚本可以安全重试——网络中断后重新执行不会因为「包已存在」而整体失败。
+**Idempotency protection**：`publishPackage`call before publishing`isPackagePublished`to check the registry[FACT:scripts/release.js:453-458], and when publishing fails, catch the`previously published`error and degrade to skipping[FACT:scripts/release.js:480-488]. This allows the release script to be safely retried—after a network interruption, re-running it will not fail entirely because "the package already exists."
 
-**失败回滚**：`fnToRun().catch()` 在 `versionUpdated` 为真时调用 `updateVersions(currentVersion)` 回滚版本号 [FACT:scripts/release.js:528-537](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L528-L537)。但注意：这只回滚 `package.json` 中的版本字段，**不会回滚已经 `git commit` 的提交**。如果你在 `skipGit` 为假的情况下发布失败，需要手动 `git reset`。
-
----
-
-
-回顾本章三个核心权衡，它们共享同一个设计哲学：**把「容易忘记的运行时检查」转化为「不可能绕过的结构性约束」**。
-
-- `packages-private` 物理隔离：不依赖脚本作者记得检查 `private` 字段，而是让扫描范围天然排除。
-- 枚举内联前置：不依赖 Rollup 插件在 transform 时「碰巧」能看到跨包 enum，而是构建前建立全局缓存。
-- `release.js` 的 skip 矩阵：不依赖发布者记得「CI 已过就不用本地跑测试」，而是让脚本自动查询 CI 状态并改写 `skipTests`。
-
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种模式的代价是**脚本复杂度上升**：`build.js` 需要维护 `privatePackages` 列表，`rollup.config.js` 需要重复目录探测逻辑，`release.js` 需要处理四个 skip 标志的交叉组合。但对于 Vue 这种每周多次发布的仓库，结构性约束带来的可靠性收益远超复杂度成本。
+**Failure rollback**：`fnToRun().catch()`when`versionUpdated`is true, call`updateVersions(currentVersion)`to roll back the version number[FACT:scripts/release.js:528-537]. But note: this only rolls back`package.json`the version field in**and does not roll back commits that have already been`git commit`**. If you publish and it fails while`skipGit`is false, you need to manually`git reset`。
 
 ---
 
+# Design reflection: the common pattern across the three trade-offs
 
-本章从源码出发，拆解了 Vue core 工程化体系的三个关键边界条件：
+Reviewing the three core trade-offs in this chapter, they share the same design philosophy:**Turn "runtime checks that are easy to forget" into "structural constraints that cannot be bypassed"**。
 
-1. **`packages-private` 与 `packages` 的物理隔离**由 workspace glob、`build.js` 目录探测、`release.js` 过滤三处共同保证 [FACT:pnpm-workspace.yaml:1-3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/pnpm-workspace.yaml#L1-L3)[FACT:scripts/build.js:153-170](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L153-L170)[FACT:scripts/release.js:68-83](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L68-L83)。
+- `packages-private`Physical isolation: do not rely on the script author remembering to check the`private`field, but instead make the scan scope naturally exclude it.
+- Enum inlining upfront: do not rely on the Rollup plugin "happening" to see cross-package enums during transform, but instead build a global cache before the build.
+- `release.js`The skip matrix of : do not rely on the publisher remembering that "if CI has passed, there is no need to run tests locally," but instead have the script automatically query CI status and rewrite`skipTests`。
 
-2. **枚举内联的时序约束**由 `scanEnums()` / `removeCache()` 的 `try/finally` 结构强制保证，Rollup 配置在模块顶层消费缓存 [FACT:scripts/build.js:81-112](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L81-L112)[FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50)。
+> **[Design Inference & Architectural Trade-offs]**
+> The cost of this pattern is**increased script complexity**：`build.js`needs to maintain the`privatePackages`list,`rollup.config.js`needs to duplicate directory probing logic,`release.js`needs to handle the cross-combinations of four skip flags. But for a repository like Vue that releases multiple times per week, the reliability gains from structural constraints far outweigh the complexity cost.
 
-3. **`release.js` 的 skip 标志位矩阵**服务于 CI 发布、本地调试、紧急热修三种场景，`skipTests` 的动态改写和发布顺序排序是两个最容易被忽略的隐藏契约 [FACT:scripts/release.js:281-317](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L281-L317)[FACT:scripts/release.js:85-85](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/release.js#L85-L85)。
+---
 
+# Chapter summary
 
-Q1: 如果把 `build.js` 中 `build(target)` 函数里的 `privatePackages.includes(target)` 判断去掉，统一用 `packages` 作为 `pkgBase`，在什么场景下会出问题？
+Starting from the source code, this chapter breaks down three key boundary conditions of the Vue core engineering system:
 
-**参考解析**：`build.js:160-164` 的目录探测是私有包能被构建的唯一入口。去掉后，`nr build vite-debug` 会在 `packages/vite-debug` 下查找 `package.json`，而该目录不存在，`fs.readFileSync` 直接抛 `ENOENT`。更隐蔽的问题是：如果未来有人在 `packages/` 下创建了同名目录，构建会静默使用错误目录的配置，产物路径和 `buildOptions` 全部错位。此外，`rollup.config.js:37-42` 有独立的目录探测逻辑，两处必须同步修改，否则会出现「`build.js` 找到了包但 Rollup 找不到」的不一致状态。
+1. **`packages-private`and`packages`physical isolation**jointly guaranteed by the workspace glob,`build.js`directory probing,`release.js`and filtering in three places[FACT:pnpm-workspace.yaml:1-3][FACT:scripts/build.js:153-170][FACT:scripts/release.js:68-83]。
 
-Q2: `release.js` 的 `runTestsIfNeeded()` 中，`skipTests ||= isCIPassed` 这行代码（`release.js:285`）在 `skipPrompts` 为真且 CI 未通过时会走哪条分支？如果去掉 `else if (skipPrompts)` 分支的 `throw`，会有什么后果？
+2. **The timing constraint of enum inlining**is enforced by`scanEnums()` / `removeCache()`'s`try/finally`structure, with the Rollup config consuming the cache at the module top level[FACT:scripts/build.js:81-112][FACT:rollup.config.js:47-50]。
 
-**参考解析**：当 `skipPrompts` 为真且 CI 未通过时，`skipTests ||= isCIPassed` 中 `isCIPassed` 为 `false`，`skipTests` 保持原值（通常为 `false`）。随后进入 `else if (skipPrompts)` 分支，抛出 `Error`（`release.js:299-304`）。如果去掉这个 `throw`，代码会继续执行到 `if (!skipTests)` 分支，在无交互环境下运行 `pnpm run test --run`。这在 CI 中可能导致测试因环境差异而失败，或者更糟——测试通过但 CI 实际未通过（比如 CI 跑的是不同的测试子集），发布出未经完整验证的版本。
+3. **`release.js`The skip flag matrix of**serves three scenarios: CI release, local debugging, and emergency hotfixes,`skipTests`The dynamic rewriting and publish order sorting are the two hidden contracts most easily overlooked[FACT:scripts/release.js:281-317][FACT:scripts/release.js:85-85]。
 
-Q3: `rollup.config.js:55` 的 `inlineEnums()` 在模块顶层调用，而 `build.js:87` 的 `scanEnums()` 在 `run()` 函数内调用。如果交换这两者的执行时机（即让 `inlineEnums()` 在 Rollup 的 `buildStart` 钩子中调用），会破坏什么？
+# Chapter reflection and self-test
 
-**参考解析**：`scanEnums()` 必须在所有 Rollup 进程启动之前完成，因为它需要扫描**所有包**的源码来建立全局 enum 缓存。`inlineEnums()` 在 `rollup.config.js` 模块顶层调用，此时 Rollup 尚未开始任何构建，缓存已经就绪。如果改为在 `buildStart` 中调用，每个 Rollup 进程会独立扫描——但 `buildAll` 是并发执行的（`build.js:119-121`），多个进程同时扫描同一批文件会产生竞态：进程 A 可能读到进程 B 尚未写完的缓存文件，导致 enum 替换不完整。更严重的是，`scanEnums()` 返回的 `removeCache` 闭包依赖扫描时的文件句柄状态，并发场景下清理时机无法协调。
+Q1: If you remove the`build.js`in`build(target)`the`privatePackages.includes(target)`check in the function and uniformly use`packages`as`pkgBase`, in what scenarios would problems occur?
 
-双目录契约、构建脚本的归属判定、发布脚本的二次过滤——这些机制共同划定了 monorepo 工程化的安全边界。但边界并非一成不变：随着构建工具从 Rollup 向 Rolldown 迁移、类型测试与运行时测试走向融合，现有的权衡策略也将面临新的挑战。下一章，我们将基于 3.0 至 3.4 的变更轨迹，展望下一代工程化体系的演进方向。
+**Reference analysis**：`build.js:160-164`The directory probing of is the only entry point through which private packages can be built. After removing it,`nr build vite-debug`will look for`packages/vite-debug`under`package.json`, but that directory does not exist,`fs.readFileSync`directly throws`ENOENT`. A more subtle problem is: if someone in the future creates a directory with the same name under`packages/`, the build will silently use the config from the wrong directory, and the output paths and`buildOptions`will all be misaligned. In addition,`rollup.config.js:37-42`has independent directory probing logic, and both places must be modified in sync; otherwise you get the inconsistent state where "`build.js`found the package but Rollup cannot find it."
+
+Q2: `release.js`In`runTestsIfNeeded()`of`skipTests ||= isCIPassed`, this line of code (`release.js:285`) when`skipPrompts`is true and CI has not passed, which branch will it take? If you remove the`else if (skipPrompts)`of the`throw`branch, what will be the consequences?
+
+**Reference analysis**: when`skipPrompts`is true and CI has not passed,`skipTests ||= isCIPassed`in`isCIPassed`is`false`，`skipTests`and keeps its original value (usually`false`). Then it enters the`else if (skipPrompts)`branch and throws`Error`（`release.js:299-304`). If you remove this`throw`, the code will continue to the`if (!skipTests)`branch and run`pnpm run test --run`in a non-interactive environment. In CI, this may cause tests to fail due to environment differences, or worse—tests pass but CI actually did not pass (for example, CI ran a different subset of tests), publishing a version that has not been fully verified.
+
+Q3: `rollup.config.js:55`In`inlineEnums()`of`build.js:87`is called at the module top level, while`scanEnums()`of`run()`is called inside the`inlineEnums()`function. If you swap the execution timing of these two (that is, let`buildStart`be called in Rollup's hook), what would be broken?
+
+**Reference analysis**：`scanEnums()`must complete before all Rollup processes start, because it needs to scan**all packages**source code to build the global enum cache.`inlineEnums()`is called at the top level of the`rollup.config.js`module, when Rollup has not yet started any builds, so the cache is already ready. If it were changed to be called in`buildStart`, each Rollup process would scan independently—but`buildAll`is executed concurrently (`build.js:119-121`), and multiple processes scanning the same batch of files at the same time would create a race: process A may read a cache file that process B has not finished writing, resulting in incomplete enum replacement. More seriously,`scanEnums()`the returned`removeCache`closure depends on the file handle state at scan time, and in concurrent scenarios the cleanup timing cannot be coordinated.
+
+Dual-directory contracts, ownership determination in build scripts, secondary filtering in release scripts—these mechanisms together define the safety boundaries of monorepo engineering. But boundaries are not static: as build tools migrate from Rollup to Rolldown and type testing converges with runtime testing, existing trade-off strategies will face new challenges. In the next chapter, we will look ahead to the evolution direction of the next-generation engineering system based on the change trajectory from 3.0 to 3.4.

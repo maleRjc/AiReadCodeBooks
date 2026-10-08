@@ -1,18 +1,18 @@
-# Chapter 06: Timer Wheel Driver: Hierarchical Timing Wheels for Ultra-Low Latency
+# Chapter 6: Time-Driven: How the Timing Wheel, Sleep, and Timeouts Are Woken
 
+In the previous chapter, we traced the complete path of TcpStream::read and saw how ScheduledIo translates epoll fd readiness events into Waker wakeups. But an async runtime also needs to handle another kind of "readiness": a sleep(100ms) Future must be woken after 100ms. This kind of event does not come from a kernel fd, but from "time itself." Tokio's design choice is to treat time as a kind of I/O event as well: the Driver struct has only one field, park: IoStack, which reuses the I/O driver's park/unpark mechanism. When the timing wheel calculates the "next expiration instant," the driver calls park_timeout to let the thread sleep until that instant; after being woken, it takes expired entries out of the timing wheel and triggers their Wakers. In this way, the scheduler only needs a unified park entry point to wait for both kinds of events: "fd readiness" and "timer expiration." This chapter answers three questions: How are timers inserted into the timing wheel? How is the timing wheel leveled by expiration time? How does the driver calculate the timeout for the next park and trigger expired tasks?
 
-上一章我们追踪了 TcpStream::read 的完整链路，看到 ScheduledIo 如何把 epoll 的 fd 就绪事件翻译成 Waker 唤醒。但异步运行时还需要处理另一类「就绪」：一个 sleep(100ms) 的 Future，在 100ms 后必须被唤醒。这类事件不来自内核 fd，而来自「时间本身」。Tokio 的设计选择是把时间也当作一种 I/O 事件：Driver 结构体里只有一个字段 park: IoStack，它复用了 I/O driver 的 park/unpark 机制。当时间轮算出「下一次到期时刻」时，driver 就调用 park_timeout 让线程睡到那个时刻；被唤醒后再从时间轮里取出到期条目、触发它们的 Waker。这样，调度器只需要一个统一的 park 入口，就能同时等待「fd 就绪」和「定时器到期」两类事件。本章要回答三个问题：定时器如何被插入时间轮？时间轮如何按到期时间分级？driver 如何计算下一次 park 的超时并触发到期任务？
+# 1. Timing Wheel: A Six-Level, 64-Slot Hashed Hierarchical Structure
 
+## Intuitive model
 
-## Intuitive Architectural Model
+Imagine a mechanical clock: the second hand drives the minute hand through one revolution, and the minute hand drives the hour hand through one revolution. If there were only a second hand, representing "12 days later" would require counting a million ticks; but after layering, the second hand only handles precision within 64 seconds, the minute hand handles 64 minutes, and the hour hand handles 64 hours — each level only needs 64 slots to cover more than 2 years into the future.
 
-想象一个机械钟表：秒针转一圈带动分针，分针转一圈带动时针。如果只有一根秒针，要表示「12 天后」就得数 100 万格；而分层之后，秒针只管 64 秒内的精度，分针管 64 分钟，时针管 64 小时——每一层只需 64 个槽位，就能覆盖到 2 年之后。
+Without layering, inserting a far-future timer would require either O(N) traversal or a huge array. The timing wheel uses "leveling by expiration time" to reduce both insertion and triggering to approximately O(1).
 
-若没有分层，插入一个远期定时器要么需要 O(N) 遍历，要么需要巨大的数组。时间轮用「按到期时间分级」把插入和触发都压到近似 O(1)。
+## Memory layout and fields
 
-## 内存布局与字段
-
-`Wheel` 的核心字段只有三个 [FACT:tokio/src/runtime/time/wheel/mod.rs:22-40](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L22-L40)：
+`Wheel`The core fields of are only three[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
 
 ```rust
 pub(crate) struct Wheel {
@@ -22,11 +22,11 @@ pub(crate) struct Wheel {
 }
 ```
 
-`NUM_LEVELS = 6`，`BITS_PER_LEVEL = 6`（即每层 64 槽）[FACT:tokio/src/runtime/time/wheel/mod.rs:45-47](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L45-L47)。`MAX_DURATION = 1 << (6 * 6) = 1 << 36` 毫秒，约 2 年 [FACT:tokio/src/runtime/time/wheel/mod.rs:50](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L50)。
+`NUM_LEVELS = 6`，`BITS_PER_LEVEL = 6`(that is, 64 slots per level)[FACT:tokio/src/runtime/time/wheel/mod.rs:45-47]。`MAX_DURATION = 1 << (6 * 6) = 1 << 36`milliseconds, about 2 years[FACT:tokio/src/runtime/time/wheel/mod.rs:50]。
 
-六层的粒度按文档注释是 [FACT:tokio/src/runtime/time/wheel/mod.rs:22-40](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L22-L40)：
+The granularity of the six levels, according to the documentation comments, is[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
 
-| 层 | 槽粒度 | 覆盖范围 |
+| Level | Slot granularity | Coverage range |
 | --- | --- | --- |
 | 0 | 1 ms | 64 ms |
 | 1 | 64 ms | ~4 s |
@@ -35,13 +35,13 @@ pub(crate) struct Wheel {
 | 4 | ~4 hr | ~12 day |
 | 5 | ~12 day | ~2 yr |
 
-`pending` 是一个侵入式链表（`LinkedList<TimerShared>`），存放已经从轮中取出、等待触发 Waker 的条目。注意它是 `LinkedList` 而非 `Vec`：条目本身内嵌在 `TimerShared` 里，插入/移除不需要分配。
+`pending`is an intrusive linked list (`LinkedList<TimerShared>`), storing entries that have already been taken out of the wheel and are waiting to trigger their Wakers. Note that it is`LinkedList`rather than`Vec`: the entries themselves are embedded in`TimerShared`, so insertion/removal does not require allocation.
 
-## 场景驱动：插入一个 100ms 的 sleep
+## Scenario-driven: inserting a 100ms sleep
 
-当 `sleep(100ms)` 首次被 poll 时，`Sleep::poll_elapsed` 会构造 `Timer::new` 并调用 `init` [FACT:tokio/src/time/sleep.rs:436-440](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/sleep.rs#L436-L440)。`init` 最终调用 `Handle::reregister`，进而调用 `Wheel::insert`。
+When`sleep(100ms)`is first polled,`Sleep::poll_elapsed`will construct`Timer::new`and call`init` [FACT:tokio/src/time/sleep.rs:436-440]。`init`ultimately calls`Handle::reregister`, and then calls`Wheel::insert`。
 
-`insert` 的第一步是检查是否已过期 [FACT:tokio/src/runtime/time/wheel/mod.rs:90-98](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L90-L98)：
+`insert`The first step is to check whether it has already expired[FACT:tokio/src/runtime/time/wheel/mod.rs:90-98]：
 
 ```rust
 let when = unsafe { item.sync_when() };
@@ -53,13 +53,13 @@ if when  usize {
 }
 ```
 
-这里用 `elapsed ^ when` 而非 `when - elapsed`，是一个精妙的技巧：XOR 的最高有效位反映了「两个时间戳从哪一位开始不同」，也就是「需要多粗的粒度才能区分它们」。`| SLOT_MASK` 把低 6 位强制置 1，避免 `ilog2` 落在同一槽内时算出过小的层。`ilog2() / 6` 把位宽映射到层号。如果 XOR 结果超过 `MAX_DURATION`（即超过 2 年），就强制塞进最高层——这就是「fudge the timer into the top level」。
+Here`elapsed ^ when`is used rather than`when - elapsed`, which is an ingenious trick: the most significant bit of the XOR reflects "from which bit the two timestamps first differ," that is, "how coarse a granularity is needed to distinguish them."`| SLOT_MASK`forces the low 6 bits to 1, avoiding`ilog2`calculating too small a level when they fall into the same slot.`ilog2() / 6`maps the bit width to the level number. If the XOR result exceeds`MAX_DURATION`(that is, more than 2 years), it is forcibly placed into the highest level — this is "fudge the timer into the top level."
 
-对于 100ms 的 sleep，假设 `elapsed` 接近 0，`when ≈ 100`，`elapsed ^ when ≈ 100`，`ilog2(100) = 6`，`6 / 6 = 1`，所以落在第 1 层（64ms 粒度）。这意味着它会在第 1 层的某个槽里等待，直到时间推进到该槽的边界时才被下沉到第 0 层。
+For a 100ms sleep, assuming`elapsed`is close to 0,`when ≈ 100`，`elapsed ^ when ≈ 100`，`ilog2(100) = 6`，`6 / 6 = 1`, so it falls on level 1 (64ms granularity). This means it will wait in a slot on level 1 until time advances to that slot's boundary before being cascaded down to level 0.
 
-## 分级下沉：process_expiration
+## Hierarchical cascading: process_expiration
 
-当 `poll(now)` 推进时间时，`Wheel::poll` 会循环调用 `next_expiration` 和 `process_expiration` [FACT:tokio/src/runtime/time/wheel/mod.rs:142-166](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L142-L166)：
+When`poll(now)`advances time,`Wheel::poll`will repeatedly call`next_expiration`and`process_expiration` [FACT:tokio/src/runtime/time/wheel/mod.rs:142-166]：
 
 ```rust
 pub(crate) fn poll(&mut self, now: u64) -> Option {
@@ -82,7 +82,7 @@ pub(crate) fn poll(&mut self, now: u64) -> Option {
 }
 ```
 
-`process_expiration` 负责把某一层的到期条目「下沉」到下一层，或者（在第 0 层）标记为 pending [FACT:tokio/src/runtime/time/wheel/mod.rs:218-251](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L218-L251)：
+`process_expiration`is responsible for "cascading" expired entries from one level down to the next, or (at level 0) marking them as pending[FACT:tokio/src/runtime/time/wheel/mod.rs:218-251]：
 
 ```rust
 let mut entries = self.take_entries(expiration);
@@ -99,13 +99,13 @@ while let Some(item) = entries.pop_back() {
 }
 ```
 
-`mark_pending` 是关键：它检查条目的实际 deadline 是否已经到达。如果到达，返回 `Ok(())`，条目进入 `pending` 链表；如果还没到（只是所在槽的边界到了），返回 `Err(expiration_tick)`，条目被重新插入到更细的层。
+`mark_pending`is the key: it checks whether an entry's actual deadline has been reached. If reached, it returns`Ok(())`, and the entry enters the`pending`linked list; if not yet reached (only the slot's boundary has been reached), it returns`Err(expiration_tick)`, and the entry is reinserted into a finer-grained level.
 
-注意注释里强调的一点 [FACT:tokio/src/runtime/time/wheel/mod.rs:219-228](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L219-L228)：必须先把整个槽的条目全部取出再处理，因为某些条目可能被重新插入到同一个槽（当插入时间超过 `MAX_DURATION` 时会发生环绕）。如果边取边插，可能陷入无限循环。
+Note the point emphasized in the comments[FACT:tokio/src/runtime/time/wheel/mod.rs:219-228]: all entries in the entire slot must be taken out first before processing, because some entries may be reinserted into the same slot (this happens when the insertion time exceeds`MAX_DURATION`, causing wraparound). If you take and insert simultaneously, you may fall into an infinite loop.
 
-## 下一到期时刻的计算
+## Calculation of the next expiration time
 
-`next_expiration` 从低层到高层扫描，返回第一个非空的到期点 [FACT:tokio/src/runtime/time/wheel/mod.rs:169-191](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L169-L191)：
+`next_expiration`scans from low level to high level, returning the first non-empty expiration point[FACT:tokio/src/runtime/time/wheel/mod.rs:169-191]：
 
 ```rust
 fn next_expiration(&self) -> Option {
@@ -122,7 +122,7 @@ fn next_expiration(&self) -> Option {
 }
 ```
 
-如果 `pending` 非空，说明有已到期条目待触发，立即返回当前 `elapsed` 作为 deadline（这样 driver 会以 0 超时 park，马上回来处理）。否则逐层扫描，返回第一个有内容的槽的 deadline。`debug_assert` 验证了一个不变量：更高层不可能有比当前层更早的到期点。
+If`pending`is non-empty, it means there are expired entries waiting to be triggered, so it immediately returns the current`elapsed`as the deadline (so the driver will park with a 0 timeout and come back immediately to process). Otherwise, it scans level by level, returning the deadline of the first slot with content.`debug_assert`verifies an invariant: a higher level cannot have an earlier expiration point than the current level.
 
 ```mermaid
 flowchart TD
@@ -144,16 +144,17 @@ flowchart TD
 
 ---
 
+# II. The Driver's park loop: connecting the timer wheel to the I/O stack
 
-## Intuitive Architectural Model
+## Intuitive model
 
-时间轮本身不会「自己走」。它需要一个外部循环反复问它：「下一次到期是什么时候？」然后睡到那个时刻，醒来后再推进时间。这个循环就是 `Driver::park_internal`。它把「时间轮的下一次到期」翻译成一个 `park_timeout` 的时长，交给底层的 I/O 栈去睡。
+The timer wheel itself does not "run on its own." It needs an external loop to repeatedly ask it: "When is the next expiration?" Then it sleeps until that moment, and after waking up, advances time. This loop is`Driver::park_internal`. It translates "the timer wheel's next expiration" into a`park_timeout`duration, handing it to the underlying I/O stack to sleep.
 
-若没有这个循环，定时器永远不会被触发——时间轮只是静态数据结构，需要有人「拨动」它。
+Without this loop, timers would never be triggered—the timer wheel is just a static data structure that needs someone to "turn" it.
 
-## 数据结构：Driver 与 InnerState
+## Data structures: Driver and InnerState
 
-`Driver` 只有一个字段 `park: IoStack` [FACT:tokio/src/runtime/time/mod.rs:90-93](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L90-L93)。真正的状态在 `Handle` 里，通过 `Inner` 枚举区分传统实现和实验性实现 [FACT:tokio/src/runtime/time/mod.rs:95-127](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L95-L127)。传统实现的 `InnerState` 包含两个字段 [FACT:tokio/src/runtime/time/mod.rs:130-136](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L130-L136)：
+`Driver`has only one field`park: IoStack` [FACT:tokio/src/runtime/time/mod.rs:90-93]. The real state is in`Handle`, distinguished via the`Inner`enum between the traditional implementation and the experimental implementation[FACT:tokio/src/runtime/time/mod.rs:95-127]. The traditional implementation's`InnerState`contains two fields[FACT:tokio/src/runtime/time/mod.rs:130-136]：
 
 ```rust
 struct InnerState {
@@ -162,13 +163,13 @@ struct InnerState {
 }
 ```
 
-`next_wake` 用 `NonZeroU64` 而非 `Option<u64>` 的嵌套，是为了利用 niche 优化——`Option<NonZeroU64>` 和 `u64` 同大小。它记录「driver 承诺在哪个 tick 之前会醒来」，用于 `reregister` 时判断是否需要 `unpark`。
+`next_wake`uses`NonZeroU64`instead of`Option<u64>`nesting, in order to leverage niche optimization—`Option<NonZeroU64>`and`u64`are the same size. It records "before which tick the driver promises to wake up," used during`reregister`to determine whether`unpark`。
 
-`is_shutdown` 是独立的 `AtomicBool`，注释解释了为什么把它从 Mutex 里拆出来 [FACT:tokio/src/runtime/time/mod.rs:90-93](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L90-L93)：`Handle` 需要在不锁 mutex 的情况下检查 `is_shutdown`。这是一个典型的「读多写少」优化——shutdown 只发生一次，但检查可能频繁。
+`is_shutdown`is needed`AtomicBool`is an independent[FACT:tokio/src/runtime/time/mod.rs:90-93]：`Handle`, and the comments explain why it was split out from the Mutex`is_shutdown`needs to check
 
-## 场景驱动：一次 park 的完整流程
+## without locking the mutex. This is a typical "read-many, write-few" optimization—shutdown happens only once, but checks may be frequent.
 
-`park_internal` 是核心 [FACT:tokio/src/runtime/time/mod.rs:213-256](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L213-L256)：
+`park_internal`Scenario-driven: the complete flow of one park[FACT:tokio/src/runtime/time/mod.rs:213-256]：
 
 ```rust
 fn park_internal(&mut self, rt_handle: &driver::Handle, limit: Option) {
@@ -206,25 +207,25 @@ fn park_internal(&mut self, rt_handle: &driver::Handle, limit: Option) {
 }
 ```
 
-分步解析：
+Copy
 
-1. **取锁、读下一次到期**：`lock.wheel.next_expiration_time()` 返回 `Option<u64>`，即下一个到期 tick。同时把它写入 `lock.next_wake`，供 `reregister` 判断是否需要 unpark。
+1. **Step-by-step analysis:**：`lock.wheel.next_expiration_time()`Acquire lock, read next expiration`Option<u64>`returns`lock.next_wake`, i.e., the next expiration tick. At the same time, it writes it to`reregister`, for
 
-2. **释放锁**：`drop(lock)` 必须在 park 之前，否则 park 期间其他线程无法插入定时器。
+2. **to determine whether unpark is needed.**：`drop(lock)`Release lock
 
-3. **计算 park 时长**：`when.saturating_sub(now)` 得到剩余 tick 数，`tick_to_duration` 转成 `Duration`。注释指出这里实际上向上取整到 1ms [FACT:tokio/src/runtime/time/mod.rs:228-230](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L228-L230)，避免微秒级 sleep 被 OS 当作零长度。
+3. **must be before park, otherwise other threads cannot insert timers during park.**：`when.saturating_sub(now)`Calculate park duration`tick_to_duration`obtains the remaining tick count,`Duration`converts it to[FACT:tokio/src/runtime/time/mod.rs:228-230]. The comments point out that this is actually rounded up to 1ms
 
-4. **处理 limit**：如果调用方传了 `limit`（比如 `park_timeout` 的显式超时），取 `min(limit, duration)`，保证不会睡过头。
+4. **, to avoid microsecond-level sleep being treated as zero-length by the OS.**Handle limit`limit`: if the caller passed`park_timeout`(such as`min(limit, duration)`'s explicit timeout), take
 
-5. **特殊情况**：如果 `duration == 0`（已到期），用 `park_timeout(0)` 立即返回，不真正睡。
+5. **, ensuring it will not oversleep.**Special case`duration == 0`: if`park_timeout(0)`(already expired), use
 
-6. **无定时器时**：如果 `next_wake` 为 `None`，有 `limit` 就 `park_thread_timeout(limit)`，否则无限 `park`。
+6. **to return immediately without actually sleeping.**When there are no timers`next_wake`: if`None`is`limit`, if there is`park_thread_timeout(limit)`then`park`。
 
-7. **唤醒后处理**：`handle.process(clock)` 推进时间轮并触发到期条目。
+7. **, otherwise infinite**：`handle.process(clock)`Process after waking up
 
-## process_at_time：触发到期条目
+## advances the timer wheel and triggers expired entries.
 
-`process` 调用 `process_at_time` [FACT:tokio/src/runtime/time/mod.rs:296-337](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L296-L337)：
+`process`process_at_time: triggering expired entries`process_at_time` [FACT:tokio/src/runtime/time/mod.rs:296-337]：
 
 ```rust
 pub(self) fn process_at_time(&self, mut now: u64) {
@@ -256,9 +257,9 @@ pub(self) fn process_at_time(&self, mut now: u64) {
 }
 ```
 
-关键逻辑：插入成功后，如果新到期时刻比 `next_wake` 更早，就调用 `unpark.unpark()` 唤醒 driver。这是因为 driver 可能正睡在一个更晚的时刻，需要被提前叫醒以重新计算 park 时长。
+Copy`next_wake`Key logic: after successful insertion, if the new expiration time is earlier than`unpark.unpark()`, call
 
-注意 `unpark` 是在**持有锁时**调用的，而 `waker.wake()` 是在**释放锁后**调用的。注释解释 [FACT:tokio/src/runtime/time/mod.rs:441](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L441)：必须在调用 Waker 前释放锁以避免死锁。但 `unpark` 不同——它只是往 epoll 塞一个事件，不会回调用户代码，所以持锁调用是安全的。
+to wake up the driver. This is because the driver may be sleeping until a later time and needs to be woken up early to recalculate the park duration.`unpark`Note that**is called**while holding the lock, whereas`waker.wake()`is called**after releasing the lock. The comments explain**: the lock must be released before calling the Waker to avoid deadlock. But[FACT:tokio/src/runtime/time/mod.rs:441]is different—it merely pushes an event into epoll and will not call back into user code, so calling it while holding the lock is safe.`unpark`Copy
 
 ```mermaid
 sequenceDiagram
@@ -293,14 +294,15 @@ sequenceDiagram
 
 ---
 
+# Intuitive model
 
-## Intuitive Architectural Model
+## is the Future that users directly
 
-`Sleep` 是用户直接 `.await` 的 Future，`Timeout` 是包裹另一个 Future 的适配器。它们本身不管理时间轮，只是把「deadline」翻译成 tick，委托给 `Timer` 和 `Handle`。
+`Sleep`,`.await` 的 Future，`Timeout`is an adapter that wraps another Future. They themselves do not manage the timer wheel; they simply translate the "deadline" into a tick and delegate to`Timer`and`Handle`。
 
-## Sleep 的内存布局
+## Sleep memory layout
 
-`Sleep` 用 `pin_project!` 宏定义 [FACT:tokio/src/time/sleep.rs:221-227](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/sleep.rs#L221-L227)：
+`Sleep`uses the`pin_project!`macro to define[FACT:tokio/src/time/sleep.rs:221-227]：
 
 ```rust
 pub struct Sleep {
@@ -312,9 +314,9 @@ pub struct Sleep {
 }
 ```
 
-`timer` 是 `Option<Timer>` 且带 `#[pin]`：首次 poll 前是 `None`，首次 poll 时才创建 `Timer` 并注册。这种「惰性初始化」避免了在 `sleep()` 调用时就访问运行时——`sleep()` 可以在运行时外调用，只要在 `.await` 时才真正注册。
+`timer`is`Option<Timer>`and carries`#[pin]`: before the first poll it is`None`, and only on the first poll is`Timer`created and registered. This "lazy initialization" avoids accessing the runtime when`sleep()`is called—`sleep()`can be called outside the runtime, as long as it is only actually registered at`.await`.
 
-`PinnedDrop` 实现确保 drop 时取消定时器 [FACT:tokio/src/time/sleep.rs:230-235](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/sleep.rs#L230-L235)：
+`PinnedDrop`The implementation ensures that the timer is canceled on drop[FACT:tokio/src/time/sleep.rs:230-235]：
 
 ```rust
 impl PinnedDrop for Sleep {
@@ -327,9 +329,9 @@ impl PinnedDrop for Sleep {
 }
 ```
 
-## poll_elapsed 的完整流程
+## The complete flow of poll_elapsed
 
-`poll_elapsed` 是 `Sleep` 的核心 [FACT:tokio/src/time/sleep.rs:396-454](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/sleep.rs#L396-L454)：
+`poll_elapsed`is`Sleep`the core of[FACT:tokio/src/time/sleep.rs:396-454]：
 
 ```rust
 fn poll_elapsed(self: Pin, cx: &mut task::Context) -> Poll> {
@@ -361,19 +363,19 @@ fn poll_elapsed(self: Pin, cx: &mut task::Context) -> Poll> {
 }
 ```
 
-分步：
+Step by step:
 
-1. **coop 预算检查**：`poll_proceed(cx)` 消耗一次协作预算。如果预算耗尽，返回 `Pending` 并让出执行权。这是 Tokio 防止单个任务饿死其他任务的机制。
+1. **coop budget check**：`poll_proceed(cx)`consumes one unit of cooperative budget. If the budget is exhausted, return`Pending`and yield execution. This is Tokio's mechanism for preventing a single task from starving other tasks.
 
-2. **惰性创建 Timer**：如果 `timer` 是 `None`，把 `deadline` 转成 tick，创建 `Timer` 并调用 `init` 注册到时间轮。
+2. **Lazily create Timer**: if`timer`is`None`, convert`deadline`into a tick, create`Timer`and call`init`to register it with the timer wheel.
 
-3. **委托给 Timer::poll_elapsed**：实际的到期检查由 `Timer` 完成。
+3. **Delegate to Timer::poll_elapsed**: the actual expiration check is performed by`Timer`.
 
-4. **成功后标记进度**：`coop.made_progress()` 表示这次 poll 有实际进展。
+4. **Mark progress on success**：`coop.made_progress()`indicates that this poll made actual progress.
 
-## Timeout 的 poll：先 poll 值，再 poll 延迟
+## Timeout's poll: poll the value first, then poll the delay
 
-`Timeout` 的 poll 顺序很关键 [FACT:tokio/src/time/timeout.rs:210-224](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L210-L224)：
+`Timeout`The poll order of[FACT:tokio/src/time/timeout.rs:210-224]：
 
 ```rust
 fn poll(self: Pin, cx: &mut task::Context) -> Poll {
@@ -392,9 +394,9 @@ fn poll(self: Pin, cx: &mut task::Context) -> Poll {
 }
 ```
 
-注释明确指出 [FACT:tokio/src/time/timeout.rs:24-26](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L24-L26)：future 先被 poll，然后才检查超时。所以如果 future 不 yield 就完成，它可能在超过 timeout 后仍返回 `Ok`。这是设计选择，不是 bug。
+Copy[FACT:tokio/src/time/timeout.rs:24-26]The comment explicitly states`Ok`: the future is polled first, and only then is the timeout checked. So if the future completes without yielding, it may still return
 
-`poll_delay` 处理一个微妙的场景 [FACT:tokio/src/time/timeout.rs:229-251](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L229-L251)：
+`poll_delay`after the timeout has passed. This is a design choice, not a bug.[FACT:tokio/src/time/timeout.rs:229-251]：
 
 ```rust
 fn poll_delay(had_budget_before: bool, delay: Pin, cx: &mut task::Context) -> Poll {
@@ -414,11 +416,11 @@ fn poll_delay(had_budget_before: bool, delay: Pin, cx: &mut task::Context) -> Po
 }
 ```
 
-逻辑：如果进入 `poll` 时还有预算，但 poll 完 value 后预算耗尽了，说明是 value 消耗了预算。此时如果用受限预算 poll delay，delay 可能立即返回 `Pending`，导致永远无法判断超时是否到达。所以用 `with_unconstrained` 临时解除预算限制。注释称之为「pathological cases」[FACT:tokio/src/time/timeout.rs:243-246](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L243-L246)。
+Copy`poll`Logic: if there is still budget when entering`Pending`, but the budget is exhausted after polling value, that means value consumed the budget. At this point, if delay is polled with a constrained budget, delay may immediately return`with_unconstrained`, making it impossible to ever determine whether the timeout has been reached. So[FACT:tokio/src/time/timeout.rs:243-246]。
 
-## timeout 的 deadline 溢出处理
+## is used to temporarily lift the budget restriction. The comment calls this "pathological cases"
 
-`timeout` 函数用 `checked_add` 处理溢出 [FACT:tokio/src/time/timeout.rs:86-99](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L86-L99)：
+`timeout`timeout's deadline overflow handling`checked_add`The function uses[FACT:tokio/src/time/timeout.rs:86-99]：
 
 ```rust
 Timeout {
@@ -430,49 +432,52 @@ Timeout {
 }
 ```
 
-如果 `Instant::now() + duration` 溢出（duration 极大），`delay` 为 `None`，poll 时直接返回 `Poll::Pending` [FACT:tokio/src/time/timeout.rs:222](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L222)。这相当于「永不超时」，是合理的降级行为。
+Copy`Instant::now() + duration`If`delay`overflows (the duration is extremely large),`None`becomes`Poll::Pending` [FACT:tokio/src/time/timeout.rs:222], and poll directly returns
 
 ---
 
+# . This is equivalent to "never time out," which is reasonable degradation behavior.
 
-**为什么用 XOR 而非减法计算层级？** `elapsed ^ when` 的最高有效位直接反映「两个时间戳从哪一位开始不同」，这正是「需要多粗的粒度」的度量。减法 `when - elapsed` 在 `elapsed` 接近 `when` 时高位全为 0，`ilog2` 会算出过小的层。XOR 天然处理了环绕场景。
+**Design reflections and production pitfalls** `elapsed ^ when`Why use XOR instead of subtraction to calculate the level?`when - elapsed`The most significant bit of`elapsed`directly reflects "from which bit two timestamps first differ," which is exactly the measure of "how coarse a granularity is needed." Subtraction`when`when`ilog2`is close to
 
-**时间倒流保护的必要性** [FACT:tokio/src/runtime/time/mod.rs:301-309](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L301-L309)：Rust 保证 `Instant` 单调，但底层 OS 可能不保证。在 Windows 宿主上的 Linux VM 里，std 信任硬件时钟导致 `Instant` 倒退。Tokio 用 `now = lock.wheel.elapsed()` 钳制，避免 `set_elapsed` 的 assert 失败。
+**has all high bits as 0,** [FACT:tokio/src/runtime/time/mod.rs:301-309]will calculate too small a level. XOR naturally handles wraparound scenarios.`Instant`The necessity of time-going-backward protection`Instant`: Rust guarantees`now = lock.wheel.elapsed()`monotonicity, but the underlying OS may not. In a Linux VM on a Windows host, std trusts the hardware clock, causing`set_elapsed`to go backward. Tokio uses
 
-**批量唤醒与死锁** [FACT:tokio/src/runtime/time/mod.rs:319](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L319)：持有时间轮锁时调用 Waker 是危险的——Waker 可能触发任务重新 poll，进而调用 `Sleep::reset`，试图再次获取时间轮锁，造成死锁。`WakeList` 的批量机制在锁满时临时释放锁，是标准的「锁外回调」模式。
+**to clamp it, avoiding** [FACT:tokio/src/runtime/time/mod.rs:319]'s assert failure.`Sleep::reset`Batch wakeups and deadlocks`WakeList`: calling Waker while holding the timer wheel lock is dangerous—the Waker may trigger the task to be polled again, which then calls
 
-**`next_wake` 的 niche 优化** [FACT:tokio/src/runtime/time/mod.rs:130-136](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L130-L136)：`Option<NonZeroU64>` 与 `u64` 同大小，因为 0 被用作 `None` 的 niche。但 tick 0 是合法值，所以代码用 `NonZeroU64::new(t).unwrap_or_else(|| NonZeroU64::new(1).unwrap())` 把 0 映射到 1 [FACT:tokio/src/runtime/time/mod.rs:221](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L221)。这是一个微妙的边界处理：tick 0 被当作 tick 1，最多导致 1ms 的额外唤醒。
+**`next_wake`, trying to acquire the timer wheel lock again, causing a deadlock.** [FACT:tokio/src/runtime/time/mod.rs:130-136]：`Option<NonZeroU64>`'s batching mechanism temporarily releases the lock when the lock is full, which is the standard "callback outside the lock" pattern.`u64`'s niche optimization`None`and`NonZeroU64::new(t).unwrap_or_else(|| NonZeroU64::new(1).unwrap())`are the same size, because 0 is used as the niche for[FACT:tokio/src/runtime/time/mod.rs:221]. But tick 0 is a legal value, so the code uses
 
-**`process_expiration` 的「先取后处理」** [FACT:tokio/src/runtime/time/wheel/mod.rs:219-228](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L219-L228)：必须先把整槽条目取出再处理，因为超过 `MAX_DURATION` 的条目会环绕并重新插入同一槽。如果边取边插，会无限循环。
+**`process_expiration`to map 0 to 1** [FACT:tokio/src/runtime/time/wheel/mod.rs:219-228]. This is a subtle boundary handling: tick 0 is treated as tick 1, causing at most 1ms of extra wakeup.`MAX_DURATION`'s "take first, then process"
 
-**`Timeout` 的 poll 顺序陷阱** [FACT:tokio/src/time/timeout.rs:24-26](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L24-L26)：future 先 poll，超时后检查。如果 future 是 CPU 密集且不 yield，它可能超过 timeout 仍返回 `Ok`。生产环境中不要依赖 `timeout` 来强制中断不合作的 future。
+**`Timeout`: the entire slot's entries must be taken out before processing, because entries exceeding** [FACT:tokio/src/time/timeout.rs:24-26]will wrap around and be reinserted into the same slot. If you take and insert at the same time, it will loop infinitely.`Ok`'s poll order trap`timeout`: the future is polled first, and the timeout is checked afterward. If the future is CPU-intensive and does not yield, it may still return
 
 ---
 
+# after the timeout. In production, do not rely on
 
-本章拆解了 Tokio 时间驱动的三层结构：
+to forcibly interrupt an uncooperative future.
 
-1. **时间轮**（`Wheel`）：六层 64 槽的哈希分级结构，用 `elapsed ^ when` 的位宽决定条目层级，插入和触发近似 O(1)。`pending` 链表存放已到期条目，`process_expiration` 负责逐层下沉。
+1. **Chapter summary**（`Wheel`This chapter dismantled Tokio's three-layer time-driven structure:`elapsed ^ when`Timer wheel`pending`): a six-level, 64-slot hierarchical hash structure, using the bit width of`process_expiration`to determine the entry level, with insertion and triggering approximately O(1).
 
-2. **Driver**（`Driver::park_internal`）：把时间轮的 `next_expiration_time` 翻译成 `park_timeout` 时长，复用 I/O 栈的 park/unpark。`process_at_time` 在唤醒后推进时间轮、批量触发 Waker，并处理时间倒流和死锁防护。
+2. **Driver**（`Driver::park_internal`The linked list stores expired entries,`next_expiration_time`is responsible for cascading them down level by level.`park_timeout`): translates the timer wheel's`process_at_time`into
 
-3. **用户 API**（`Sleep` / `Timeout`）：`Sleep` 惰性创建 `Timer` 并注册，`Timeout` 先 poll value 再 poll delay，用 `with_unconstrained` 处理预算耗尽场景。
+3. **duration, reusing the I/O stack's park/unpark.**（`Sleep` / `Timeout`）：`Sleep`advances the timer wheel after wakeup, triggers Wakers in batches, and handles time-going-backward and deadlock protection.`Timer`User API`Timeout`lazily creates`with_unconstrained`and registers it,
 
-核心设计是「时间也是一种 I/O 事件」：driver 只有一个 park 入口，同时等待 fd 就绪和定时器到期。`next_wake` 记录承诺的唤醒时刻，`reregister` 在插入更早的定时器时 `unpark` 唤醒 driver 重新计算。
+polls value first and then delay, using`next_wake`to handle the budget-exhaustion scenario.`reregister`The core design is that "time is also an I/O event": the driver has only one park entry point, waiting simultaneously for fd readiness and timer expiration.`unpark`records the promised wakeup time,
 
-下一章我们将进入同步原语：`Mutex`、`Semaphore` 与通道如何实现异步等待。你会看到它们如何复用本章的 Waker 机制，以及「许可计数」与「等待队列」如何协作。
+and when an earlier timer is inserted,`Mutex`、`Semaphore`wakes the driver to recalculate.
 
+# In the next chapter we will enter synchronization primitives:
 
-Q1: 如果把 `Wheel::insert` 中的 `if when <= self.elapsed` 改成 `if when < self.elapsed`（去掉等号），在什么场景下会导致定时器永远不被触发？
+and how channels implement asynchronous waiting. You will see how they reuse this chapter's Waker mechanism, and how "permit counting" and "wait queues" cooperate.`Wheel::insert`Chapter reflection and self-test`if when <= self.elapsed`Q1: If in`if when < self.elapsed`(remove the equals sign), in what scenario would the timer never be triggered?
 
-**参考解析**：`when == self.elapsed` 表示定时器的到期时刻恰好等于当前已推进的时间。原代码用 `<=` 把它判为 `Elapsed`，调用方立即触发 [FACT:tokio/src/runtime/time/wheel/mod.rs:96-98](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L96-L98)。如果改成 `<`，这个条目会被插入到 `level_for(elapsed, when)` 算出的层。由于 `elapsed ^ when == 0`，`masked = 0 | SLOT_MASK = 63`，`ilog2(63) = 5`，`5 / 6 = 0`，落在第 0 层。但第 0 层的 `next_expiration` 会返回一个 `deadline >= elapsed` 的槽，而 `Wheel::poll` 的条件是 `expiration.deadline <= now`。如果 `now == elapsed`，条件成立，`process_expiration` 会取出该条目，`mark_pending(elapsed)` 检查实际 deadline 是否到达——此时 `when == elapsed`，`mark_pending` 返回 `Ok`，条目进入 pending。所以实际上仍会被触发，但多绕了一圈。真正的风险在于：如果 `elapsed` 已经推进到 `when` 之后（`when < elapsed`），原代码返回 `Elapsed` 立即触发，改后则插入到一个已经过去的槽，`next_expiration` 可能返回 `deadline < elapsed`，`set_elapsed` 的 assert `elapsed <= when` 会失败 panic [FACT:tokio/src/runtime/time/wheel/mod.rs:253-264](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/wheel/mod.rs#L253-L264)。所以这个等号是防止 assert 失败的关键边界。
+**Reference analysis**：`when == self.elapsed`means the timer's expiration time is exactly equal to the currently advanced time. The original code uses`<=`to judge it as`Elapsed`, and the caller immediately triggers[FACT:tokio/src/runtime/time/wheel/mod.rs:96-98]. If changed to`<`, this entry will be inserted into the level calculated by`level_for(elapsed, when)`. Since`elapsed ^ when == 0`，`masked = 0 | SLOT_MASK = 63`，`ilog2(63) = 5`，`5 / 6 = 0`, it falls into level 0. But level 0's`next_expiration`will return a slot of`deadline >= elapsed`, and`Wheel::poll`'s condition is`expiration.deadline <= now`. If`now == elapsed`, the condition holds,`process_expiration`will take out the entry,`mark_pending(elapsed)`checks whether the actual deadline has been reached—at this point`when == elapsed`，`mark_pending`returns`Ok`, and the entry enters pending. So in fact it will still be triggered, but with an extra detour. The real risk is: if`elapsed`has already advanced past`when`(`when < elapsed`), the original code returns`Elapsed`and triggers immediately, while after the change it is inserted into a slot that has already passed,`next_expiration`may return`deadline < elapsed`，`set_elapsed`'s assert`elapsed <= when`will fail and panic[FACT:tokio/src/runtime/time/wheel/mod.rs:253-264]. So this equals sign is the key boundary that prevents the assert from failing.
 
-Q2: `process_at_time` 中 `WakeList` 满了之后为什么要 `drop(lock)` 再 `wake_all()` 再重新 `lock`？如果去掉这个 drop，在什么并发场景下会死锁？
+Q2: `process_at_time`In`WakeList`, after`drop(lock)`is full, why`wake_all()`then`lock`and then re-
 
-**参考解析**：`WakeList` 收集 Waker，满了之后必须唤醒一批以腾出空间 [FACT:tokio/src/runtime/time/mod.rs:318-325](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L318-L325)。如果持有 `self.inner.lock()` 时调用 `waker.wake()`，被唤醒的任务可能立即在另一个线程（或同一线程的调度器）上运行，调用 `Sleep::reset` 或 `Sleep::poll_elapsed`，进而调用 `Handle::reregister`，而 `reregister` 的第一件事就是 `self.inner.lock()` [FACT:tokio/src/runtime/time/mod.rs:405](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L405)。由于 `std::sync::Mutex` 不可重入，同一线程会死锁；即使在不同线程，也会阻塞直到 `process_at_time` 释放锁，而 `process_at_time` 正等着 `wake_all` 返回，形成循环等待。注释明确说「To avoid deadlock, we must do this with the lock temporarily dropped」[FACT:tokio/src/runtime/time/mod.rs:319](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/time/mod.rs#L319)。drop 后重新 lock 时，时间轮状态可能已被其他线程修改（比如新定时器插入），所以 `while let Some(entry) = lock.wheel.poll(now)` 会继续从新状态取条目，这是安全的。
+**? If this drop is removed, in what concurrency scenario would it deadlock?**：`WakeList`Reference analysis[FACT:tokio/src/runtime/time/mod.rs:318-325]collects Wakers, and once full it must wake a batch to free up space`self.inner.lock()`. If`waker.wake()`is called while holding`Sleep::reset`, the awakened task may immediately run on another thread (or the same thread's scheduler), calling`Sleep::poll_elapsed`or`Handle::reregister`, and then calling`reregister`, while the first thing`self.inner.lock()` [FACT:tokio/src/runtime/time/mod.rs:405]does is`std::sync::Mutex`. Since`process_at_time`is not reentrant, the same thread will deadlock; even on a different thread, it will block until`process_at_time`releases the lock, while`wake_all`is waiting for[FACT:tokio/src/runtime/time/mod.rs:319]to return, forming a circular wait. The comment explicitly says "To avoid deadlock, we must do this with the lock temporarily dropped"`while let Some(entry) = lock.wheel.poll(now)`. When re-locking after the drop, the timer wheel state may have been modified by other threads (such as a new timer being inserted), so
 
-Q3: `Timeout::poll` 中 `had_budget_before` 和 `has_budget_now` 的组合判断 `(true, false)` 为什么只在「进入时有预算、poll 完 value 后没预算」时才用 `with_unconstrained`？如果反过来 `(false, true)` 会怎样？
+Q3: `Timeout::poll`will continue to take entries from the new state, which is safe.`had_budget_before`In`has_budget_now`, the combined judgment of`(true, false)`and`with_unconstrained`why is it only used when "there is budget on entry, and no budget after polling value"`(false, true)`? What if it were reversed
 
-**参考解析**：`had_budget_before` 在 poll value 之前记录 [FACT:tokio/src/time/timeout.rs:208-208](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L208-L208)，`has_budget_now` 在 poll value 之后记录 [FACT:tokio/src/time/timeout.rs:239](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L239)。`(true, false)` 意味着预算是在 poll value 期间耗尽的，说明 value 是「预算消耗者」。此时如果用受限预算 poll delay，`poll_proceed` 会立即返回 `Pending`，delay 永远不会被真正检查，超时判断失效。所以用 `with_unconstrained` 临时解除限制 [FACT:tokio/src/time/timeout.rs:247](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/time/timeout.rs#L247)。`(false, true)` 不可能发生——预算只能被消耗，不能被恢复（除非显式 `with_unconstrained`，但这里没有）。`(false, false)` 意味着进入时就没预算，此时 poll value 可能已经返回 `Pending`（因为 `poll_proceed` 失败），delay 也用受限预算 poll，两者都 pending，符合预期。`(true, true)` 是正常情况，预算充足，直接 poll delay。
+**?**：`had_budget_before`Reference analysis[FACT:tokio/src/time/timeout.rs:208-208]，`has_budget_now`records[FACT:tokio/src/time/timeout.rs:239]。`(true, false)`before polling value, and records`poll_proceed`after polling value.`Pending`means the budget was exhausted during polling value, indicating that value is a "budget consumer." At this point, if delay is polled with a restricted budget,`with_unconstrained`will immediately return[FACT:tokio/src/time/timeout.rs:247]。`(false, true)`, delay will never actually be checked, and timeout judgment becomes ineffective. So using`with_unconstrained`to temporarily lift the restriction`(false, false)`cannot happen—the budget can only be consumed, not restored (unless explicitly`Pending`, but that is not the case here).`poll_proceed`means there was no budget on entry, at which point polling value may already have returned`(true, true)`(because
 
-至此，我们已经看清时间驱动如何复用 I/O driver 的 park/unpark 机制，让定时器与 fd 就绪共享同一个等待入口。时间轮的分级、到期计算与 Waker 触发，构成了异步运行时处理「时间就绪」的完整闭环。但异步等待不止于 I/O 与时间——当多个任务竞争同一把锁、或通过通道传递消息时，Waker 又该被存放到哪里？下一章我们将进入 tokio::sync 家族，看看 Mutex、Semaphore 与各类通道如何在「等待者队列 + Waker 唤醒」上做出不同取舍。
+failed), and delay is also polled with a restricted budget, both pending, as expected.

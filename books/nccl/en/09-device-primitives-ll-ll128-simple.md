@@ -1,73 +1,73 @@
-# Chapter 09: Device Primitives: Data Transport in LL, LL128 & Simple Protocols
+# Chapter 9: Device-Side Communication Primitives: Data Transport Implementation of the Three Protocols LL, LL128, and Simple
 
+In the previous chapter, we traced how the host side translates an AllReduce into a __global__ kernel, and saw that the device-side entry point ncclKernelMain dispatches based on algorithm and protocol. But dispatch only selects the tool; what truly determines performance is how these tools execute data movement. This chapter dives deep into the three sets of data movement primitives under src/device: LL, LL128, and Simple, dissecting their data movement implementations one by one to understand the trade-offs different protocols make between latency and bandwidth.
 
-上一章我们追踪了 host 侧如何将一次 AllReduce 翻译成 __global__ kernel，并看到设备侧入口 ncclKernelMain 根据算法与协议完成分发。但分发只是选定了工具，真正决定性能的是这些工具如何执行数据搬运。本章深入 src/device 下的三套搬运原语：LL、LL128 和 Simple，逐一剖析它们的数据搬运实现，理解不同协议在延迟与带宽之间的取舍。
+# Why the same AllReduce needs three sets of data movement primitives
 
-## 为什么同一份 AllReduce 需要三套搬运原语
+Let's first build an intuitive model. Imagine a pipeline factory: raw materials (user data) enter from one end, finished products exit from the other, and in between there are several workstations (ranks) that need to exchange semi-finished products with each other. There are three ways to move semi-finished products:
 
-先建立一个Intuitive Architectural Model。想象一条流水线工厂：原料（用户数据）从一端进，成品从另一端出，中间有若干工位（rank）要互相交换半成品。搬运半成品的方式有三种：
+- **LL（Low Latency）**: Like two people passing a note face-to-face; the moment it's handed over, the other person knows "this is for you," with almost zero handshake overhead. But the note is very small—only 8 bytes of effective data can be passed at a time. Suitable for small messages.
+- **LL128**: Replace the note with a 128-byte sticky note, passing 120 bytes of effective data at a time, but the sticky note must be placed 16-byte aligned, otherwise it must first be "re-laid out" in shared memory. Suitable for medium messages.
+- **Simple**: Like a parcel locker—first put the package into the locker (FIFO buffer), then send a notification "locker number N has goods." Handshake overhead is high, but a lot can be moved at once. Suitable for large messages.
 
-- **LL（Low Latency）**：像两个人面对面递纸条，递过去的同时对方就知道「这是给你的」，几乎零握手开销。但纸条很小，一次只能递 8 字节有效数据。适合小消息。
-- **LL128**：把纸条换成 128 字节的便签纸，一次递 120 字节有效数据，但要求便签纸必须 16 字节对齐摆放，否则要先在共享内存里「重新排版」。适合中等消息。
-- **Simple**：像快递柜，先把包裹放进柜子（FIFO 缓冲区），再发一条「第 N 号柜有货」的通知。握手开销大，但一次能搬很多。适合大消息。
+> **[Design Inference & Architectural Trade-offs]**
+> What if there were only one set of primitives? With only LL, large messages would crush bandwidth because "every message must wait for the other side to confirm the flag"; with only Simple, small messages would explode in latency due to the fixed overhead of "write FIFO + send notification + wait for notification." This is the root cause of why NCCL's performance curve has obvious inflection points around 8KB and 128KB.
 
-[INFERENCE] 如果只有一套原语会怎样？只用 LL，大消息会因为「每条消息都要等对方确认 flag」而把带宽压死；只用 Simple，小消息会因为「写 FIFO + 发通知 + 等通知」的固定开销而延迟爆炸。NCCL 的性能曲线之所以在 8KB、128KB 附近有明显的拐点，根源就在这里。
-
-三套原语共享同一个模板骨架 `Primitives<T, RedOp, Fan, Direct, Proto, P2p, isNetOffload>`，通过 `Proto` 这个模板参数特化出三个版本 [FACT:src/device/primitives.h:117-117](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/primitives.h#L117-L117)。`ProtoLL`、`ProtoLL128`、`ProtoSimple` 三个结构体各自携带协议相关的常量与计算方法 [FACT:src/device/primitives.h:25-75](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/primitives.h#L25-L75)，算法代码只调用 `prims.send()`、`prims.recvReduceSend()` 这类统一接口，不关心底层是哪种协议。
+The three sets of primitives share the same template skeleton`Primitives<T, RedOp, Fan, Direct, Proto, P2p, isNetOffload>`, and through`Proto`this template parameter, three versions are specialized[FACT:src/device/primitives.h:117-117]。`ProtoLL`、`ProtoLL128`、`ProtoSimple`The three structs each carry protocol-related constants and computation methods[FACT:src/device/primitives.h:25-75], and the algorithm code only calls`prims.send()`、`prims.recvReduceSend()`unified interfaces like these, without caring which protocol underlies them.
 
 ```mermaid
 flowchart TD
-    algo["算法层 all_reduce.h<br/>调用 prims.recvReduceSend()"] --> dispatch{"Proto 模板参数?"}
-    dispatch -->|ProtoLL| ll["Primitives&lt;..., ProtoLL, ...&gt;<br/>prims_ll.h"]
-    dispatch -->|ProtoLL128| ll128["Primitives&lt;..., ProtoLL128, ...&gt;<br/>prims_ll128.h"]
-    dispatch -->|ProtoSimple| simple["Primitives&lt;..., ProtoSimple&lt;...&gt;, ...&gt;<br/>prims_simple.h"]
-    ll --> llop["LLGenericOp&lt;RECV,SEND,SrcBuf,DstBuf&gt;"]
-    ll128 --> ll128op["GenericOp -&gt; recvReduceSendCopy"]
-    simple --> simpleop["genericOp -&gt; waitPeer / reduceCopy / postPeer"]
+    algo["算法层 all_reduce.h调用 prims.recvReduceSend()"] --> dispatch{"Proto 模板参数?"}
+    dispatch -->|ProtoLL| ll["Primitives<..., ProtoLL, ...>prims_ll.h"]
+    dispatch -->|ProtoLL128| ll128["Primitives<..., ProtoLL128, ...>prims_ll128.h"]
+    dispatch -->|ProtoSimple| simple["Primitives<..., ProtoSimple<...>, ...>prims_simple.h"]
+    ll --> llop["LLGenericOp<RECV,SEND,SrcBuf,DstBuf>"]
+    ll128 --> ll128op["GenericOp -> recvReduceSendCopy"]
+    simple --> simpleop["genericOp -> waitPeer / reduceCopy / postPeer"]
 ```
 
-这张图说明了「同一份 AllReduce 逻辑为什么需要三套搬运原语」：算法层是协议无关的，协议差异被封装在 `Primitives` 的三个特化里。
+This diagram explains "why the same AllReduce logic needs three sets of data movement primitives": the algorithm layer is protocol-agnostic, and protocol differences are encapsulated in`Primitives`the three specializations.
 
-## LL：用 flag 内嵌在数据行里的零握手搬运
+# LL: zero-handshake data movement with flags embedded in data lines
 
-### Intuitive Architectural Model
+## Intuitive model
 
-LL 的核心思想是：**把「数据」和「数据是否就绪」的标记塞进同一个 16 字节的读写单元**。接收方不需要额外的「通知消息」，只要轮询数据行里的 flag 字段，flag 匹配就说明数据到了。这就像寄信时把「收件人签名」直接印在信封上，邮递员一看签名就知道该不该投递，不需要另发一张签收单。
+The core idea of LL is:**pack "data" and the marker for "whether the data is ready" into the same 16-byte read/write unit**. The receiver does not need an extra "notification message"; it only needs to poll the flag field in the data line, and a flag match means the data has arrived. This is like printing the "recipient signature" directly on the envelope when sending a letter—the mail carrier can tell at a glance whether it should be delivered, without sending a separate receipt.
 
-如果没有这个设计，接收方就得先等一个「数据已写入」的通知，再回头读数据，两次内存往返，延迟翻倍。
+Without this design, the receiver would have to first wait for a "data has been written" notification, then go back and read the data—two memory round trips, doubling latency.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-LL 的搬运单元是 `union ncclLLFifoLine`，从 `storeLL` 的汇编可以看出它的布局 [FACT:src/device/prims_ll.h:154-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L154-L158)：
+LL's data movement unit is`union ncclLLFifoLine`, and from`storeLL`'s assembly we can see its layout[FACT:src/device/prims_ll.h:154-158]：
 
 ```
 st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};
 // 写入 4 个 u32：data1, flag, data2, flag
 ```
 
-一个 `ncclLLFifoLine` 是 16 字节，排布为 `[data1(4B) | flag(4B) | data2(4B) | flag(4B)]`。有效数据只有 8 字节（data1 + data2），另外 8 字节全是 flag。这就是 `ProtoLL::calcBytePerGrain()` 返回 `sizeof(uint64_t)` 的原因——「One 16-byte line has 8-bytes of data」[FACT:src/device/primitives.h:55-57](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/primitives.h#L55-L57)。
+One`ncclLLFifoLine`is 16 bytes, arranged as`[data1(4B) | flag(4B) | data2(4B) | flag(4B)]`. Only 8 bytes are effective data (data1 + data2); the other 8 bytes are all flag. This is why`ProtoLL::calcBytePerGrain()`returns`sizeof(uint64_t)`—"One 16-byte line has 8-bytes of data"[FACT:src/device/primitives.h:55-57]。
 
-关键字段（`Primitives` 的 LL 特化）[FACT:src/device/prims_ll.h:20-42](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L20-L42)：
+Key fields (`Primitives`'s LL specialization)[FACT:src/device/prims_ll.h:20-42]：
 
-| 字段 | 类型 | 作用 |
-|------|------|------|
-| `recvStep[i]` / `sendStep[i]` | `uint64_t[MaxRecv/MaxSend]` | 每个 peer 的步进计数，决定缓冲区偏移和 flag 值 |
-| `recvBuff[i]` / `sendBuff[i]` | `ncclLLFifoLine*` | 指向每个 peer 的 FIFO 缓冲区基址 |
-| `recvConnHeadPtr` | `volatile uint64_t*` | 接收侧「已消费到第几步」的全局指针 |
-| `sendConnHeadPtr` | `volatile uint64_t*` | 发送侧「对端已消费到第几步」的全局指针 |
-| `sendConnHeadCache` | `uint64_t` | 缓存上次读到的 head 值，避免每次都读全局内存 |
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `recvStep[i]` / `sendStep[i]` | `uint64_t[MaxRecv/MaxSend]` | Per-peer step counter, determining buffer offset and flag value |
+| `recvBuff[i]` / `sendBuff[i]` | `ncclLLFifoLine*` | Points to each peer's FIFO buffer base address |
+| `recvConnHeadPtr` | `volatile uint64_t*` | Global pointer on the receive side for "how many steps have been consumed" |
+| `sendConnHeadPtr` | `volatile uint64_t*` | Global pointer on the send side for "how many steps the peer has consumed" |
+| `sendConnHeadCache` | `uint64_t` | Caches the last read head value to avoid reading global memory every time |
 
-缓冲区偏移由 `recvOffset(i) = (recvStep[i] % NCCL_STEPS) * stepLines` 计算 [FACT:src/device/prims_ll.h:44-46](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L44-L46)，`NCCL_STEPS` 是环形缓冲区的槽位数，`stepLines` 是每槽的行数。flag 值由 `recvFlag(i) = NCCL_LL_FLAG(recvStep[i] + 1)` 计算 [FACT:src/device/prims_ll.h:56-58](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L56-L58)，注意 `+1`——因为 flag 初值是 0，第一步的 flag 必须是 1 才能和「未写入」区分开。
+The buffer offset is computed by`recvOffset(i) = (recvStep[i] % NCCL_STEPS) * stepLines`is the number of slots in the ring buffer,[FACT:src/device/prims_ll.h:44-46]，`NCCL_STEPS`is the number of lines per slot. The flag value is computed by`stepLines`, note`recvFlag(i) = NCCL_LL_FLAG(recvStep[i] + 1)`—because the initial flag value is 0, the first step's flag must be 1 to distinguish it from "not written."[FACT:src/device/prims_ll.h:56-58]Scenario-driven Walkthrough: a recvReduceSend`+1`Suppose rank 0 executes
 
-### 场景驱动 Walkthrough：一次 recvReduceSend
+## in Ring AllReduce: receive data from the previous rank, reduce it with local data, then send it to the next rank. The call chain is
 
-假设 rank 0 在 Ring AllReduce 中执行 `recvReduceSend`：从上一个 rank 收数据、和本地数据做 reduce、再发给下一个 rank。调用链是 `recvReduceSend(inpIx, eltN)` → `LLGenericOp<1, 1, Input, -1>(inpIx, -1, eltN, false)` [FACT:src/device/prims_ll.h:403-405](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L403-L405)。
+Step 1: Wait for the send buffer to become available.`recvReduceSend`checks`recvReduceSend(inpIx, eltN)` → `LLGenericOp<1, 1, Input, -1>(inpIx, -1, eltN, false)` [FACT:src/device/prims_ll.h:403-405]。
 
-**第一步：等待发送缓冲区可用。** `waitSend` 检查 `sendConnHeadCache + NCCL_STEPS < sendConnHead + 1` [FACT:src/device/prims_ll.h:73-89](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L73-L89)。含义是：如果对端消费进度（head）落后我太多，说明环形缓冲区快满了，必须等。`NCCL_STEPS` 是缓冲区总槽数，`sendConnHead + 1` 是我即将占用的槽位。等待时轮询 `*sendConnHeadPtr` 更新缓存，并周期性调用 `checkAbort` 检查是否被 abort [FACT:src/device/prims_ll.h:73-89](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L73-L89)。
+**. The meaning is: if the peer's consumption progress (head) lags too far behind me, the ring buffer is almost full, and I must wait.** `waitSend`is the total number of buffer slots,`sendConnHeadCache + NCCL_STEPS < sendConnHead + 1` [FACT:src/device/prims_ll.h:73-89]is the slot I am about to occupy. While waiting, poll`NCCL_STEPS`to update the cache, and periodically call`sendConnHead + 1`to check whether it has been aborted`*sendConnHeadPtr`Step 2: Load local data.`checkAbort`handles the alignment problem[FACT:src/device/prims_ll.h:73-89]。
 
-**第二步：加载本地数据。** `DataLoader::loadBegin` 处理对齐问题 [FACT:src/device/prims_ll.h:200-216](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L200-L216)。当 `sizeof(T) <= 2`（比如 half 或 int8），源地址可能不是 4 字节对齐，所以先按 4 字节对齐读入 `u4[0..2]`，记录 `misalign`，然后在 `loadFinish` 里用 `__funnelshift_r` 做字节级移位拼出正确的 64 位值 [FACT:src/device/prims_ll.h:218-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L218-L225)。这是一个典型的「对齐读 + 移位重组」技巧，避免了非对齐访问的性能惩罚。
+**. When** `DataLoader::loadBegin`(such as half or int8), the source address may not be 4-byte aligned, so first read it into[FACT:src/device/prims_ll.h:200-216]with 4-byte alignment, record`sizeof(T) <= 2`, and then in`u4[0..2]`use`misalign`to perform byte-level shifts and assemble the correct 64-bit value`loadFinish`. This is a typical "aligned read + shift reassembly" technique, avoiding the performance penalty of unaligned access.`__funnelshift_r`Step 3: Read peer data and wait for the flag.[FACT:src/device/prims_ll.h:218-225]is the core
 
-**第三步：读对端数据并等 flag。** `readLL` 是核心 [FACT:src/device/prims_ll.h:108-122](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L108-L122)：
+**Copy** `readLL`It uses[FACT:src/device/prims_ll.h:108-122]：
 
 ```cpp
 do {
@@ -76,264 +76,88 @@ do {
 } while ((flag1 != flag) || (flag2 != flag));
 ```
 
-它用 `ld.volatile.global.v4.u32` 一次性读 16 字节（4 个 u32），然后检查两个 flag 字段是否都等于期望值。`volatile` 关键字确保编译器不会把这个读优化掉或缓存到寄存器——因为对端可能随时写入新数据。两个 flag 都要匹配，是因为写入方 `storeLL` 一次写 4 个 u32，理论上可能被拆成两次 8 字节写，两个 flag 都匹配才能保证 16 字节完整。
+它用 `ld.volatile.global.v4.u32`Read 16 bytes at once (4 u32s), then check whether both flag fields equal the expected values.`volatile`The keyword ensures the compiler will not optimize away this read or cache it in a register—because the peer may write new data at any time. Both flags must match because the writer`storeLL`writes 4 u32s at once, which in theory may be split into two 8-byte writes. Only when both flags match can the 16 bytes be guaranteed complete.
 
-**第四步：reduce 并发送。** 收到 peerData 后，`applyReduce(redOp, peerData, data)` 做归约 [FACT:src/device/prims_ll.h:279](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L279)。然后 `storeLL(sendPtr(i) + offset, data, sendFlag(i))` 把结果写入发送缓冲区 [FACT:src/device/prims_ll.h:295-296](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L295-L296)。注意发送顺序：先发 `i=1..MaxSend`（通常是网络 peer），最后发 `i=0`（通常是本地 peer）[FACT:src/device/prims_ll.h:291-297](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L291-L297)。注释写得很清楚：「Send : inter-node, then intra-node, then local」——先发慢的（网络），让它在后台飞，再发快的（本地），这样本地 peer 不会等网络。
+**Step 4: reduce and send.**After receiving peerData,`applyReduce(redOp, peerData, data)`perform the reduction[FACT:src/device/prims_ll.h:279]. Then`storeLL(sendPtr(i) + offset, data, sendFlag(i))`write the result to the send buffer[FACT:src/device/prims_ll.h:295-296]. Note the send order: first send`i=1..MaxSend`(usually the network peer), and finally send`i=0`(usually the local peer)[FACT:src/device/prims_ll.h:291-297]. The comment is very clear: "Send : inter-node, then intra-node, then local"—send the slow one (network) first so it can fly in the background, then send the fast one (local), so the local peer does not wait for the network.
 
-**第五步：推进 step 并 post。** `incRecv(i)` 递增接收步进 [FACT:src/device/prims_ll.h:91-93](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L91-L93)，`postRecv()` 把 `recvConnHead` 写回全局指针 [FACT:src/device/prims_ll.h:94-97](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L94-L97)，通知对端「我已经消费了这一步」。发送侧 `incSend` 有个特殊逻辑 [FACT:src/device/prims_ll.h:99-106](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L99-L106)：
+**Step 5: advance step and post.** `incRecv(i)`Increment the receive step[FACT:src/device/prims_ll.h:91-93]，`postRecv()`and write`recvConnHead`back to the global pointer[FACT:src/device/prims_ll.h:94-97], notifying the peer "I have consumed this step." On the send side,`incSend`there is special logic[FACT:src/device/prims_ll.h:99-106]：
 
 ```cpp
 if ((sendStep[i] & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) {
-  for (int o = offset; o < stepLines; o += nthreads) storeLL(sendPtr(i) + o, 0, sendFlag(i));
+  for (int o = offset; o  *head) { ... }
 }
 ```
 
-当 step 到达 `NCCL_LL_CLEAN_MASK` 边界时，要把整个 slice 的所有行都用当前 flag 写一遍（数据填 0）。为什么？因为 flag 是循环复用的，如果某一行上次的 flag 恰好等于这次的期望值，接收方会误以为数据已就绪。这个「cleanup」操作把所有行的 flag 统一刷成新值，消除歧义。
+In DirectRead mode of sendrecv, the sender must wait for the receiver to finish reading the data before returning. If the receiver does not advance tail for some reason, the sender will deadlock. This wait must be done after`barrier()`otherwise it may race with the post thread.
 
-### 并发控制与硬件交互
+**Pitfall 3:`roundUp`The resulting step jump.** `loadRecvConn`and`loadSendConn`both contain`step = roundUp(step, SlicePerChunk * StepPerSlice)` [FACT:src/device/prims_simple.h:486, 533]. This aligns step to the slice boundary, but if the previous step is not aligned, it causes skipped slots to not be initialized correctly. The code adds a line in`loadRecvConn`to return credit`*connStepPtr = step`Comparison and selection of the three primitive sets[FACT:src/device/prims_simple.h:489]。
 
-LL 的同步完全靠 `volatile` 读写 + flag 轮询，没有锁。`barrier()` 用 `__syncwarp()`（单 warp 时）或 `barrier_sync(15 - group, nthreads)`（多 warp 时）[FACT:src/device/prims_ll.h:63-69](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L63-L69)。`15 - group` 是 barrier 编号，NCCL 用不同的 barrier 编号隔离不同的 group，避免相互干扰。
-
-`checkAbort` 是防死循环的关键 [FACT:src/device/primitives.h:154-164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/primitives.h#L154-L164)：每 `NCCL_SPINS_BEFORE_CHECK_ABORT`（10000）次自旋才读一次 `abortFlag`，避免频繁读全局内存拖慢热路径。一旦发现 abort，设置 `ncclShmem.aborted` 并缓存，后续所有等待循环都会快速退出。
-
-### 生产踩坑
-
-**坑 1：flag 回绕导致的假就绪。** 如果 `NCCL_LL_CLEAN_MASK` 的 cleanup 逻辑被去掉，在长时间运行（step 超过 mask 周期）后，接收方可能读到上一轮残留的 flag，误判数据就绪，读到脏数据。这类 bug 极难复现，因为它依赖 step 恰好回绕到特定值。
-
-**坑 2：`MaxRecv == 0` 的编译陷阱。** 代码里 `MaxRecv = Fan::MaxRecv > 1 ? Fan::MaxRecv : 1` [FACT:src/device/prims_ll.h:13](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L13)，因为即使只发不收，也会分配一个长度为 MaxRecv 的接收缓冲区，如果 MaxRecv 是 0 会导致零长度数组编译失败。Windows 上 `MaxSend` 也有同样处理 [FACT:src/device/prims_ll.h:14-19](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L14-L19)。
-
-## LL128：用 128 字节对齐换取更高有效载荷
-
-### Intuitive Architectural Model
-
-LL 的痛点是有效载荷只有 50%（16 字节里 8 字节是 flag）。LL128 的思路是：**把 flag 集中到每 128 字节的最后 8 字节，前面 120 字节全是数据**。这样有效载荷从 50% 提升到 93.75%。代价是必须保证 128 字节对齐，否则要做「共享内存重排版」。
-
-### Data Structures & Memory Layout
-
-LL128 的搬运单元是 `uint64_t`（8 字节），但组织成 128 字节的「line」。`NCCL_LL128_LINEELEMS` 是每 line 的 64 位元素数（16 个），`NCCL_LL128_DATAELEMS` 是其中数据元素数（15 个），最后一个元素放 flag。
-
-关键常量 [FACT:src/device/prims_ll128.h:292-294](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L292-L294)：
-
-```cpp
-static constexpr int WireWordPerSlice = WARP_SIZE * NCCL_LL128_SHMEM_ELEMS_PER_THREAD;
-static constexpr int DataEltPerSlice =
-  (WireWordPerSlice - WireWordPerSlice / NCCL_LL128_LINEELEMS) * (sizeof(uint64_t) / sizeof(T));
-```
-
-`WireWordPerSlice` 是一个 warp 一次搬运的 64 位字数，`DataEltPerSlice` 是其中有效数据元素数（减去每 line 一个 flag 元素）。
-
-LL128 的 flag 机制和 LL 不同：**只有每 8 个线程中的第 7 个（`flagThread`）负责检查 flag** [FACT:src/device/prims_ll128.h:373](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L373)。`flagThread = ((tid % 8) == 7)`。为什么？因为 flag 是每 128 字节一个，而一个 warp 有 32 个线程，每 8 个线程处理 128 字节（8 线程 × 16 字节 = 128 字节），所以每 8 个线程里只有 1 个需要读 flag。
-
-### 场景驱动 Walkthrough：一次 recvReduceSendCopy
-
-调用链：`recvReduceSend(inpIx, eltN)` → `GenericOp<1, 1, Input, -1>` → `recvReduceSendCopy<NCCL_LL128_SHMEM_ELEMS_PER_THREAD, RECV, SEND, SrcBuf, DstBuf>` [FACT:src/device/prims_ll128.h:422-423, 296-333](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L422-L423, 296-333)。
-
-**第一步：加载本地数据到寄存器。** `loadRegsBegin` 分两种情况 [FACT:src/device/prims_ll128.h:99-142](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L99-L142)：
-
-- **16 字节对齐**：直接 `load128` 到寄存器，无共享内存中转。注意 `flagThread` 只加载一半数据（`g % 2 == 0`），因为它的另一半寄存器要留给 flag [FACT:src/device/prims_ll128.h:109-114](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L109-L114)。
-- **非对齐**：先把对齐区域加载到共享内存 `ncclScratchForWarp(warpInBlock)`，`__syncwarp()` 后从共享内存按正确偏移读回寄存器 [FACT:src/device/prims_ll128.h:115-141](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L115-L141)。
-
-**第二步：等待并读取对端数据。** `recvReduceSendCopy` 里的等待循环 [FACT:src/device/prims_ll128.h:190-207](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L190-L207)：
-
-```cpp
-do {
-  needReload = false;
-  for (int u = 0; u < ELEMS_PER_THREAD; u += 2) {
-    load128(ptr + u * WARP_SIZE, vr[u], vr[u + 1]);
-    needReload |= flagThread && (vr[u + 1] != flag);
-  }
-  needReload &= (0 == checkAbort(abort, 1, spins));
-} while (__any_sync(WARP_MASK, needReload));
-```
-
-关键点：只有 `flagThread` 检查 flag，然后用 `__any_sync` 做 warp 级投票——只要有一个 flagThread 发现 flag 不匹配，整个 warp 继续自旋。这比每个线程都检查 flag 更省指令。
-
-**第三步：寄存器重排。** `loadRegsFinish` 把 flagThread 的 flag 寄存器移到空闲寄存器 [FACT:src/device/prims_ll128.h:145-151](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L145-L151)。注释解释了这个设计：「By deferring register shuffle here we've overlapped spinning on first peer's data with memory loads of src data」——把寄存器重排推迟到等待之后，让等待时间和本地数据加载重叠。
-
-**第四步：reduce 并发送。** 收到数据后做 `applyReduce` [FACT:src/device/prims_ll128.h:227-230](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L227-L230)，然后 `store128` 写入发送缓冲区 [FACT:src/device/prims_ll128.h:274-287](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L274-L287)。注意发送时 `flagThread ? flag : v[u+1]`——flagThread 写 flag，其他线程写数据。
-
-**第五步：推进 step。** 和 LL 不同，LL128 的 step 推进在 `GenericOp` 末尾统一做 [FACT:src/device/prims_ll128.h:324-332](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L324-L332)，而不是在 `recvReduceSendCopy` 里。而且 `postSend` 用了 `__threadfence_system()`（SM90+）或 `__threadfence()` [FACT:src/device/prims_ll128.h:87-96](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L87-L96)，确保数据对其他 GPU/网卡可见后才更新 tail 指针。
-
-### 并发控制与硬件交互
-
-LL128 的 `barrier()` 总是用 `barrier_sync(15 - group, nthreads)` [FACT:src/device/prims_ll128.h:64-66](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L64-L66)，不像 LL 有单 warp 优化。因为 LL128 的数据搬运是 warp 级的，需要跨 warp 同步。
-
-`loadRegsBegin` 里的共享内存重排版用 `__syncwarp()` 同步 [FACT:src/device/prims_ll128.h:129](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L129)，确保所有线程写完共享内存后再读。
-
-### 生产踩坑
-
-**坑 1：非对齐访问的性能悬崖。** 如果用户缓冲区不是 16 字节对齐，每次搬运都要走共享内存中转，性能可能下降 30% 以上。生产环境应确保输入输出缓冲区按 16 字节对齐分配。
-
-**坑 2：`flagThread` 的寄存器压力。** flagThread 只加载一半数据，意味着它的寄存器利用率和其他线程不同。如果编译器没有正确分配寄存器，可能导致寄存器溢出到本地内存，性能骤降。
-
-## Simple：用 FIFO + 通知实现大消息高吞吐
-
-### Intuitive Architectural Model
-
-Simple 协议像快递柜：发送方把数据放进 FIFO 缓冲区（柜子），然后更新一个「已放入第 N 号柜」的 step 指针（发通知）；接收方轮询 step 指针，看到新值就去对应柜子取货。握手开销大（要写指针 + 读指针），但一次能搬很多数据，适合大消息。
-
-### Data Structures & Memory Layout
-
-Simple 的字段比 LL/LL128 复杂得多 [FACT:src/device/prims_simple.h:28-46](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L28-L46)：
-
-| 字段 | 类型 | 作用 |
-|------|------|------|
-| `flags` | `int` | 位标志，编码角色（WaitRecv/WaitSend/PostRecv/PostSend）、Direct 模式、NetReg 等 |
-| `step` | `uint64_t` | 当前步进 |
-| `connStepPtr` | `uint64_t*` | 指向连接的对端 step 指针 |
-| `connStepCache` | `uint64_t` | 缓存上次读到的 step 值 |
-| `connEltsFifo` | `T*` | FIFO 缓冲区基址 |
-| `connStepSize` | `int` | 每步的字节数 |
-| `directBuff` | `T*` | Direct 模式下的直接缓冲区指针 |
-
-`flags` 的位定义 [FACT:src/device/prims_simple.h:23-27](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L23-L27)：
-
-```cpp
-RoleInput = 0x01, RoleOutput = 0x02, RoleWaitRecv = 0x04, RoleWaitSend = 0x08,
-RolePostSend = 0x10, RolePostRecv = 0x20, Aborted = 0x40, NetRegMode = 0x80,
-ConnFifoEnabled = 0x100, DirectWrite = 0x200, DirectRead = 0x400, PatMode = 0x800,
-NvlsMinPolling = 0x1000, NetDeviceUnpack = 0x2000, AnyNetDeviceUnpack = 0x4000,
-RoleWaitPatNvls = 0x8000, RolePostPatNvls = 0x10000;
-```
-
-这是一个典型的「用位运算代替多个 bool 字段」的设计，节省寄存器。每个线程根据自己的 `tid` 被分配一个角色 [FACT:src/device/prims_simple.h:651-666](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L651-L666)：前 `nrecv` 个线程是 WaitRecv，接下来 `nsend` 个是 WaitSend，最后 `nrecv` 个是 PostRecv，倒数 `nsend` 个是 PostSend。
-
-### 场景驱动 Walkthrough：一次 recvReduceSend
-
-调用链：`recvReduceSend(inpIx, eltN)` → `genericOp<0, 0, 1, 1, Input, -1>` [FACT:src/device/prims_simple.h:994-996](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L994-L996)。
-
-**第一步：计算 slice 大小。** `sliceSize = max(divUp(nelem, 16 * SlicePerChunk) * 16, sliceSize / 32)` [FACT:src/device/prims_simple.h:185-186](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L185-L186)。这个公式保证 slice 至少是 16 字节对齐，且不会太小。
-
-**第二步：worker 循环。** 只有 `tid < nworkers` 的线程进入主循环 [FACT:src/device/prims_simple.h:190](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L190)。`nworkers = nthreads - (MaxSend > 0 && nthreads >= NCCL_SIMPLE_EXTRA_GROUP_IF_NTHREADS_GE ? WARP_SIZE : 0)` [FACT:src/device/prims_simple.h:626](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L626)——预留一个 warp 做 threadfence 和 copy 的重叠。
-
-**第三步：等待对端。** `waitPeer` 是核心 [FACT:src/device/prims_simple.h:103-164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L103-L164)：
-
-```cpp
-while (connStepCache + (isSendNotRecv ? NCCL_STEPS : 0) < step + StepPerSlice) {
-  connStepCache = loadStepValue(connStepPtr);
-  if (checkAbort(flags, Aborted, spins)) break;
-}
-```
-
-`isSendNotRecv` 区分发送和接收：发送时等的是「对端已消费」（head），接收时等的是「对端已生产」（tail）。`NCCL_STEPS` 是缓冲区槽数，`StepPerSlice` 是每 slice 的步进数。
-
-等待完成后，根据 Direct 模式设置 `ptrs[index]` [FACT:src/device/prims_simple.h:123-158](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L123-L158)。Direct 模式允许直接读写对端缓冲区，绕过 FIFO，减少一次拷贝。
-
-**第四步：reduceCopy。** 根据 Direct 组合选择不同的 `reduceCopy` 调用 [FACT:src/device/prims_simple.h:241-277](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L241-L277)。最复杂的分支是 `srcs[0] && dsts[0]` 都存在时 [FACT:src/device/prims_simple.h:258-271](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L258-L271)，调用 `reduceCopy<Unroll, RedOp, T, MultimemSrcs, Recv+Src, Recv*MaxRecv+Src, MultimemDsts, Send+Dst, Send*MaxSend+Dst, PreOpSrcs>`，参数含义是：从 `Recv*MaxRecv+Src` 个源读，归约后写到 `Send*MaxSend+Dst` 个目的地。
-
-**第五步：postPeer。** `postPeer` 更新 step 指针 [FACT:src/device/prims_simple.h:167-175](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L167-L175)：
-
-```cpp
-if (Send && (flags & RolePostSend) && (dataStored || (flags & ConnFifoEnabled))) {
-  fence_acq_rel_sys();
-}
-st_relaxed_sys_global(connStepPtr, step);
-```
-
-发送侧在更新 step 前要 `fence_acq_rel_sys()`，确保数据写入对其他 GPU/网卡可见。接收侧不需要 fence，因为接收方只是通知「我已消费」，不涉及数据可见性。
-
-### 并发控制与硬件交互
-
-Simple 的同步用 `st_relaxed_sys_global` 写 step 指针 [FACT:src/device/prims_simple.h:167-175](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L167-L175)，用 `loadStepValue` 读 [FACT:src/device/prims_simple.h:86-100](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L86-L100)。`loadStepValue` 在 SM90+ 且启用 `NvlsMinPolling` 时用 `multimem.ld_reduce.acquire.sys.global.min.u64` 指令 [FACT:src/device/prims_simple.h:86-100](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L86-L100)，这是 NVLink SHARP 的硬件加速轮询。
-
-`barrier()` 和 `subBarrier()` 的区别 [FACT:src/device/prims_simple.h:49-55](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L49-L55)：`barrier()` 同步所有 `nthreads` 个线程，`subBarrier()` 只同步 `nworkers` 个 worker 线程。`subBarrier` 的 barrier 编号是 `15 - group - (nworkers != nthreads ? 1 : 0)`，当 worker 数不等于总线程数时用不同的 barrier，避免和 `barrier()` 冲突。
-
-### 生产踩坑
-
-**坑 1：NetRegMode 下的析构等待。** 析构函数里有一段特殊逻辑 [FACT:src/device/prims_simple.h:794-804](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L794-L804)：
-
-```cpp
-if ((flags & NetRegMode) && (flags & RoleWaitSend)) {
-  uint64_t prevStep = step - StepPerSlice;
-  volatile ssize_t* ptr = &(connFifo[prevStep % NCCL_STEPS].size);
-  while (*ptr != -1) { ... }
-}
-```
-
-在 NetRegMode 下，发送缓冲区被网卡直接访问，必须等 proxy 线程确认已发送（size 被设为 -1）才能返回，否则下一个 kernel 可能覆盖正在被网卡读取的数据。
-
-**坑 2：DirectRead 的 sendrecv 死锁。** 析构函数里还有一段 [FACT:src/device/prims_simple.h:814-824](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L814-L824)：
-
-```cpp
-if ((flags & DirectRead) && (flags & RoleWaitSend) && P2p) {
-  while (*tail > *head) { ... }
-}
-```
-
-在 sendrecv 的 DirectRead 模式下，发送方必须等接收方读完数据才能返回。如果接收方因为某种原因没有推进 tail，发送方会死锁。这个等待必须在 `barrier()` 之后做，否则可能和 post 线程竞争。
-
-**坑 3：`roundUp` 导致的 step 跳跃。** `loadRecvConn` 和 `loadSendConn` 里都有 `step = roundUp(step, SlicePerChunk * StepPerSlice)` [FACT:src/device/prims_simple.h:486, 533](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L486, 533)。这会把 step 对齐到 slice 边界，但如果上一步的 step 不是对齐的，会导致跳过的槽位没有被正确初始化。代码在 `loadRecvConn` 里补了一句 `*connStepPtr = step` 来归还 credit [FACT:src/device/prims_simple.h:489](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L489)。
-
-## 三套原语的对比与选型
+# Copy
 
 ```mermaid
 flowchart LR
     subgraph LL["LL 协议"]
-        ll_data["ncclLLFifoLine 16B<br/>data1(4B)+flag(4B)+data2(4B)+flag(4B)"]
-        ll_sync["flag 内嵌数据行<br/>轮询 flag 匹配"]
+        ll_data["ncclLLFifoLine 16Bdata1(4B)+flag(4B)+data2(4B)+flag(4B)"]
+        ll_sync["flag 内嵌数据行轮询 flag 匹配"]
     end
     subgraph LL128["LL128 协议"]
-        ll128_data["128B line<br/>15×8B data + 1×8B flag"]
-        ll128_sync["flagThread 每8线程1个<br/>__any_sync 投票"]
+        ll128_data["128B line15×8B data + 1×8B flag"]
+        ll128_sync["flagThread 每8线程1个__any_sync 投票"]
     end
     subgraph Simple["Simple 协议"]
-        simple_data["FIFO 缓冲区<br/>connEltsFifo + step*connStepSize"]
-        simple_sync["step 指针 + fence<br/>loadStepValue 轮询"]
+        simple_data["FIFO 缓冲区connEltsFifo + step*connStepSize"]
+        simple_sync["step 指针 + fenceloadStepValue 轮询"]
     end
     ll_data --> ll_sync
     ll128_data --> ll128_sync
     simple_data --> simple_sync
 ```
 
-| 维度 | LL | LL128 | Simple |
-|------|-----|-------|--------|
-| 有效载荷率 | 50% | 93.75% | ~100% |
-| 同步方式 | flag 内嵌，轮询 | flagThread + warp 投票 | step 指针 + fence |
-| 对齐要求 | 无（有移位重组） | 16 字节 | 无 |
-| 适用消息大小 | 小（< 8KB） | 中（8KB ~ 128KB） | 大（> 128KB） |
-| 缓冲区布局 | `ncclLLFifoLine[]` | `uint64_t[]` 按 128B line | `T[]` FIFO |
-| Direct 支持 | 无（`PrimitivesWithoutDirect` 降级） | 无（同左） | 完整支持 |
+| Effective payload rate | LL | LL128 | Simple |
+| --- | --- | --- | --- |
+| Synchronization method | 50% | 93.75% | ~100% |
+| flag embedded, polling | flagThread + warp vote | step pointer + fence | Alignment requirement |
+| None (with shift and reassembly) | 16 bytes | None | Applicable message size |
+| Small (< 8KB) | Medium (8KB ~ 128KB) | Large (> 128KB) | Buffer layout |
+| By 128B line | `ncclLLFifoLine[]` | `uint64_t[]`Direct support | `T[]` FIFO |
+| None ( | downgrade)`PrimitivesWithoutDirect`None (same as left) | Fully supported | Both LL and LL128 inherit |
 
-LL 和 LL128 都继承 `PrimitivesWithoutDirect` [FACT:src/device/prims_ll.h:9-10, src/device/prims_ll128.h:13-14](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L9-L10, src/device/prims_ll128.h:13-14)，因为它们的缓冲区布局不支持直接读写对端内存。Simple 则完整实现了 Direct 模式，支持 P2P 直连和 NVLS。
+because their buffer layouts do not support directly reading and writing peer memory. Simple fully implements Direct mode, supporting P2P direct connections and NVLS.`PrimitivesWithoutDirect` [FACT:src/device/prims_ll.h:9-10, src/device/prims_ll128.h:13-14]Design considerations
 
-## 设计思考
+# [Design inference and architectural tradeoffs]
 
-**为什么 LL 的 flag 要重复两次？** [INFERENCE] 因为 GPU 的全局内存写入不保证原子性。`storeLL` 写 16 字节，硬件可能拆成两次 8 字节写。如果只放一个 flag，接收方可能在数据只写了一半时就认为就绪。两个 flag 分别位于 16 字节的前半和后半，只有两次写都完成，两个 flag 才会都匹配。
+> **[Design Inference & Architectural Trade-offs]**
+> **Because GPU global memory writes are not guaranteed to be atomic.**For a 16-byte write, the hardware may split it into two 8-byte writes. If only one flag is placed, the receiver may consider the data ready when only half of it has been written. The two flags are located in the first half and second half of the 16 bytes respectively, so only when both writes are complete will both flags match.`storeLL`Why does Simple reserve one warp?
 
-**为什么 Simple 要预留一个 warp？** [FACT:src/device/prims_simple.h:625-626](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L625-L626) 注释说「For send operations, we need an extra warp to overlap the threadfence and the copy」。`fence_acq_rel_sys()` 是一个昂贵的操作，如果所有线程都等 fence 完成再继续，会浪费大量时间。预留一个 warp 专门做 fence，其他 warp 可以继续搬运下一批数据。
+**The comment says, "For send operations, we need an extra warp to overlap the threadfence and the copy."** [FACT:src/device/prims_simple.h:625-626]It is an expensive operation. If all threads wait for the fence to complete before continuing, a large amount of time will be wasted. Reserving one warp specifically for the fence allows the other warps to continue moving the next batch of data.`fence_acq_rel_sys()`[Design inference and architectural tradeoffs]
 
-**为什么 LL128 的 step 推进在 GenericOp 末尾而不是 recvReduceSendCopy 里？** [INFERENCE] 因为 LL128 的搬运是 warp 级的，多个 warp 可能并行处理不同的 slice。如果在 `recvReduceSendCopy` 里推进 step，每个 warp 都会推进一次，导致 step 被推进多次。放在 `GenericOp` 末尾统一推进，确保每个 slice 只推进一次。
+> **[Design Inference & Architectural Trade-offs]**
+> **Because LL128's transfer is warp-level, and multiple warps may process different slices in parallel. If step is advanced in**each warp will advance it once, causing step to be advanced multiple times. Placing the unified advancement at the end of`recvReduceSendCopy`ensures that each slice advances only once.`GenericOp`Chapter summary
 
-## 本章Summary
+# This chapter took a deep dive into the implementation of the three transfer primitive sets:
 
-本章深入了三套搬运原语的实现：
+: uses 16-byte
 
-1. **LL**：用 16 字节的 `ncclLLFifoLine` 把 flag 内嵌在数据行里，接收方轮询 flag 匹配即可确认数据就绪。有效载荷 50%，适合小消息。核心是 `readLL` 的 `ld.volatile.global.v4.u32` 和 `storeLL` 的 `st.volatile.global.v4.u32`。
+1. **LL**to embed the flag in the data row, and the receiver only needs to poll for a flag match to confirm that the data is ready. Payload is 50%, suitable for small messages. The core is`ncclLLFifoLine`'s`readLL`and`ld.volatile.global.v4.u32`'s`storeLL`: concentrates the flag into the last 8 bytes of every 128 bytes, increasing the payload to 93.75%. Uses`st.volatile.global.v4.u32`。
 
-2. **LL128**：把 flag 集中到每 128 字节的最后 8 字节，有效载荷提升到 93.75%。用 `flagThread`（每 8 线程 1 个）检查 flag，`__any_sync` 做 warp 投票。非对齐时走共享内存重排版。
+2. **LL128**(1 per 8 threads) to check the flag,`flagThread`and performs a warp vote. When unaligned, it goes through shared memory repacking.`__any_sync`: uses a FIFO buffer + step pointer notification to achieve high throughput for large messages.
 
-3. **Simple**：用 FIFO 缓冲区 + step 指针通知实现大消息高吞吐。`flags` 位标志编码角色，`waitPeer` 轮询 step，`postPeer` 更新 step 并 fence。完整支持 Direct 模式。
+3. **Simple**bit flags encode the role,`flags`polls step,`waitPeer`updates step and fences. Fully supports Direct mode.`postPeer`The three primitive sets share the same template skeleton, specialized through
 
-三套原语共享同一个模板骨架，通过 `Proto` 模板参数特化。算法层只调用统一接口，不关心底层协议。这就是「同一份 AllReduce 逻辑为什么需要三套搬运原语」的答案：不同消息大小需要不同的同步策略和缓冲区布局，三套原语分别针对小、中、大消息优化。
+template parameters. The algorithm layer only calls the unified interface and does not care about the underlying protocol. This is the answer to "why the same AllReduce logic needs three transfer primitive sets": different message sizes require different synchronization strategies and buffer layouts, and the three primitive sets are optimized for small, medium, and large messages respectively.`Proto`Chapter review questions
 
-## 本章思考与自测
+# Q1: If the cleanup logic in
 
-<details><summary>Q1: 如果把 `incSend` 里的 cleanup 逻辑（[FACT:src/device/prims_ll.h:99-106](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll.h#L99-L106)）去掉，在什么场景下会触发数据损坏？为什么？</summary>
+(`incSend`) is removed, in what scenario will data corruption be triggered? Why?[FACT:src/device/prims_ll.h:99-106]Reference analysis
 
-**参考解析**：cleanup 逻辑在 `sendStep[i] & NCCL_LL_CLEAN_MASK == NCCL_LL_CLEAN_MASK` 时，把整个 slice 的所有行都用当前 flag 写一遍（数据填 0）。如果去掉，当 step 回绕到 `NCCL_LL_CLEAN_MASK` 边界时，某些行的 flag 可能还是上一轮的值。如果上一轮的 flag 恰好等于这一轮接收方期望的 flag，接收方会误以为数据已就绪，读到上一轮的残留数据。这是一个典型的 ABA 问题。触发条件是长时间运行（step 超过 `NCCL_LL_CLEAN_MASK` 周期）且 flag 恰好回绕到相同值。这类 bug 极难复现，因为需要精确的 step 对齐。
+**: The cleanup logic writes all rows of the entire slice once with the current flag (data filled with 0) when**. If removed, when step wraps around to the`sendStep[i] & NCCL_LL_CLEAN_MASK == NCCL_LL_CLEAN_MASK`boundary, the flags of some rows may still be the values from the previous round. If the previous round's flag happens to equal the flag expected by the receiver in this round, the receiver will mistakenly believe the data is ready and read the residual data from the previous round. This is a typical ABA problem. The trigger condition is long-running operation (step exceeds`NCCL_LL_CLEAN_MASK`cycles) and the flag happens to wrap around to the same value. This kind of bug is extremely difficult to reproduce because it requires precise step alignment.`NCCL_LL_CLEAN_MASK` 周期）且 flag 恰好回绕到相同值。这类 bug 极难复现，因为需要精确的 step 对齐。
 
-</details>
+Q2: In the destructor of the Simple protocol, what do the wait under NetRegMode ([FACT:src/device/prims_simple.h:794-804]) and the wait under DirectRead ([FACT:src/device/prims_simple.h:814-824]) each prevent? If one of them is removed, what happens in a high-concurrency scenario?
 
-<details><summary>Q2: Simple 协议的析构函数里，NetRegMode 下的等待（[FACT:src/device/prims_simple.h:794-804](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L794-L804)）和 DirectRead 下的等待（[FACT:src/device/prims_simple.h:814-824](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_simple.h#L814-L824)）分别在防什么？如果去掉其中一个，在高并发场景下会发生什么？</summary>
+**Reference analysis**: NetRegMode waits for the proxy thread to set`connFifo[prevStep].size`to -1, indicating that the NIC has finished sending. If this is removed, the next kernel may overwrite the send buffer that is currently being read by the NIC via DMA, causing the NIC to read dirty data. DirectRead waits for the receiver to advance the tail (`*tail > *head`), indicating that the receiver has finished reading the direct buffer. If this is removed, the sender may overwrite the buffer before the receiver has finished reading, causing the receiver to read new data instead of old data. In high-concurrency scenarios, both waits are necessary; removing either one will cause a data race. The difference is that NetRegMode prevents "NIC reads," while DirectRead prevents "peer GPU reads."
 
-**参考解析**：NetRegMode 等待的是 proxy 线程把 `connFifo[prevStep].size` 设为 -1，表示网卡已完成发送。如果去掉，下一个 kernel 可能覆盖正在被网卡 DMA 读取的发送缓冲区，导致网卡读到脏数据。DirectRead 等待的是接收方推进 tail（`*tail > *head`），表示接收方已读完直接缓冲区。如果去掉，发送方可能在接收方还没读完时就覆盖了缓冲区，导致接收方读到新数据而非旧数据。在高并发场景下，这两个等待都是必须的，去掉任何一个都会导致数据竞争。区别是 NetRegMode 防的是「网卡读」，DirectRead 防的是「对端 GPU 读」。
+Q3: LL128's`loadRegsBegin`takes the shared memory repacking path ([FACT:src/device/prims_ll128.h:115-141]) when unaligned. How much slower is this path than the aligned path? Why doesn't NCCL directly require user buffers to be 16-byte aligned?
 
-</details>
+**Reference analysis**: The unaligned path has three extra steps: write to shared memory,`__syncwarp()`, read from shared memory. Although shared memory bandwidth is high,`__syncwarp()`is a synchronization point that blocks the warp until all threads finish writing. A rough estimate is that the unaligned path is 20-40% slower than the aligned path, depending on shared memory bank conflicts. NCCL does not enforce alignment because users may pass buffers with arbitrary offsets (such as tensor slices), and enforcing alignment would limit API flexibility. NCCL's strategy is "use the fast path when aligned, and use the slow path when unaligned while guaranteeing correctness." In production environments, users are advised to allocate buffers aligned to 16 bytes as much as possible in order to use the fast path.
 
-<details><summary>Q3: LL128 的 `loadRegsBegin` 在非对齐时走共享内存重排版（[FACT:src/device/prims_ll128.h:115-141](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/device/prims_ll128.h#L115-L141)），这个路径比对齐路径慢多少？为什么 NCCL 不直接要求用户缓冲区必须 16 字节对齐？</summary>
-
-**参考解析**：非对齐路径多了三步：写共享内存、`__syncwarp()`、从共享内存读。共享内存的带宽虽然高，但 `__syncwarp()` 是一个同步点，会阻塞 warp 直到所有线程完成写入。粗略估计，非对齐路径比对齐路径慢 20-40%，具体取决于共享内存 bank 冲突情况。NCCL 不强制要求对齐，是因为用户可能传入任意偏移的缓冲区（比如 tensor 切片），强制对齐会限制 API 的灵活性。NCCL 的策略是「对齐时走快路径，非对齐时走慢路径但保证正确性」。生产环境建议用户尽量按 16 字节对齐分配缓冲区，以走快路径。
-
-</details>
-
-至此，我们已经掌握了 LL、LL128、Simple 三种原语的数据搬运机制，它们为上层算法提供了灵活的性能调节手段。下一章将深入集合通信算法内核，看 AllReduce、AllGather、ReduceScatter 等如何调用这些原语，以及 Ring、Tree、CollNet 等算法如何组织数据流，最终完成端到端的集合通信。
+At this point, we have mastered the data movement mechanisms of the three primitives LL, LL128, and Simple, which provide flexible performance tuning means for upper-layer algorithms. The next chapter will go deep into the collective communication algorithm kernels to see how AllReduce, AllGather, ReduceScatter, etc. call these primitives, and how algorithms such as Ring, Tree, and CollNet organize data flow, ultimately completing end-to-end collective communication.

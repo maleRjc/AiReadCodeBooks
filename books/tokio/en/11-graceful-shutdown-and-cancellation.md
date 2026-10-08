@@ -1,40 +1,40 @@
-# Chapter 11: Graceful Shutdown & Cancellation Safety: Lifecycle Management in Practice
+# Chapter 11: The Stream Ecosystem and Tooling Layer: Extension Mechanisms of tokio-stream and tokio-util
 
+In the previous chapter, we broke down the byte-level mechanics of Framed: Decoder splits BytesMut into frames, Sink writes frames back, and the abstraction boundary of asynchronous I/O becomes clear. But frames are only containers for data, and real protocol implementations immediately encounter three problems that neither tokio::io nor Framed solves: asynchronous iteration—Framed implements Stream, but Stream only has poll_next, not next().await, filter, take, or merge, and hand-writing poll_fn is both verbose and prone to pitfalls in cancellation safety; dynamic task sets—a chat service needs to subscribe to N channels simultaneously, with channels joining and leaving at any time, while the number of branches in select! is fixed at compile time and cannot express a stream set that changes at runtime; structured cancellation—select! can cancel a single branch, but it cannot propagate the shutdown of the entire task tree, nor can it wait for all tasks to actually exit. tokio-stream and tokio-util were born precisely for these three things, and their key design principle is not to start from scratch: every combinator in StreamExt is just a wrapper around poll_next, StreamMap reuses the registration semantics of Waker, CancellationToken is built directly on top of tokio::sync::Notify, and TaskTracker encodes all state with an AtomicUsize. Understanding them is essentially understanding how to build zero-cost abstractions on top of the existing Waker and scheduling mechanisms. This chapter progresses through three layers: iteration, collections, and cancellation: first we look at how StreamExt turns poll_next into a composable iterator, then at how StreamMap and TaskTracker manage dynamic collections, and finally at how CancellationToken uses a tree to propagate cancellation signals to the entire task tree.
 
-上一章我们拆解了 Framed 的字节级机制：Decoder 把 BytesMut 切成帧，Sink 把帧写回，异步 I/O 的抽象边界由此清晰。但帧只是数据的容器，真实协议实现紧接着就会遇到三个 tokio::io 与 Framed 都不解决的问题：异步迭代——Framed 实现了 Stream，但 Stream 只有 poll_next，没有 next().await、filter、take、merge，手写 poll_fn 既啰嗦又容易在取消安全上踩坑；动态任务集合——一个聊天服务要同时订阅 N 个频道，频道随时加入退出，而 select! 的分支数量是编译期固定的，无法表达运行时增减的流集合；结构化取消——select! 能取消单个分支，但无法把整个任务树停工这件事传播下去，也无法等待所有任务真正退出。tokio-stream 与 tokio-util 正是为这三件事而生，它们的关键设计原则是不另起炉灶：StreamExt 的每个组合子都只是对 poll_next 的包装，StreamMap 复用 Waker 的注册语义，CancellationToken 直接建立在 tokio::sync::Notify 之上，TaskTracker 用一个 AtomicUsize 编码全部状态。理解它们，本质上是理解如何在既有 Waker 与调度机制上做零成本抽象。本章按迭代、集合、取消三层递进：先看 StreamExt 如何把 poll_next 变成可组合的迭代器，再看 StreamMap 与 TaskTracker 如何管理动态集合，最后看 CancellationToken 如何用一棵树把取消信号传播到整个任务树。
+# StreamExt: Turning poll_next into a composable iterator
 
+## Intuitive model
 
-## Intuitive Architectural Model
+`Stream`is to`Future`as`Iterator`is to values:`Future`produces "one value,"`Stream`produces "a sequence of values." But`Stream`defines only`poll_next`this one primitive, just as`Iterator`defines only`next`. Without`StreamExt`, every filter, map, and truncate operation would require hand-writing a`poll_fn`closure and manually managing`Pin`—this was exactly the most painful part for early users of the`futures`crate.`StreamExt`The role of`Stream`is to give`Iterator`a combinator ecosystem like that of
 
-`Stream` 之于 `Future`，正如 `Iterator` 之于值：`Future` 产出「一个值」，`Stream` 产出「一串值」。但 `Stream` 只定义了 `poll_next` 这一个原语，就像 `Iterator` 只定义了 `next`。若没有 `StreamExt`，每次过滤、映射、截断都要手写 `poll_fn` 闭包并手动管理 `Pin`——这正是 `futures` crate 早期用户最痛苦的地方。`StreamExt` 的角色，就是给 `Stream` 装上 `Iterator` 那样的组合子生态。
+. Without it, the disaster the system faces is not missing functionality, but**a systemic collapse of cancellation safety**: every hand-written`poll_fn`may lose an element that has already been`select!`when it is cancelled by`poll`.
 
-若没有它，系统面临的灾难不是功能缺失，而是**取消安全性的系统性崩塌**：每个手写的 `poll_fn` 都可能在被 `select!` 取消时丢失一个已经 `poll` 出来的元素。
+## Data structures and memory layout
 
-## Data Structures & Memory Layout
+`StreamExt`is an**extension trait**, and it holds no data itself:
 
-`StreamExt` 是一个**扩展 trait**，本身不持有数据：
-
-[FACT:tokio-stream/src/stream_ext.rs:106-106](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L106-L106)
+[FACT:tokio-stream/src/stream_ext.rs:106-106]
 
 ```rust
 pub trait StreamExt: Stream {
 ```
 
-它的所有方法都返回一个**具体的组合子结构体**，而非 `Box<dyn Stream>`。这是关键设计：`map` 返回 `Map<Self, F>`，`filter` 返回 `Filter<Self, F>`，`take` 返回 `Take<Self>`。这些结构体都是零堆分配的泛型包装，编译器可以把整条链内联成一层层 `poll_next` 调用。
+All of its methods return a**concrete combinator struct**, not`Box<dyn Stream>`. This is the key design:`map`returns`Map<Self, F>`，`filter`returns`Filter<Self, F>`，`take`returns`Take<Self>`. These structs are all zero-heap-allocation generic wrappers, and the compiler can inline the entire chain into layers of`poll_next`calls.
 
-注意 trait 的 blanket impl：
+Note the blanket impl of the trait:
 
-[FACT:tokio-stream/src/stream_ext.rs:1213-1213](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L1213-L1213)
+[FACT:tokio-stream/src/stream_ext.rs:1213-1213]
 
 ```rust
 impl StreamExt for St where St: Stream {}
 ```
 
-任何 `Stream` 自动获得全部组合子，无需手动实现。`?Sized` 允许 `dyn Stream` 也享受扩展方法。
+Any`Stream`automatically gains all combinators, with no manual implementation required.`?Sized`allows`dyn Stream`to also enjoy extension methods.
 
-组合子的模块声明揭示了这个 trait 的完整能力面：
+The module declarations of the combinators reveal the full capability surface of this trait:
 
-[FACT:tokio-stream/src/stream_ext.rs:4-59](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L4-L59)
+[FACT:tokio-stream/src/stream_ext.rs:4-59]
 
 ```rust
 mod all; use all::AllFuture;
@@ -58,9 +58,9 @@ mod try_next; use try_next::TryNext;
 mod peekable; pub use peekable::Peekable;
 ```
 
-这里有一个值得注意的区分：`next`、`try_next`、`all`、`any`、`fold`、`collect` 返回的是 **Future**（`Next`、`TryNext`、`AllFuture`……），因为它们把整个流消费成一个值；而 `map`、`filter`、`take` 等返回的是 **Stream**，因为它们保持流的形态。`next` 的返回类型是 `Next<'_, Self>`，带生命周期参数，因为它只借用流：
+There is a noteworthy distinction here:`next`、`try_next`、`all`、`any`、`fold`、`collect`returns**Future**（`Next`、`TryNext`、`AllFuture`...), because they consume the entire stream into a single value; while`map`、`filter`、`take`and others return**Stream**, because they preserve the shape of the stream.`next`The return type of`Next<'_, Self>`is
 
-[FACT:tokio-stream/src/stream_ext.rs:144-149](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L144-L149)
+[FACT:tokio-stream/src/stream_ext.rs:144-149]
 
 ```rust
 fn next(&mut self) -> Next
@@ -71,9 +71,9 @@ where
 }
 ```
 
-`Self: Unpin` 约束是刻意的：`next` 不取得流的所有权，只借用，因此无法把流 `Pin` 住。若流是 `!Unpin`，用户必须先 `Box::pin` 或 `pin_mut!`。文档明确点出了这个权衡：
+`Self: Unpin`Copy`next`The`Pin`constraint is deliberate:`!Unpin`does not take ownership of the stream, only borrows it, and therefore cannot`Box::pin`the stream. If the stream is`pin_mut!`, the user must first
 
-[FACT:tokio-stream/src/stream_ext.rs:116-121](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L116-L121)
+[FACT:tokio-stream/src/stream_ext.rs:116-121]
 
 ```rust
 /// Note that because `next` doesn't take ownership over the stream,
@@ -84,11 +84,11 @@ where
 /// crate.
 ```
 
-## 场景驱动 Walkthrough：一次 `merge` 的轮询
+## . The documentation explicitly points out this tradeoff:`merge`polling of
 
-`merge` 是理解组合子如何复用 Waker 的最佳样本。它把两个流交错产出，且**保证公平性**——若两个流同时就绪，交替产出。文档特意警告不要链式调用 `merge`：
+`merge`is the best example for understanding how combinators reuse Waker. It interleaves the outputs of two streams, and**guarantees fairness**— if both streams are ready simultaneously, it alternates outputs. The documentation specifically warns against chaining calls to`merge`：
 
-[FACT:tokio-stream/src/stream_ext.rs:319-321](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L319-L321)
+[FACT:tokio-stream/src/stream_ext.rs:319-321]
 
 ```rust
 /// simultaneously, the merge stream alternates between them. This provides
@@ -96,9 +96,9 @@ where
 /// will break the fairness of the merging.
 ```
 
-`merge` 的签名要求两个流的 `Item` 类型相同：
+`merge`requires that both streams have the same`Item`type:
 
-[FACT:tokio-stream/src/stream_ext.rs:398-404](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L398-L404)
+[FACT:tokio-stream/src/stream_ext.rs:398-404]
 
 ```rust
 fn merge(self, other: U) -> Merge
@@ -110,21 +110,21 @@ where
 }
 ```
 
-当调用方 `.next().await` 时，执行流如下：
+When the caller`.next().await`the execution flow is as follows:
 
-1. `Next::poll` 调用 `Merge::poll_next`。
+1. `Next::poll`calls`Merge::poll_next`。
 
-2. `Merge` 内部维护一个「上次轮到谁」的布尔标志。它先 `poll` 上次未产出的那个流；若 `Pending`，再 `poll` 另一个。
+2. `Merge`internally maintains a boolean flag for "whose turn it was last time." It first`poll`the stream that did not produce last time; if`Pending`then`poll`the other one.
 
-3. 若两个都 `Pending`，`Merge` 返回 `Pending`，但**两个流各自的 Waker 都已注册**——任一就绪都会唤醒当前任务。
+3. If both`Pending`，`Merge`return`Pending`but**both streams' respective Wakers have been registered**— either becoming ready will wake the current task.
 
-4. 若一个流返回 `Ready(None)`（结束），`Merge` 记录该流已结束，此后只 `poll` 另一个流，直到它也结束。
+4. If one stream returns`Ready(None)`(finished),`Merge`records that the stream has ended, and thereafter only`poll`the other stream until it also ends.
 
-这里的关键是：`Merge` 没有自己的 Waker 管理逻辑，它把 `cx` 原样传给内部两个流的 `poll_next`。**Waker 的注册完全由底层流负责**，`Merge` 只是决定「这次先问谁」。这正是「复用底层 Waker 机制」的字面含义。
+The key here is:`Merge`has no Waker management logic of its own; it passes`cx`as-is to the internal two streams'`poll_next`。**Waker registration is entirely handled by the underlying streams**，`Merge`only decides "whom to ask first this time." This is the literal meaning of "reusing the underlying Waker mechanism."
 
-`merge_size_hints` 辅助函数展示了组合子如何合并容量提示：
+`merge_size_hints`The helper function demonstrates how combinators merge capacity hints:
 
-[FACT:tokio-stream/src/stream_ext.rs:1216-1226](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L1216-L1226)
+[FACT:tokio-stream/src/stream_ext.rs:1216-1226]
 
 ```rust
 fn merge_size_hints(
@@ -140,13 +140,13 @@ fn merge_size_hints(
 }
 ```
 
-注意 `saturating_add` 与 `checked_add` 的选择：下界用饱和加法（宁可低估不可溢出 panic），上界用检查加法（任一未知则整体未知）。这是 `size_hint` 契约的典型处理方式。
+Note the choice of`saturating_add`and`checked_add`: the lower bound uses saturating addition (better to underestimate than to overflow and panic), and the upper bound uses checked addition (if either is unknown, the whole is unknown). This is the typical way of handling the`size_hint`contract.
 
-## 设计思考：取消安全与 `chunks_timeout` 的 panic 防护
+## Design considerations: cancellation safety and`chunks_timeout`'s panic protection
 
-`StreamExt` 的文档对每个方法都标注了 **Cancel safety**。以 `next` 为例：
+`StreamExt`'s documentation annotates each method with**Cancel safety**. Taking`next`as an example:
 
-[FACT:tokio-stream/src/stream_ext.rs:123-127](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L123-L127)
+[FACT:tokio-stream/src/stream_ext.rs:123-127]
 
 ```rust
 /// # Cancel safety
@@ -156,11 +156,11 @@ fn merge_size_hints(
 /// so dropping it will never lose a value.
 ```
 
-`next` 之所以取消安全，是因为它只借用流、不消费元素——`Next` future 被 drop 时，流本身状态不变，下次 `next` 会重新 `poll`。
+`next`is cancellation-safe because it only borrows the stream and does not consume elements —`Next`when the future is dropped, the stream's own state is unchanged, and the next`next`will re-`poll`。
 
-但并非所有组合子都取消安全。`chunks_timeout` 在构造时就做了参数校验：
+But not all combinators are cancellation-safe.`chunks_timeout`performs parameter validation at construction time:
 
-[FACT:tokio-stream/src/stream_ext.rs:1178-1185](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L1178-L1185)
+[FACT:tokio-stream/src/stream_ext.rs:1178-1185]
 
 ```rust
 #[track_caller]
@@ -173,19 +173,19 @@ where
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `#[track_caller]` 让 panic 位置指向调用方而非库内部，`assert!` 在构造期就拒绝 `max_size == 0`。为什么必须在构造期检查？ 若允许 `max_size == 0`，`ChunksTimeout` 的批处理逻辑会陷入「永远攒不满一批」的死循环或产出空批次，而这类 bug 在运行时极难定位。构造期 panic 把错误提前到最早可观测点。
+> **[Design Inference & Architectural Trade-offs]**
+> `#[track_caller]`makes the panic location point to the caller rather than the library internals,`assert!`rejecting at construction time`max_size == 0`. Why must it be checked at construction time? If`max_size == 0`，`ChunksTimeout`'s batching logic would fall into an infinite loop of "never accumulating a full batch" or produce empty batches, and such bugs are extremely difficult to locate at runtime. A construction-time panic moves the error to the earliest observable point.
 
-`timeout` 与 `timeout_repeating` 的差异也值得注意：`timeout` 在超时后返回一个错误，但**继续轮询内层流**；`timeout_repeating` 则按 `Interval` 持续产出超时错误，直到内层流产出值。文档用两个例子精确刻画了这个区别：
+`timeout`The difference between`timeout_repeating`and`timeout`is also worth noting:**returns an error after the timeout, but**；`timeout_repeating`continues polling the inner stream`Interval`instead, per
 
-[FACT:tokio-stream/src/stream_ext.rs:985-1001](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L985-L1001)
+[FACT:tokio-stream/src/stream_ext.rs:985-1001]
 
 ```rust
 /// Once a timeout error is received, no further events will be received
 /// unless the wrapped stream yields a value (timeouts do not repeat).
 ```
 
-[FACT:tokio-stream/src/stream_ext.rs:1071-1072](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_ext.rs#L1071-L1072)
+[FACT:tokio-stream/src/stream_ext.rs:1071-1072]
 
 ```rust
 /// Timeout errors will be continuously produced at the specified interval
@@ -194,16 +194,17 @@ where
 
 ---
 
+# Copy
 
-## Intuitive Architectural Model
+## StreamMap: Dynamic stream collections and fair polling
 
-`select!` 的分支数在编译期固定。但聊天服务要订阅的频道数、爬虫要跟踪的连接数，都是运行时才知道的。`StreamMap` 就是「运行时可增删的 `select!`」：它把任意多个流放进一个集合，每次 `next` 返回 `(key, value)`，告诉你这个值来自哪个流。若没有它，你只能把所有流塞进一个 `mpsc` 通道，多一层转发开销。
+`select!`Intuitive model`StreamMap`'s number of branches is fixed at compile time. But the number of channels a chat service needs to subscribe to, or the number of connections a crawler needs to track, are only known at runtime.`select!`is a "runtime-addable/removable`next`": it puts any number of streams into a collection, and each`(key, value)`returns`mpsc`, telling you which stream the value came from. Without it, you could only stuff all streams into a single
 
-## Data Structures & Memory Layout
+## channel, adding an extra layer of forwarding overhead.
 
-`StreamMap` 的存储极其朴素——一个 `Vec`：
+`StreamMap`Data structure and memory layout`Vec`：
 
-[FACT:tokio-stream/src/stream_map.rs:204-208](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L204-L208)
+[FACT:tokio-stream/src/stream_map.rs:204-208]
 
 ```rust
 #[derive(Debug)]
@@ -213,9 +214,9 @@ pub struct StreamMap {
 }
 ```
 
-文档明确说明了这个选择的代价：
+Copy
 
-[FACT:tokio-stream/src/stream_map.rs:38-44](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L38-L44)
+[FACT:tokio-stream/src/stream_map.rs:38-44]
 
 ```rust
 /// `StreamMap` is backed by a `Vec`. There is no guarantee that this
@@ -227,12 +228,12 @@ pub struct StreamMap {
 /// [`mpsc`] channel.
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么不用 `HashMap`？ 因为 `StreamMap` 的核心操作是**轮询所有流**，而非按键查找。`Vec` 的线性扫描对 CPU 缓存友好，且 `swap_remove` 是 O(1)。若用 `HashMap`，每次 `poll_next` 都要遍历哈希桶，缓存局部性更差。`insert` 和 `remove` 的 O(n) 扫描在「小规模流集合」假设下可接受。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]`HashMap`Why not use`StreamMap`? Because**'s core operation is**polling all streams`Vec`, not lookup by key.`swap_remove`'s linear scan is CPU-cache-friendly, and`HashMap`is O(1). If`poll_next`were used, each`insert`would have to traverse hash buckets, with worse cache locality.`remove`and
 
-`insert` 的实现体现了「先删后插」的语义：
+`insert`'s O(n) scan is acceptable under the "small-scale stream collection" assumption.
 
-[FACT:tokio-stream/src/stream_map.rs:446-454](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L446-L454)
+[FACT:tokio-stream/src/stream_map.rs:446-454]
 
 ```rust
 pub fn insert(&mut self, k: K, stream: V) -> Option
@@ -246,9 +247,9 @@ where
 }
 ```
 
-`remove` 用 `swap_remove` 把被删元素与末尾元素交换后弹出，避免 O(n) 搬移：
+`remove`Copy`swap_remove`uses
 
-[FACT:tokio-stream/src/stream_map.rs:471-483](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L471-L483)
+[FACT:tokio-stream/src/stream_map.rs:471-483]
 
 ```rust
 pub fn remove(&mut self, k: &Q) -> Option
@@ -266,11 +267,11 @@ where
 }
 ```
 
-## 场景驱动 Walkthrough：poll_next_entry 的随机起点与游标修正
+## Copy
 
-`StreamMap` 的核心是 `poll_next_entry`。它从**随机起点**开始轮询，以保证公平性——若总从索引 0 开始，第一个流会饿死后面的流：
+`StreamMap`Scenario-driven Walkthrough: poll_next_entry's random start point and cursor correction`poll_next_entry`The core of**is**. It starts polling from
 
-[FACT:tokio-stream/src/stream_map.rs:515-550](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L515-L550)
+[FACT:tokio-stream/src/stream_map.rs:515-550]
 
 ```rust
 fn poll_next_entry(&mut self, cx: &mut Context) -> Poll> {
@@ -305,11 +306,11 @@ fn poll_next_entry(&mut self, cx: &mut Context) -> Poll> {
 }
 ```
 
-这段代码有三个精妙之处，逐一拆解：
+to guarantee fairness — if it always started from index 0, the first stream would starve the later ones:
 
-**第一，随机起点。** `thread_rng_n` 使用线程局部 `FastRand`，基于 `xorshift64+` 算法：
+**Copy** `thread_rng_n`This code has three ingenious aspects, broken down one by one:`FastRand`First, the random start point.`xorshift64+`uses a thread-local
 
-[FACT:tokio-stream/src/stream_map.rs:765-768](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L765-L768)
+[FACT:tokio-stream/src/stream_map.rs:765-768]
 
 ```rust
 /// Implement `xorshift64+`: 2 32-bit `xorshift` sequences added together.
@@ -317,9 +318,9 @@ fn poll_next_entry(&mut self, cx: &mut Context) -> Poll> {
 /// `Xorshift` paper
 ```
 
-`fastrand_n` 用 Lemire 的乘法取模替代 `% n`：
+`fastrand_n`algorithm:`% n`：
 
-[FACT:tokio-stream/src/stream_map.rs:787-792](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L787-L792)
+[FACT:tokio-stream/src/stream_map.rs:787-792]
 
 ```rust
 pub(crate) fn fastrand_n(&self, n: u32) -> u32 {
@@ -330,13 +331,13 @@ pub(crate) fn fastrand_n(&self, n: u32) -> u32 {
 }
 ```
 
-**第二，`swap_remove` 后的游标修正。** 当索引 `idx` 的流返回 `None` 被移除时，`swap_remove` 会把末尾元素搬到 `idx`。这个被搬来的元素可能**已经被轮询过**（如果它的原索引在 `start` 之前）。代码用 `idx < start && start <= self.entries.len()` 检测这种情况，若是则跳过它（`idx = idx.wrapping_add(1) % len`）。若被移除的是最后一个元素（`idx == len`），游标回绕到 0。
+**uses Lemire's multiplicative modulo instead of`swap_remove`Copy**Second,`idx`the cursor correction after`None`. When the stream at index`swap_remove`returns`idx`and is removed,**moves the last element to**. This moved element may`start`have already been polled`idx < start && start <= self.entries.len()`(if its original index was before`idx = idx.wrapping_add(1) % len`). The code uses`idx == len`to detect this case, and if so skips it (
 
-**第三，`Poll::Pending` 的语义。** 若遍历一圈没有任何流就绪，且集合非空，返回 `Pending`。此时所有流的 Waker 都已注册，任一就绪都会唤醒。
+**). If the removed element was the last one (`Poll::Pending`), the cursor wraps around to 0.**Third,`Pending`'s semantics.
 
-`poll_next` 在 `poll_next_entry` 之上补上 key：
+`poll_next`If a full traversal finds no stream ready and the collection is non-empty, it returns`poll_next_entry`. At this point all streams' Wakers have been registered, and any becoming ready will wake it.
 
-[FACT:tokio-stream/src/stream_map.rs:676-683](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L676-L683)
+[FACT:tokio-stream/src/stream_map.rs:676-683]
 
 ```rust
 fn poll_next(mut self: Pin, cx: &mut Context) -> Poll> {
@@ -349,13 +350,13 @@ fn poll_next(mut self: Pin, cx: &mut Context) -> Poll> {
 }
 ```
 
-注意 `ready!` 宏：若 `poll_next_entry` 返回 `Pending`，整个 `poll_next` 立即返回 `Pending`。`K: Clone` 约束来自这里的 `key.clone()`。
+:`ready!`Copy`poll_next_entry`Note the`Pending`macro: if`poll_next`returns`Pending`。`K: Clone`, the entire`key.clone()`。
 
-## 设计思考：next_many 的批量语义与取消安全
+## immediately returns
 
-`next_many` 是 `StreamMap` 的批量版本，一次尽可能多地收集就绪元素：
+`next_many`The constraint comes from the`StreamMap`here
 
-[FACT:tokio-stream/src/stream_map.rs:581-583](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L581-L583)
+[FACT:tokio-stream/src/stream_map.rs:581-583]
 
 ```rust
 pub async fn next_many(&mut self, buffer: &mut Vec, limit: usize) -> usize {
@@ -363,9 +364,9 @@ pub async fn next_many(&mut self, buffer: &mut Vec, limit: usize) -> usize {
 }
 ```
 
-它的取消安全保证很关键：
+is the batch version of
 
-[FACT:tokio-stream/src/stream_map.rs:573-578](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L573-L578)
+[FACT:tokio-stream/src/stream_map.rs:573-578]
 
 ```rust
 /// # Cancel safety
@@ -376,11 +377,11 @@ pub async fn next_many(&mut self, buffer: &mut Vec, limit: usize) -> usize {
 /// streams.
 ```
 
-为什么 `next_many` 取消安全？因为它把元素**立即 push 进调用方提供的 `buffer`**，而不是暂存在内部。若 future 被 drop，已 push 的元素仍在 `buffer` 里，不会丢失。但这也意味着：被 drop 时 `buffer` 可能已有部分元素——调用方需要知道这一点。
+Copy`next_many`Its cancellation-safety guarantee is crucial:**Copy`buffer`**Why is`buffer`cancellation-safe? Because it`buffer`immediately pushes elements into the caller-provided
 
-`poll_next_many` 的循环结构比 `poll_next_entry` 复杂，因为它要在一轮内尽可能多地收集：
+`poll_next_many`, rather than buffering them internally. If the future is dropped, the already-pushed elements are still in`poll_next_entry`and will not be lost. But this also means: when dropped,
 
-[FACT:tokio-stream/src/stream_map.rs:597-666](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L597-L666)
+[FACT:tokio-stream/src/stream_map.rs:597-666]
 
 ```rust
 pub fn poll_next_many(
@@ -441,9 +442,9 @@ pub fn poll_next_many(
 }
 ```
 
-外层 `while added < limit` 配合内层 `for` 构成「多轮扫描」：只要上一轮有流产出过值（`should_loop = true`），就再扫一轮，直到攒够 `limit` 或一轮无产出。返回值的三种情况精确对应文档：
+'s loop structure is more complex than`while added < limit`'s, because it must collect as many as possible within one round:`for`Copy`should_loop = true`The outer`limit`combined with the inner
 
-[FACT:tokio-stream/src/stream_map.rs:588-591](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L588-L591)
+[FACT:tokio-stream/src/stream_map.rs:588-591]
 
 ```rust
 /// * `Poll::Pending` if no items are available but the `StreamMap` is not empty.
@@ -452,9 +453,9 @@ pub fn poll_next_many(
 /// * `Poll::Ready(0)` if `limit` is set to zero or when the `StreamMap` is empty.
 ```
 
-`size_hint` 的实现展示了如何聚合多个流的容量提示：
+`size_hint`The implementation demonstrates how to aggregate capacity hints from multiple streams:
 
-[FACT:tokio-stream/src/stream_map.rs:685-701](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-stream/src/stream_map.rs#L685-L701)
+[FACT:tokio-stream/src/stream_map.rs:685-701]
 
 ```rust
 fn size_hint(&self) -> (usize, Option) {
@@ -476,9 +477,9 @@ fn size_hint(&self) -> (usize, Option) {
 }
 ```
 
-与 `merge_size_hints` 同样的模式：下界饱和加，上界检查加，任一未知则整体未知。
+Same as`merge_size_hints`the same pattern: lower bound saturating add, upper bound checked add, if either is unknown then the whole is unknown.
 
-下面用一张流程图刻画 `poll_next_entry` 的决策路径：
+Below is a flowchart depicting`poll_next_entry`the decision path of:
 
 ```mermaid
 flowchart TD
@@ -502,16 +503,17 @@ flowchart TD
 
 ---
 
+# TaskTracker: Encoding all state with a single AtomicUsize
 
-## Intuitive Architectural Model
+## Intuitive model
 
-优雅关闭需要两件事：**通知任务停工**（`CancellationToken` 负责），以及**等待任务真正退出**（`TaskTracker` 负责）。`TaskTracker` 就像一个「任务计数器 + 关闭开关」的合体：只要还有任务在跑，或者还没调用 `close`，`wait()` 就不会返回。若没有它，你只能用 `JoinSet`，但 `JoinSet` 会累积每个任务的返回值，长期运行的服务会 OOM。
+Graceful shutdown requires two things:**Notifying tasks to stop**（`CancellationToken`is responsible for), and**Waiting for tasks to actually exit**（`TaskTracker`is responsible for).`TaskTracker`is like a "task counter + shutdown switch" hybrid: as long as there are still tasks running, or`close`，`wait()`has not been called, it will not return. Without it, you could only use`JoinSet`, but`JoinSet`would accumulate the return value of each task, and a long-running service would OOM.
 
-## Data Structures & Memory Layout
+## Data structure and memory layout
 
-`TaskTracker` 是一个 `Arc` 包装：
+`TaskTracker`is a`Arc`wrapper:
 
-[FACT:tokio-util/src/task/task_tracker.rs:158-178](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L158-L178)
+[FACT:tokio-util/src/task/task_tracker.rs:158-178]
 
 ```rust
 pub struct TaskTracker {
@@ -537,9 +539,9 @@ struct TaskTrackerInner {
 }
 ```
 
-这是本章最精妙的内存布局：**一个 `AtomicUsize` 同时编码「是否关闭」和「任务计数」**。最低位是关闭标志，其余位是任务数（因为任务计数每次 `+2`，最低位永远是 0）。这样 `is_closed_and_empty` 只需一次原子加载：
+This is the most ingenious memory layout in this chapter:**A single`AtomicUsize`simultaneously encodes "whether closed" and "task count"**. The lowest bit is the closed flag, and the remaining bits are the task count (because the task count is`+2`each time, the lowest bit is always 0). This way`is_closed_and_empty`only needs one atomic load:
 
-[FACT:tokio-util/src/task/task_tracker.rs:216-222](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L216-L222)
+[FACT:tokio-util/src/task/task_tracker.rs:216-222]
 
 ```rust
 fn is_closed_and_empty(&self) -> bool {
@@ -551,16 +553,16 @@ fn is_closed_and_empty(&self) -> bool {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `state == 1` 意味着「关闭位为 1，计数为 0」。为什么不用两个原子变量？ 两个变量需要两次加载，且无法原子地判断「同时满足两个条件」。单变量编码让 `is_closed_and_empty` 成为一次 `Acquire` 加载，且在 `wait` 的快速路径上无需加锁。
+> **[Design Inference & Architectural Trade-offs]**
+> `state == 1`means "closed bit is 1, count is 0". Why not use two atomic variables? Two variables require two loads, and cannot atomically determine "both conditions are satisfied at the same time". Single-variable encoding makes`is_closed_and_empty`a single`Acquire`load, and on the fast path of`wait`no lock is needed.
 
-## 场景驱动 Walkthrough：close 与 drop_task 的竞态
+## Scenario-driven Walkthrough: the race between close and drop_task
 
-考虑一个典型场景：主线程调用 `tracker.close()`，同时最后一个任务正在退出（`TaskTrackerToken::drop` 调用 `drop_task`）。两者可能并发，必须保证无论谁先，`wait()` 都能被唤醒。
+Consider a typical scenario: the main thread calls`tracker.close()`, while the last task is exiting (`TaskTrackerToken::drop`calls`drop_task`). The two may be concurrent, and it must be guaranteed that no matter which happens first,`wait()`can be woken up.
 
-先看 `set_closed`：
+First look at`set_closed`：
 
-[FACT:tokio-util/src/task/task_tracker.rs:225-249](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L225-L249)
+[FACT:tokio-util/src/task/task_tracker.rs:225-249]
 
 ```rust
 fn set_closed(&self) -> bool {
@@ -577,11 +579,11 @@ fn set_closed(&self) -> bool {
 }
 ```
 
-`fetch_or(1, AcqRel)` 原子地设置关闭位并返回旧值。若旧值为 0（之前未关闭且无任务），说明「关闭后立即满足空+关闭」，调用 `notify_now`。返回值 `(state & 1) == 0` 表示「这次调用确实改变了状态」。
+`fetch_or(1, AcqRel)`atomically sets the closed bit and returns the old value. If the old value is 0 (previously not closed and no tasks), it means "after closing, empty + closed is immediately satisfied", so call`notify_now`. The return value`(state & 1) == 0`indicates "this call actually changed the state".
 
-再看 `drop_task`：
+Next look at`drop_task`：
 
-[FACT:tokio-util/src/task/task_tracker.rs:264-271](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L264-L271)
+[FACT:tokio-util/src/task/task_tracker.rs:264-271]
 
 ```rust
 fn drop_task(&self) {
@@ -594,17 +596,17 @@ fn drop_task(&self) {
 }
 ```
 
-`fetch_sub(2, Release)` 减计数。若旧值为 3（二进制 `11`：关闭位 1 + 计数 1），说明「这是最后一个任务且已关闭」，调用 `notify_now`。
+`fetch_sub(2, Release)`decrements the count. If the old value is 3 (binary`11`: closed bit 1 + count 1), it means "this is the last task and it is already closed", so call`notify_now`。
 
-两个路径的竞态分析：
+Race analysis of the two paths:
 
-- **close 先执行**：`set_closed` 看到旧值 `2`（计数 1，未关闭），不通知。随后 `drop_task` 看到旧值 `3`，通知。✓
-- **drop_task 先执行**：`drop_task` 看到旧值 `2`（计数 1，未关闭），不通知。随后 `set_closed` 看到旧值 `0`（计数 0，未关闭），通知。✓
-- **并发**：`fetch_or` 和 `fetch_sub` 是原子的，无论交错顺序，总有一个会看到「关闭 + 空」的组合并通知。✓
+- **close executes first**：`set_closed`sees the old value`2`(count 1, not closed), and does not notify. Then`drop_task`sees the old value`3`, and notifies. ✓
+- **drop_task executes first**：`drop_task`sees the old value`2`(count 1, not closed), and does not notify. Then`set_closed`sees the old value`0`(count 0, not closed), and notifies. ✓
+- **Concurrent**：`fetch_or`and`fetch_sub`are atomic, so no matter the interleaving order, one of them will always see the "closed + empty" combination and notify. ✓
 
-`notify_now` 里有一个容易被忽略的 `Acquire` 加载：
+`notify_now`There is an easily overlooked`Acquire`load in:
 
-[FACT:tokio-util/src/task/task_tracker.rs:274-285](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L274-L285)
+[FACT:tokio-util/src/task/task_tracker.rs:274-285]
 
 ```rust
 #[cold]
@@ -622,13 +624,13 @@ fn notify_now(&self) {
 }
 ```
 
-为什么 `drop_task` 用 `Release` 而非 `AcqRel`？因为 `drop_task` 的 `fetch_sub` 只需要「让之前的写对后续读者可见」（Release 语义），不需要「看到之前其他线程的写」（Acquire 语义）。但 `notify_now` 需要 Acquire 来建立 happens-before：确保任务退出前做的所有清理工作，对 `wait()` 返回后的代码可见。这个 `load` 的结果被丢弃，纯粹是为了它的内存序副作用——这是 Rust 原子操作中「fence 式加载」的典型用法。
+Why does`drop_task`use`Release`instead of`AcqRel`? Because`drop_task`'s`fetch_sub`only needs to "make previous writes visible to subsequent readers" (Release semantics), and does not need to "see writes from other threads before this" (Acquire semantics). But`notify_now`needs Acquire to establish happens-before: ensuring that all cleanup work done before the task exits is visible to the code after`wait()`returns. The result of this`load`is discarded purely for its memory-ordering side effect—this is a typical use of a "fence-style load" in Rust atomic operations.
 
-## 设计思考：wait 的 ABA 抵抗与 TrackedFuture 的 drop 语义
+## Design thinking: wait's ABA resistance and TrackedFuture's drop semantics
 
-`wait` 返回一个 `TaskTrackerWaitFuture`，它内部持有 `Notified`：
+`wait`returns a`TaskTrackerWaitFuture`, which internally holds`Notified`：
 
-[FACT:tokio-util/src/task/task_tracker.rs:318-327](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L318-L327)
+[FACT:tokio-util/src/task/task_tracker.rs:318-327]
 
 ```rust
 pub fn wait(&self) -> TaskTrackerWaitFuture {
@@ -643,11 +645,11 @@ pub fn wait(&self) -> TaskTrackerWaitFuture {
 }
 ```
 
-注意 `inner` 字段：若创建时已经「关闭且空」，直接设为 `None`，`poll` 时立即返回 `Ready`。这是快速路径。
+Note the`inner`field: if it is already "closed and empty" at creation time, directly set it to`None`，`poll`and immediately return`Ready`. This is the fast path.
 
-文档特别强调了 ABA 抵抗：
+The documentation particularly emphasizes ABA resistance:
 
-[FACT:tokio-util/src/task/task_tracker.rs:304-307](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L304-L307)
+[FACT:tokio-util/src/task/task_tracker.rs:304-307]
 
 ```rust
 /// The `wait` future is resistant against [ABA problems][aba]. That is, if the `TaskTracker`
@@ -656,9 +658,9 @@ pub fn wait(&self) -> TaskTrackerWaitFuture {
 /// are not polled during that short time interval.
 ```
 
-这个保证来自 `Notify::notified()` 的语义：`Notified` future 在创建时就注册了「等待者」身份，即使 `notify_waiters` 在它被 `poll` 之前调用，它也会在首次 `poll` 时看到通知。`TaskTrackerWaitFuture::poll` 的实现：
+This guarantee comes from the semantics of`Notify::notified()`:`Notified`the future registers itself as a "waiter" at creation time, so even if`notify_waiters`is called before it is`poll`, it will still see the notification on its first`poll`.`TaskTrackerWaitFuture::poll`'s implementation:
 
-[FACT:tokio-util/src/task/task_tracker.rs:697-712](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L697-L712)
+[FACT:tokio-util/src/task/task_tracker.rs:697-712]
 
 ```rust
 fn poll(self: Pin, cx: &mut Context) -> Poll {
@@ -679,20 +681,20 @@ fn poll(self: Pin, cx: &mut Context) -> Poll {
 }
 ```
 
-每次 `poll` 都先检查 `is_closed_and_empty()`，再 `poll` `Notified`。这个顺序保证：即使 `Notified` 因为某种原因没被唤醒，状态检查也能兜底。
+Each`poll`first checks`is_closed_and_empty()`, then`poll` `Notified`. This order guarantees that even if`Notified`is not woken for some reason, the state check can still serve as a fallback.
 
-`TrackedFuture` 的 drop 语义是 `TaskTracker` 与 `JoinSet` 的核心差异：
+`TrackedFuture`'s drop semantics are the core difference between`TaskTracker`and`JoinSet`:
 
-[FACT:tokio-util/src/task/task_tracker.rs:488-494](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L488-L494)
+[FACT:tokio-util/src/task/task_tracker.rs:488-494]
 
 ```rust
 /// The task is removed from the collection when it is dropped, not when [`poll`] returns
 /// [`Poll::Ready`].
 ```
 
-这意味着：即使 future 已经返回 `Ready`，只要 `TrackedFuture` 本身还没被 drop，`TaskTracker` 就认为任务还在。文档解释了为什么这个设计重要：
+This means: even if the future has already returned`Ready`, as long as`TrackedFuture`itself has not been dropped,`TaskTracker`still considers the task to be alive. The documentation explains why this design is important:
 
-[FACT:tokio-util/src/task/task_tracker.rs:33-35](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L33-L35)
+[FACT:tokio-util/src/task/task_tracker.rs:33-35]
 
 ```rust
 /// When a call to [`wait`] returns, it is guaranteed that all tracked tasks have exited and that
@@ -700,9 +702,9 @@ fn poll(self: Pin, cx: &mut Context) -> Poll {
 /// time where [`JoinHandle::is_finished`] returns false.
 ```
 
-`TaskTrackerToken` 的 `Drop` 是计数递减的触发点：
+`TaskTrackerToken`'s`Drop`is the trigger point for count decrement:
 
-[FACT:tokio-util/src/task/task_tracker.rs:670-672](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L670-L672)
+[FACT:tokio-util/src/task/task_tracker.rs:670-672]
 
 ```rust
 impl Drop for TaskTrackerToken {
@@ -714,8 +716,8 @@ impl Drop for TaskTrackerToken {
 }
 ```
 
-`TrackedFuture` 通过 `pin_project!` 把 `token` 与 `future` 打包，`token` 的 drop 自动触发计数递减。`spawn_blocking` 则显式管理 token：
+`TrackedFuture`By`pin_project!`packaging`token`and`future`together,`token`'s drop automatically triggers the count decrement.`spawn_blocking`explicitly manages the token:
 
-[FACT:tokio-util/src/task/task_tracker.rs:452-464](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio-util/src/task/task_tracker.rs#L452-L464)
+[FACT:tokio-util/src/task/task_tracker.rs:452-464]
 
-至此，StreamExt 把 poll_next 变成了可组合的迭代器，StreamMap 与 TaskTracker 让动态任务集合有了归属，CancellationToken 则用一棵树把取消信号传播到整个任务树。这三层扩展的共同点是：它们没有引入新的调度原语，而是把 Waker、Notify 和原子计数这些既有机制重新组合成更高层的抽象。但一个关键问题随之浮现：当这些组合子、任务集合和取消树在同一个调度器上并发运行时，如何保证某个任务不会因为长时间不让出而饿死其他任务？下一章将深入 Tokio 的 coop 协作预算机制，看每个任务在一次调度周期内如何消耗预算、耗尽后主动让出，以及 budget 如何在线程本地存储中传递，从而解决这个经典问题。
+At this point, StreamExt has turned poll_next into a composable iterator, StreamMap and TaskTracker give a dynamic task set a home, and CancellationToken uses a tree to propagate cancellation signals to the entire task tree. The common point of these three layers of extensions is that they do not introduce new scheduling primitives, but instead recombine existing mechanisms such as Waker, Notify, and atomic counting into higher-level abstractions. But a key question then emerges: when these combinators, task sets, and cancellation trees run concurrently on the same scheduler, how can we ensure that a task does not starve other tasks by not yielding for a long time? The next chapter will dive into Tokio's coop cooperative budget mechanism, looking at how each task consumes budget within a scheduling cycle, actively yields when exhausted, and how budget is passed through thread-local storage, thereby solving this classic problem.

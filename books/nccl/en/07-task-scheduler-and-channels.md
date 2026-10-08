@@ -1,47 +1,46 @@
-# Chapter 07: Task Scheduler: Multi-Channel & Kernel Execution Orchestration
+# Chapter 7: Task Scheduler: How task_sched orchestrates multi-channel and kernel execution order
 
+In the previous chapter, we traced ncclAllReduce all the way to ncclTaskColl—the task description object is already sitting in comm->planner. But a task description is only a "work order"; it has not yet become a kernel actually running on the GPU. This chapter answers three questions: How are multiple API calls accumulated and submitted together? How are the accumulated tasks split across multiple channels? What guarantees the order and dependencies among multiple kernels? First, here is an overall mental model. Think of NCCL as a restaurant: ncclGroupStart/ncclGroupEnd is the "shopping cart," where the user puts several dishes (multiple collective communication calls) into the cart; ncclGroupEnd is "placing the order," and only then does the kitchen start cooking according to the order. And doLaunches is the "dish dispatch coordinator," deciding which dishes go out first and which can be prepared in parallel. Without group semantics, each dish is ordered separately, and the kitchen has to relight the fire (launch a kernel) for every dish, which is extremely expensive; without doLaunches' round-based scheduling, multi-channel kernels would launch out of order, breaking data dependencies.
 
-上一章我们把 ncclAllReduce 一路追到了 ncclTaskColl——任务描述对象已经躺在 comm->planner 里了。但任务描述只是「工单」，还没变成 GPU 上真正跑的 kernel。这一章要回答三个问题：多次 API 调用怎么被攒起来一起提交？攒起来的任务怎么被切到多个 channel 上？多个 kernel 之间的顺序和依赖靠什么保证？先给一个整体心智模型。把 NCCL 想象成一家餐厅：ncclGroupStart/ncclGroupEnd 是「购物车」，用户把好几道菜（多次集合通信调用）丢进购物车；ncclGroupEnd 是「下单」，厨房才开始按订单做菜。而 doLaunches 是「传菜调度员」，它决定哪几道菜先上、哪几道菜可以并行做。没有 group 语义，每道菜单独下单，厨房每做一道就要重新点火（启动 kernel），开销巨大；没有 doLaunches 的轮次调度，多 channel 的 kernel 会乱序启动，导致数据依赖被破坏。
+# 1. Global state of group semantics: thread_local variables and the "shopping cart" model
 
-## 一、Group 语义的全局状态：thread_local 变量与「购物车」模型
+## Intuitive model
 
-### Intuitive Architectural Model
+`ncclGroupStart`and`ncclGroupEnd`All communication calls between them do not immediately launch kernels, but are "accumulated." Where are they accumulated? They are accumulated in**thread-local (thread_local)**global variables. Why thread_local? Because NCCL assumes that group calls within the same thread are serial, and different threads each have independent shopping carts that do not interfere with each other. If these states were global variables rather than thread_local, two threads calling`ncclGroupStart`at the same time would step on each other, causing one thread's tasks to be submitted by another thread's`ncclGroupEnd`—this would be catastrophic.
 
-`ncclGroupStart` 和 `ncclGroupEnd` 之间的所有通信调用，不会立即启动 kernel，而是被「攒」起来。攒在哪里？攒在**线程局部（thread_local）**的全局变量里。为什么是 thread_local？因为 NCCL 假设同一个线程内的 group 调用是串行的，不同线程各自有独立的购物车，互不干扰。如果这些状态是全局变量而非 thread_local，两个线程同时调用 `ncclGroupStart` 就会互相踩踏，导致一个线程的任务被另一个线程的 `ncclGroupEnd` 提交——这是灾难性的。
+## Data structures and memory layout
 
-### Data Structures & Memory Layout
+First look at the global state definition of group.
 
-先看 group 的全局状态定义。
-
-[FACT:src/group.cc:34-34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L34-L34)
+[FACT:src/group.cc:34-34]
 
 ```cpp
 thread_local int ncclGroupDepth = 0; // depth of ncclGroupStart nesting
 thread_local ncclResult_t ncclGroupError = ncclSuccess;
 thread_local struct ncclComm* ncclGroupCommHead[ncclGroupTaskTypeNum] = {nullptr};
 thread_local struct ncclComm* ncclGroupCommPreconnectHead = nullptr;
-thread_local struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next> ncclAsyncJobs;
+thread_local struct ncclIntruQueue ncclAsyncJobs;
 thread_local int ncclGroupBlocking = -1; /* default mode */
 ```
 
-逐个字段拆解：
+Breaking down each field one by one:
 
-- **`ncclGroupDepth`**：嵌套深度。`ncclGroupStart` 可以嵌套调用（虽然不常见），每次 `ncclGroupStart` 加一，`ncclGroupEnd` 减一。只有减到 0 时才真正提交。这就像购物车可以嵌套——你在一个购物车里又开了一个子购物车，只有最外层结算时才真正下单。
-- **`ncclGroupError`**：group 内任意一次调用出错，错误被记录在这里，`ncclGroupEnd` 时统一处理。这避免了「一次调用失败后，后续调用还在往购物车里加东西」的不一致状态。
-- **`ncclGroupCommHead[ncclGroupTaskTypeNum]`**：按任务类型分组的通信域链表头。`ncclGroupTaskTypeNum` 是任务类型数量（集合通信、原始任务、管理任务、对称注册等）。每个类型一条链表，链表节点是 `ncclComm`，通过 `comm->groupNext[type]` 串联。为什么按类型分？因为不同类型的任务提交时机和依赖关系不同——集合通信任务需要先 preconnect，管理任务（如 destroy）需要最后执行。
-- **`ncclGroupCommPreconnectHead`**：需要预连接的通信域链表。预连接是「提前把网络连接建好」，避免在 kernel 启动时才建连接导致延迟。
-- **`ncclAsyncJobs`**：异步任务队列。有些任务（如 `ncclCommInitRank`）是异步的，它们被放进这个队列，在 `ncclGroupEnd` 时统一启动。
-- **`ncclGroupBlocking`**：阻塞模式标志。`-1` 表示还没确定，`0` 表示非阻塞，`1` 表示阻塞。同一个 group 内不允许混用阻塞和非阻塞通信域，否则报错。
+- **`ncclGroupDepth`**: nesting depth.`ncclGroupStart`can be nested (though uncommon); each time`ncclGroupStart`increments by one,`ncclGroupEnd`decrements by one. Only when it reaches 0 is the submission actually performed. This is like a shopping cart being nestable—you open a sub-cart inside a cart, and only the outermost checkout actually places the order.
+- **`ncclGroupError`**: if any call within the group errors, the error is recorded here,`ncclGroupEnd`and handled uniformly at that time. This avoids the inconsistent state where "after one call fails, subsequent calls are still adding things to the shopping cart."
+- **`ncclGroupCommHead[ncclGroupTaskTypeNum]`**: head of the communication domain linked list grouped by task type.`ncclGroupTaskTypeNum`is the number of task types (collective communication, raw tasks, management tasks, symmetric registration, etc.). Each type has a linked list, and the list nodes are`ncclComm`, connected through`comm->groupNext[type]`. Why group by type? Because different types of tasks have different submission timing and dependency relationships—collective communication tasks need preconnect first, and management tasks (such as destroy) need to execute last.
+- **`ncclGroupCommPreconnectHead`**: linked list of communication domains that need preconnection. Preconnection means "establishing network connections in advance" to avoid latency caused by establishing connections only at kernel launch time.
+- **`ncclAsyncJobs`**: asynchronous task queue. Some tasks (such as`ncclCommInitRank`) are asynchronous; they are placed into this queue and uniformly started at`ncclGroupEnd`.
+- **`ncclGroupBlocking`**: blocking mode flag.`-1`means not yet determined,`0`means non-blocking,`1`indicates blocking. Mixing blocking and non-blocking communication domains within the same group is not allowed; otherwise, an error will be reported.
 
-这里有个关键设计：`ncclGroupCommHead` 是**数组**，每个元素是一条链表。链表节点通过 `comm->groupNext[type]` 串联，而不是用独立的链表节点结构。这意味着 `ncclComm` 结构体里必须预留 `groupNext` 数组字段。这种「侵入式链表」的设计避免了额外的内存分配，但代价是 `ncclComm` 结构体变大。
+There is a key design here:`ncclGroupCommHead`is**array**, and each element is a linked list. The linked list nodes are connected through`comm->groupNext[type]`instead of using a separate linked list node structure. This means that`ncclComm`the struct must reserve`groupNext`an array field. This "intrusive linked list" design avoids additional memory allocation, but the cost is that`ncclComm`the struct becomes larger.
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-driven Step-by-Step Walkthrough
 
-**场景**：用户调用 `ncclGroupStart()`，然后连续调用两次 `ncclAllReduce`（分别针对两个不同的通信域 commA 和 commB），最后调用 `ncclGroupEnd()`。
+**Scenario**: The user calls`ncclGroupStart()`, then calls it twice in succession`ncclAllReduce`(for two different communication domains commA and commB respectively), and finally calls`ncclGroupEnd()`。
 
-**第一步：`ncclGroupStart` 做了什么？**
+**Step 1:`ncclGroupStart`What was done?**
 
-[FACT:src/include/group.h:63-66](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/group.h#L63-L66)
+[FACT:src/include/group.h:63-66]
 
 ```cpp
 inline ncclResult_t ncclGroupStartInternal() {
@@ -50,17 +49,17 @@ inline ncclResult_t ncclGroupStartInternal() {
 }
 ```
 
-极其简单：深度加一。没有内存分配，没有锁，没有系统调用。这就是为什么 `ncclGroupStart` 几乎零开销。
+Extremely simple: increment the depth by one. No memory allocation, no locks, no system calls. This is why`ncclGroupStart`has almost zero overhead.
 
-**第二步：`ncclAllReduce` 在 group 内被调用时发生了什么？**
+**Step 2:`ncclAllReduce`What happens when it is called within a group?**
 
-`ncclAllReduce` 内部会调用 `ncclGroupCommJoin(comm, ncclGroupTaskTypeCollective)`，把通信域加入 group 链表。
+`ncclAllReduce`Internally it will call`ncclGroupCommJoin(comm, ncclGroupTaskTypeCollective)`, adding the communication domain to the group linked list.
 
-[FACT:src/include/group.h:80-116](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/group.h#L80-L116)
+[FACT:src/include/group.h:80-116]
 
 ```cpp
 inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
-  if (comm->groupNext[type] == reinterpret_cast<struct ncclComm*>(NCCL_COMM_GROUP_INVALID)) {
+  if (comm->groupNext[type] == reinterpret_cast(NCCL_COMM_GROUP_INVALID)) {
     // Insert comm into ncclGroupCommHead adjacent to sibling comms. This preserves
     // the users program order yet insures siblings occur consecutively. This
     // is required by doLaunches() in "group.cc".
@@ -70,7 +69,7 @@ inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
     // didn't find its clique, we need to insert it with ascending order based on commHash
     if (*pp == nullptr) {
       pp = &ncclGroupCommHead[type];
-      while (*pp != nullptr && (*pp)->commHash < comm->commHash) pp = &(*pp)->groupNext[type];
+      while (*pp != nullptr && (*pp)->commHash commHash) pp = &(*pp)->groupNext[type];
     }
     comm->groupNext[type] = *pp;
     *pp = comm;
@@ -80,7 +79,7 @@ inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
       // Initialize planner
       ncclMemoryStackPush(&comm->memScoped);
       ncclKernelPlanner::Peer* tmp = comm->planner.peers;
-      ncclIntruQueue<ncclTaskRma, &ncclTaskRma::next>* tmpRmaQueues = comm->planner.rmaTaskQueues;
+      ncclIntruQueue* tmpRmaQueues = comm->planner.rmaTaskQueues;
       int numRmaCtx = comm->config.numRmaCtx;
       memset(&comm->planner, 0, sizeof(comm->planner));
       comm->planner.peers = tmp;
@@ -88,8 +87,7 @@ inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
       comm->planner.bcast_info.maxBcastPeer = INT_MIN;
       comm->planner.rmaTaskQueues = tmpRmaQueues;
       if (comm->planner.rmaTaskQueues != NULL) {
-        for (int i = 0; i < numRmaCtx; i++) {
-          ncclIntruQueueConstruct(&comm->planner.rmaTaskQueues[i]);
+        for (int i = 0; i planner.rmaTaskQueues[i]);
         }
       }
     }
@@ -98,23 +96,23 @@ inline void ncclGroupCommJoin(struct ncclComm* comm, int type) {
 }
 ```
 
-这段代码有几个精妙之处：
+This code has several ingenious aspects:
 
-1. **幂等性检查**：`if (comm->groupNext[type] == NCCL_COMM_GROUP_INVALID)` 确保同一个通信域在同一个 group 内只被加入一次。如果用户对同一个 comm 调用了两次 `ncclAllReduce`，第二次不会重复加入链表，但任务会被追加到 `comm->planner` 里。
+1. **Idempotency check**：`if (comm->groupNext[type] == NCCL_COMM_GROUP_INVALID)`ensures that the same communication domain is added only once within the same group. If the user calls it twice for the same comm`ncclAllReduce`, the second time it will not be added to the linked list again, but the task will be appended to`comm->planner`.
 
-2. **clique 排序**：`intraComm0` 是「全局实体」的标识。多个通信域如果属于同一个全局实体（比如通过 `ncclCommSplit` 分裂出来的），它们的 `intraComm0` 相同，被称为一个 clique。代码先按 `intraComm0` 找到 clique，把 comm 插入到同 clique 的兄弟节点旁边。如果没找到 clique，就按 `commHash` 升序插入。这个排序是为了 `doLaunches` 能正确处理 clique 内的 barrier 同步。
+2. **Clique ordering**：`intraComm0`is the identifier of a "global entity." If multiple communication domains belong to the same global entity (for example, split through`ncclCommSplit`), their`intraComm0`are the same, and they are called a clique. The code first finds the clique by`intraComm0`, and inserts the comm next to its sibling nodes in the same clique. If no clique is found, it inserts in ascending order by`commHash`. This ordering is so that`doLaunches`can correctly handle barrier synchronization within the clique.
 
-3. **内存栈作用域**：`ncclMemoryStackPush(&comm->memScoped)` 为这个 comm 在 group 内分配一个新的内存栈作用域。所有为这个 comm 分配的任务（`ncclTaskColl` 等）都从这个栈上分配。`ncclGroupCommLeave` 时会 `ncclMemoryStackPop` 一次性释放所有任务内存——这是「批量分配、批量释放」的经典优化，避免了每个任务单独 `malloc/free` 的开销。
+3. **Memory stack scope**：`ncclMemoryStackPush(&comm->memScoped)`allocates a new memory stack scope for this comm within the group. All tasks allocated for this comm (`ncclTaskColl`, etc.) are allocated from this stack.`ncclGroupCommLeave`will`ncclMemoryStackPop`release all task memory at once - this is the classic optimization of "batch allocation, batch release," avoiding the overhead of separate`malloc/free`for each task.
 
-4. **planner 重置**：`memset(&comm->planner, 0, sizeof(comm->planner))` 清空 planner，但保留了 `peers` 和 `rmaTaskQueues` 指针（先存到临时变量，memset 后再恢复）。为什么要保留？因为这两个是预分配的数组，不需要每次重新分配。`bcast_info` 的 min/max 被重置为 `INT_MAX/INT_MIN`，用于后续 broadcast 任务的合并优化。
+4. **Planner reset**：`memset(&comm->planner, 0, sizeof(comm->planner))`clears the planner, but retains the`peers`and`rmaTaskQueues`pointers (first stored in temporary variables, then restored after memset). Why retain them? Because these two are preallocated arrays and do not need to be reallocated each time.`bcast_info`The min/max of are reset to`INT_MAX/INT_MIN`, used for the merge optimization of subsequent broadcast tasks.
 
-**第三步：`ncclGroupEnd` 做了什么？**
+**Step 3:`ncclGroupEnd`What was done?**
 
-[FACT:src/group.cc:1039-1164](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1039-L1164)
+[FACT:src/group.cc:1039-1164]
 
-`ncclGroupEndInternal` 是核心。逐段解析：
+`ncclGroupEndInternal`is the core. Parse it section by section:
 
-[FACT:src/group.cc:1048-1061](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1048-L1061)
+[FACT:src/group.cc:1048-1061]
 
 ```cpp
 if (ncclGroupDepth == 0) {
@@ -126,17 +124,17 @@ if (ncclGroupDepth == 0) {
 if ((--ncclGroupDepth) > 0) goto exit;
 ```
 
-先检查深度，然后减一。如果减一后还大于 0，说明还在嵌套的内层 group 里，直接返回，不提交。只有减到 0 才继续。
+First check the depth, then decrement by one. If after decrementing it is still greater than 0, it means it is still inside a nested inner group, so return directly without submitting. Only when it reaches 0 does it continue.
 
-[FACT:src/group.cc:1063](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1063)
+[FACT:src/group.cc:1063]
 
 ```cpp
 if ((ret = ncclGroupError) != ncclSuccess) goto fail;
 ```
 
-如果 group 内任何一次调用出过错，直接跳到 fail 清理。
+If any call within the group has errored, jump directly to fail cleanup.
 
-[FACT:src/group.cc:1084-1093](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1084-L1093)
+[FACT:src/group.cc:1084-1093]
 
 ```cpp
 NEW_NOTHROW_GOTO(groupJob, ncclGroupJob, ret, fail);
@@ -151,9 +149,9 @@ groupJob->joined = false;
 ncclIntruQueueTransfer(&groupJob->asyncJobs, &ncclAsyncJobs);
 ```
 
-创建一个 `ncclGroupJob`，把 thread_local 的 group 状态「转移」到 job 对象里。`ncclIntruQueueTransfer` 把 `ncclAsyncJobs` 队列整体转移到 `groupJob->asyncJobs`。这一步很关键：thread_local 状态是「临时」的，job 对象是「持久」的，可以被异步线程持有。
+Create a`ncclGroupJob`, and "transfer" the thread_local group state into the job object.`ncclIntruQueueTransfer`transfers the entire`ncclAsyncJobs`queue to`groupJob->asyncJobs`. This step is crucial: the thread_local state is "temporary," while the job object is "persistent" and can be held by an asynchronous thread.
 
-[FACT:src/group.cc:1095-1147](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1095-L1147)
+[FACT:src/group.cc:1095-1147]
 
 ```cpp
 if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPreconnectHead != nullptr) {
@@ -185,15 +183,15 @@ if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPr
 }
 ```
 
-阻塞模式：直接在当前线程调用 `groupLaunch`，同步完成。非阻塞模式：创建一个线程执行 `groupLaunchNonBlocking`，立即返回 `ncclInProgress`。用户后续通过 `ncclCommGetAsyncError` 查询进度。
+Blocking mode: directly call`groupLaunch`on the current thread and complete synchronously. Non-blocking mode: create a thread to execute`groupLaunchNonBlocking`, and immediately return`ncclInProgress`. The user subsequently queries progress through`ncclCommGetAsyncError`.
 
-注意 `cudaGetDevice`/`cudaSetDevice` 的保存和恢复：`groupLaunch` 内部会切换 CUDA 设备（因为不同 comm 可能在不同 GPU 上），执行完后恢复用户原来的设备。这是防止「NCCL 内部切换设备后没切回来」导致用户后续 CUDA 调用跑错设备。
+Note the saving and restoring of`cudaGetDevice`/`cudaSetDevice`:`groupLaunch`Internally it will switch the CUDA device (because different comms may be on different GPUs), and after execution restores the user's original device. This is to prevent "NCCL internally switching devices and not switching back" from causing the user's subsequent CUDA calls to run on the wrong device.
 
-### 设计思考与生产踩坑
+## Design Thinking and Production Pitfalls
 
-**坑 1：阻塞和非阻塞通信域混用**。`ncclAsyncLaunch` 里有检查：
+**Pitfall 1: Mixing blocking and non-blocking communication domains**。`ncclAsyncLaunch`There is a check in:
 
-[FACT:src/group.cc:55-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L55-L64)
+[FACT:src/group.cc:55-64]
 
 ```cpp
 /* check if there are blocking and nonblocking comms at the same time in group. */
@@ -208,29 +206,25 @@ if (comm->destroyFlag) {
 }
 ```
 
-为什么不允许混用？因为阻塞 group 在当前线程同步执行，非阻塞 group 在独立线程异步执行。如果混用，无法确定 `ncclGroupEnd` 应该同步返回还是返回 `ncclInProgress`。生产环境中，如果用户不小心把阻塞和非阻塞 comm 放进同一个 group，会收到 `ncclInvalidArgument`，但此时 group 状态已经被污染，必须重新 `ncclGroupStart`。
+Why is mixing not allowed? Because a blocking group executes synchronously on the current thread, while a non-blocking group executes asynchronously on a separate thread. If mixed, it is impossible to determine whether`ncclGroupEnd`should return synchronously or return`ncclInProgress`. In a production environment, if the user accidentally puts blocking and non-blocking comms into the same group, they will receive`ncclInvalidArgument`, but at this point the group state has already been polluted, and it must be re-`ncclGroupStart`。
 
-**坑 2：`ncclGroupError` 的传播**。如果 group 内某次调用失败，`ncclGroupError` 被设置，`ncclGroupEnd` 会跳到 fail 分支执行 `groupCleanup`。`groupCleanup` 会遍历所有 comm，释放 planner 里的 plan 内存、重置 planner、清理 rawTaskQueue。如果这一步没做干净，下次 `ncclGroupStart` 时 planner 里残留旧数据，会导致任务重复提交或内存泄漏。
+**Pitfall 2:`ncclGroupError`propagation.**. If a call within the group fails,`ncclGroupError`is set,`ncclGroupEnd`will jump to the fail branch to execute`groupCleanup`。`groupCleanup`will traverse all comms, release the plan memory in the planner, reset the planner, and clean up rawTaskQueue. If this step is not done cleanly, the next time`ncclGroupStart`the planner will still contain old data, causing duplicate task submission or memory leaks.
 
-[FACT:src/group.cc:514-607](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L514-L607)
+[FACT:src/group.cc:514-607]
 
 ```cpp
 static void groupCleanup(struct ncclComm** groupCommHeadPtr,
-                         struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next>* asyncJobsPtr,
+                         struct ncclIntruQueue* asyncJobsPtr,
                          ncclResult_t error) {
   struct ncclComm* comm;
-  for (int type = 0; type < ncclGroupTaskTypeNum; ++type) {
-    comm = groupCommHeadPtr[type];
-    groupCommHeadPtr[type] = nullptr;
-    while (comm != nullptr) {
-      struct ncclComm* next = comm->groupNext[type];
+  for (int type = 0; type groupNext[type];
       (void)ncclGroupCommLeave(comm, type);
       // We don't know if preconnect succeeded or happened at all, so clear
       // the flags that let `taskAppend()` skip over checking if preconnect
       // is needed.
       if (type == ncclGroupTaskTypeCollective || type == ncclGroupTaskTypeRawTask) {
-        comm->preconnectNext = reinterpret_cast<struct ncclComm*>(0x1);
-        for (int i = 0; i < comm->nRanks; i++) {
+        comm->preconnectNext = reinterpret_cast(0x1);
+        for (int i = 0; i nRanks; i++) {
           comm->connectSend[i] = 0UL;
           comm->connectRecv[i] = 0UL;
         }
@@ -255,26 +249,26 @@ static void groupCleanup(struct ncclComm** groupCommHeadPtr,
 }
 ```
 
-注意 `comm->preconnectNext = reinterpret_cast<struct ncclComm*>(0x1)` 这一行。这是一个「哨兵值」，表示「这个 comm 需要重新 preconnect」。为什么？因为 cleanup 时不知道 preconnect 是否成功，所以强制下次重新检查。`0x1` 这个值很巧妙——它不是一个合法的指针，但可以用来做「未初始化」标记。`ncclGroupCommPreconnect` 里检查 `if (comm->preconnectNext == reinterpret_cast<struct ncclComm*>(0x1))` 来判断是否需要加入 preconnect 链表。
+Note`comm->preconnectNext = reinterpret_cast<struct ncclComm*>(0x1)`this line. This is a "sentinel value," indicating "this comm needs to be preconnected again." Why? Because during cleanup it is unknown whether preconnect succeeded, so the next check is forced to be repeated.`0x1`This value is very clever - it is not a valid pointer, but it can be used as an "uninitialized" marker.`ncclGroupCommPreconnect`Check inside`if (comm->preconnectNext == reinterpret_cast<struct ncclComm*>(0x1))`to determine whether it needs to be added to the preconnect linked list.
 
 ---
 
-## 二、任务准备：`ncclPrepareTasks` 如何把任务描述变成可调度单元
+# 2. Task Preparation:`ncclPrepareTasks`How to Turn Task Descriptions into Schedulable Units
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-`ncclPrepareTasks` 是「备菜」环节。购物车里的菜（任务描述）还是生的，需要先洗切配（确定算法、协议、channel 切分），才能下锅（启动 kernel）。如果跳过这一步直接启动 kernel，kernel 不知道数据怎么切、走哪条路，会直接崩溃。
+`ncclPrepareTasks`This is the "prep work" phase. The ingredients in the shopping cart (task descriptions) are still raw and need to be washed, cut, and prepared (determining algorithms, protocols, channel partitioning) before they can go into the pot (launching kernels). If you skip this step and launch kernels directly, the kernel won't know how to partition the data or which path to take, and will crash immediately.
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-Driven Step-by-Step Walkthrough
 
-`ncclPrepareTasks` 在 `groupLaunchLegacy` 里被调用：
+`ncclPrepareTasks`In`groupLaunchLegacy`is called:
 
-[FACT:src/group.cc:705-746](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L705-L746)
+[FACT:src/group.cc:705-746]
 
 ```cpp
 static ncclResult_t ncclPrepareTasksAndCollPreconnect(
   struct ncclComm* comm, ncclSimInfo_t* simInfo,
-  struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next>* asyncCollJobs) {
+  struct ncclIntruQueue* asyncCollJobs) {
   if (ncclParamSingleProcMemRegEnable()) {
     // 单进程内存注册模式：把 prepare 和 preconnect 合并成一个异步 job
     struct ncclPrepareTasksAndCollPreconnectJob* job;
@@ -303,13 +297,13 @@ static ncclResult_t ncclPrepareTasksAndCollPreconnect(
 }
 ```
 
-`ncclPrepareTasks` 的输出是两个东西：`algoNeedConnect` 数组（哪些算法需要建立连接）和 `needConnect` 标志（是否需要连接）。如果 `needConnect` 为真且支持 cuMem，就创建一个 preconnect job 异步执行。
+`ncclPrepareTasks`The output is two things:`algoNeedConnect`array (which algorithms need to establish connections) and`needConnect`flag (whether a connection is needed). If`needConnect`is true and cuMem is supported, a preconnect job is created and executed asynchronously.
 
-`ncclPrepareTasks` 内部做了什么？它遍历 `comm->planner` 里的任务，对每个任务确定算法和协议，然后调用 `taskAppend` 把任务追加到 planner 的 plan 里。这部分逻辑在上一章已经展开，这里不再重复。
+`ncclPrepareTasks`What does it do internally? It iterates over`comm->planner`tasks, determines the algorithm and protocol for each task, then calls`taskAppend`to append the task to the planner's plan. This logic was covered in the previous chapter and won't be repeated here.
 
-关键点：`ncclPrepareTasks` 是**按 comm 逐个调用**的，但 preconnect 是**按 clique 批量执行**的。为什么？看 `groupLaunchLegacy` 里的注释：
+Key points:`ncclPrepareTasks`is**called per comm individually**but preconnect is**executed in batches per clique**Why? See the comments in`groupLaunchLegacy`:
 
-[FACT:src/group.cc:818-834](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L818-L834)
+[FACT:src/group.cc:818-834]
 
 ```cpp
 do {
@@ -328,16 +322,16 @@ do {
 } while (cliqueHead != nullptr);
 ```
 
-注释说得很清楚：**按 clique 逐个 preconnect，避免 split shared comms 同时连接同一组连接导致竞态**。如果两个 comm 是从同一个父 comm split 出来的，它们可能共享一些连接。如果并行 preconnect，两个线程可能同时尝试建立同一个连接，导致重复连接或连接状态不一致。按 clique 串行执行，保证同一时刻只有一个 clique 在建立连接。
+The comment explains it clearly:**Preconnect per clique one at a time to avoid split shared comms simultaneously connecting the same set of connections causing races**. If two comms are split from the same parent comm, they may share some connections. If preconnected in parallel, two threads might simultaneously try to establish the same connection, causing duplicate connections or inconsistent connection state. Executing serially per clique ensures only one clique is establishing connections at any given time.
 
-### 并发控制与底层交互
+## Concurrency Control and Low-Level Interaction
 
-`asyncJobLaunch` 是异步任务启动的核心：
+`asyncJobLaunch`is the core of asynchronous task launching:
 
-[FACT:src/group.cc:609-678](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L609-L678)
+[FACT:src/group.cc:609-678]
 
 ```cpp
-static ncclResult_t asyncJobLaunch(struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next>* asyncJobsMain,
+static ncclResult_t asyncJobLaunch(struct ncclIntruQueue* asyncJobsMain,
                                    volatile bool* groupAbortFlag) {
   ncclResult_t ret = ncclSuccess;
   bool jobsDone = false;
@@ -411,36 +405,36 @@ fail:
 }
 ```
 
-这段代码有几个关键设计：
+This code has several key design points:
 
-1. **单 job 优化**：如果队列里只有一个 job，不创建线程，直接在当前线程执行。这避免了线程创建和 join 的开销。对于单 comm 的 group，这是常见情况。
+1. **Single job optimization**: If there's only one job in the queue, no thread is created and it executes directly on the current thread. This avoids the overhead of thread creation and join. For single-comm groups, this is the common case.
 
-2. **原子状态机**：`job->state` 是一个原子变量，有三个状态：`ncclGroupJobRunning`、`ncclGroupJobDone`、`ncclGroupJobJoined`。工作线程执行完后用 `COMPILER_ATOMIC_STORE(..., std::memory_order_release)` 设置为 `Done`；主线程用 `COMPILER_ATOMIC_LOAD(..., std::memory_order_acquire)` 读取。release/acquire 配对保证了工作线程的所有内存写入对主线程可见。
+2. **Atomic state machine**：`job->state`is an atomic variable with three states:`ncclGroupJobRunning`、`ncclGroupJobDone`、`ncclGroupJobJoined`. After the worker thread finishes execution, it uses`COMPILER_ATOMIC_STORE(..., std::memory_order_release)`to set it to`Done`; the main thread uses`COMPILER_ATOMIC_LOAD(..., std::memory_order_acquire)`to read. The release/acquire pairing guarantees that all memory writes by the worker thread are visible to the main thread.
 
-3. **忙等待 + 微睡眠**：主线程轮询所有 job 的状态，如果还有 job 在跑，`sleep_for(1us)` 后继续轮询。为什么用 1 微秒而不是条件变量？因为 preconnect 是短任务（通常几十微秒到几毫秒），条件变量的唤醒开销可能比忙等待还大。1 微秒的睡眠避免了纯自旋导致的 CPU 浪费。
+3. **Busy-wait + micro-sleep**: The main thread polls the status of all jobs. If any job is still running,`sleep_for(1us)`then continues polling. Why use 1 microsecond instead of a condition variable? Because preconnect is a short task (typically tens of microseconds to a few milliseconds), and the wake-up overhead of a condition variable may be greater than busy-waiting. A 1-microsecond sleep avoids CPU waste from pure spinning.
 
-4. **错误传播与 abort**：如果任何一个 job 失败，`errorJobAbortFlag` 被设置，后续所有 job 的 `abortFlag` 被原子设置为 1。工作线程在执行过程中会检查 `abortFlag`，如果发现被 abort，提前退出。这是「快速失败」机制，避免一个 job 失败后其他 job 还在傻跑。
+4. **Error propagation and abort**: If any job fails,`errorJobAbortFlag`is set, and all subsequent jobs'`abortFlag`are atomically set to 1. The worker thread checks`abortFlag`during execution, and if aborted, exits early. This is a "fail-fast" mechanism, preventing other jobs from continuing to run foolishly after one job fails.
 
-### Mermaid 图：group 提交的控制流
+## Mermaid diagram: control flow of group submission
 
 ```mermaid
 flowchart TD
     gs["ncclGroupStart()"] --> depth_inc["ncclGroupDepth++"]
     depth_inc --> api_calls["用户调用 ncclAllReduce 等"]
     api_calls --> join["ncclGroupCommJoin(comm, type)"]
-    join --> check_dup{"comm->groupNext[type]<br/>== NCCL_COMM_GROUP_INVALID?"}
-    check_dup -->|是| insert["插入 clique 链表<br/>ncclMemoryStackPush"]
+    join --> check_dup{"comm->groupNext[type]== NCCL_COMM_GROUP_INVALID?"}
+    check_dup -->|是| insert["插入 clique 链表ncclMemoryStackPush"]
     check_dup -->|否| skip["跳过（已加入）"]
     insert --> ge["ncclGroupEnd()"]
     skip --> ge
     ge --> depth_dec["--ncclGroupDepth"]
     depth_dec --> depth_zero{"depth == 0?"}
     depth_zero -->|否| ret_early["返回（嵌套内层）"]
-    depth_zero -->|是| check_err{"ncclGroupError<br/>== ncclSuccess?"}
+    depth_zero -->|是| check_err{"ncclGroupError== ncclSuccess?"}
     check_err -->|否| fail_cleanup["groupCleanup()"]
-    check_err -->|是| create_job["创建 ncclGroupJob<br/>转移 thread_local 状态"]
+    check_err -->|是| create_job["创建 ncclGroupJob转移 thread_local 状态"]
     create_job --> blocking{"ncclGroupBlocking?"}
-    blocking -->|0 非阻塞| spawn_thread["STDTHREADCREATE<br/>groupLaunchNonBlocking"]
+    blocking -->|0 非阻塞| spawn_thread["STDTHREADCREATEgroupLaunchNonBlocking"]
     blocking -->|1 阻塞| sync_launch["groupLaunch() 同步执行"]
     spawn_thread --> ret_progress["返回 ncclInProgress"]
     sync_launch --> ret_ok["返回 ncclSuccess"]
@@ -451,17 +445,17 @@ flowchart TD
 
 ---
 
-## 三、`doLaunches`：多 channel 多 kernel 的轮次调度
+# Three,`doLaunches`: round scheduling for multi-channel multi-kernel
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`doLaunches` 是「传菜调度员」。厨房（GPU）有多个灶台（channel），每道菜（kernel plan）需要按顺序上。但不同 comm 的菜可能可以并行上，同一个 comm 的菜必须按顺序上。调度员要保证：同一个 clique 内的 comm 同步推进（用 barrier），不同 clique 之间可以独立推进。
+`doLaunches`is the "dish delivery dispatcher." The kitchen (GPU) has multiple stoves (channels), and each dish (kernel plan) needs to be served in order. But dishes from different comms may be served in parallel, while dishes from the same comm must be served in order. The dispatcher must ensure: comms within the same clique advance synchronously (using a barrier), while different cliques can advance independently.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-`doLaunches` 的核心数据结构是 `ncclKernelPlan` 和 `comm->planner.unlaunchedPlansHead`。
+`doLaunches`The core data structures of`ncclKernelPlan`are`comm->planner.unlaunchedPlansHead`。
 
-[FACT:src/group.cc:427-503](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L427-L503)
+[FACT:src/group.cc:427-503]
 
 ```cpp
 ncclResult_t doLaunches(struct ncclComm* head, int taskType) {
@@ -481,7 +475,7 @@ ncclResult_t doLaunches(struct ncclComm* head, int taskType) {
       NCCLCHECKGOTO(ncclLaunchPrepare(comm), result, failure);
       if (useBarrier) ncclCommIntraBarrierIn(comm, 1);
       comm = comm->groupNext[taskType];
-    } while (comm != nullptr && comm != reinterpret_cast<struct ncclComm*>(NCCL_COMM_GROUP_INVALID) &&
+    } while (comm != nullptr && comm != reinterpret_cast(NCCL_COMM_GROUP_INVALID) &&
              comm->intraComm0 == cliqueHead->intraComm0);
     cliqueNextHead = comm;
 
@@ -533,43 +527,44 @@ ncclResult_t doLaunches(struct ncclComm* head, int taskType) {
           NCCLCHECKGOTO(ncclLaunchFinish(comm), result, failure);
         }
         comm = next;
-      } while (comm != reinterpret_cast<struct ncclComm*>(NCCL_COMM_GROUP_INVALID) && comm != cliqueNextHead);
+      } while (comm != reinterpret_cast(NCCL_COMM_GROUP_INVALID) && comm != cliqueNextHead);
       if (!moreRounds) break;
     }
     cliqueHead = cliqueNextHead;
-  } while (cliqueHead != nullptr && cliqueHead != reinterpret_cast<struct ncclComm*>(NCCL_COMM_GROUP_INVALID));
+  } while (cliqueHead != nullptr && cliqueHead != reinterpret_cast(NCCL_COMM_GROUP_INVALID));
 failure:
   return result;
 }
 ```
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Copy
 
-**场景**：两个 comm（commA 和 commB）属于同一个 clique（`intraComm0` 相同），每个 comm 有 3 个 kernel plan 待启动。
+**Scenario-Driven Step-by-Step Walkthrough**Scenario`intraComm0`: Two comms (commA and commB) belong to the same clique (
 
-**第一层循环：遍历 clique**
+**are the same), and each comm has 3 kernel plans pending launch.**
 
-外层 `do-while` 遍历所有 clique。`cliqueHead` 是当前 clique 的第一个 comm。内层 `do-while` 遍历 clique 内的所有 comm（`comm->intraComm0 == cliqueHead->intraComm0`）。
+First-level loop: iterate over cliques`do-while`The outer`cliqueHead`iterates over all cliques.`do-while`is the first comm of the current clique. The inner`comm->intraComm0 == cliqueHead->intraComm0`）。
 
-对每个 comm：
-- `cudaSetDevice(comm->cudaDev)`：切换到该 comm 对应的 GPU。
-- `ncclLaunchPrepare(comm)`：准备启动，包括设置 CUDA 流、检查资源等。
-- `ncclCommIntraBarrierIn(comm, 1)`：进入 barrier，初始值为 1。
+iterates over all comms in the clique (
 
-**第二层循环：轮次调度**
+- `cudaSetDevice(comm->cudaDev)`For each comm:
+- `ncclLaunchPrepare(comm)`: Switch to the GPU corresponding to that comm.
+- `ncclCommIntraBarrierIn(comm, 1)`: Prepare for launch, including setting up the CUDA stream, checking resources, etc.
 
-`while (true)` 循环执行「轮次」。每一轮，clique 内每个 comm 启动一个 kernel plan。
+**: Enter the barrier, with an initial value of 1.**
 
-关键在 `moreRounds` 的计算：
+`while (true)`Second-level loop: round scheduling
 
-- **有 barrier 模式**（`useBarrier == true`）：`moreRounds = 0 != ncclCommIntraBarrierOut(comm)`。`ncclCommIntraBarrierOut` 是一个**跨 comm 的 barrier 归约操作**。它等待 clique 内所有 comm 都调用了 `ncclCommIntraBarrierIn`，然后返回所有输入值的归约结果（这里是逻辑或）。如果任何一个 comm 还有未启动的 plan，归约结果为 1，`moreRounds` 为 true，继续下一轮。如果所有 comm 都没有未启动的 plan，归约结果为 0，`moreRounds` 为 false，进入 final round。
-- **无 barrier 模式**：`moreRounds |= comm->planner.unlaunchedPlansHead != nullptr`。直接检查每个 comm 是否还有未启动的 plan。注意这里用的是 `|=`，只要有一个 comm 还有 plan，`moreRounds` 就为 true。
+The loop executes "rounds." In each round, each comm in the clique launches one kernel plan.`moreRounds`The key is in the computation of
 
-为什么需要 barrier？因为 clique 内的 comm 是「兄弟」，它们可能共享 GPU 资源或网络连接。如果一个 comm 启动了 3 个 kernel，另一个只启动了 1 个，先启动完的 comm 会进入 `ncclLaunchFinish`，释放资源，而另一个 comm 还在用这些资源，导致 use-after-free。barrier 保证 clique 内所有 comm 同步推进：要么都启动第 N 轮，要么都进入 final round。
+- **:**（`useBarrier == true`）：`moreRounds = 0 != ncclCommIntraBarrierOut(comm)`。`ncclCommIntraBarrierOut`With barrier mode**is a**cross-comm barrier reduction operation`ncclCommIntraBarrierIn`. It waits for all comms in the clique to call`moreRounds`, then returns the reduction result of all input values (here, logical OR). If any comm still has unlaunched plans, the reduction result is 1,`moreRounds`is true, and the next round continues. If all comms have no unlaunched plans, the reduction result is 0,
+- **is false, and it enters the final round.**：`moreRounds |= comm->planner.unlaunchedPlansHead != nullptr`. Directly check whether each comm still has an unstarted plan. Note that here it uses`|=`, as long as one comm still has a plan,`moreRounds`is true.
 
-**kernel 启动分支**
+Why is a barrier needed? Because the comms within a clique are "siblings"; they may share GPU resources or network connections. If one comm launches 3 kernels and another launches only 1, the comm that finishes launching first will enter`ncclLaunchFinish`, release resources, while the other comm is still using these resources, causing a use-after-free. The barrier ensures that all comms within the clique advance synchronously: either they all launch round N, or they all enter the final round.
 
-[FACT:src/group.cc:477-483](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L477-L483)
+**Kernel launch branch**
+
+[FACT:src/group.cc:477-483]
 
 ```cpp
 if (plan->isCeColl) {
@@ -581,31 +576,33 @@ if (plan->isCeColl) {
 }
 ```
 
-三种 plan 类型：
-- `isCeColl`：CollNet 集合通信（用网卡卸载做集合通信）。
-- `isRma`：RMA（Remote Memory Access）任务。
-- 默认：普通 GPU kernel。
+Three plan types:
 
-每种类型的启动函数不同，但都遵循「Before -> Launch -> After」的模式：
-- `ncclLaunchKernelBefore_NoUncapturedCuda`：启动前准备（设置 kernel 参数、上传到设备等）。
-- `ncclLaunchKernel`：实际启动 kernel（`cudaLaunchKernel`）。
-- `ncclLaunchKernelAfter_NoCuda`：启动后清理（更新状态、释放临时资源）。
+- `isCeColl`: CollNet collective communication (using NIC offload for collective communication).
+- `isRma`: RMA (Remote Memory Access) tasks.
+- Default: normal GPU kernel.
+
+Each type has a different launch function, but all follow the "Before -> Launch -> After" pattern:
+
+- `ncclLaunchKernelBefore_NoUncapturedCuda`: preparation before launch (setting kernel parameters, uploading to device, etc.).
+- `ncclLaunchKernel`: actually launch the kernel (`cudaLaunchKernel`）。
+- `ncclLaunchKernelAfter_NoCuda`: cleanup after launch (updating state, releasing temporary resources).
 
 **Final round**
 
-当 `moreRounds` 为 false 时，执行 `ncclLaunchFinish(comm)`。这一步做最终的清理：释放 plan 内存、更新 comm 状态、通知 proxy 线程等。
+When`moreRounds`is false, execute`ncclLaunchFinish(comm)`. This step performs final cleanup: freeing plan memory, updating comm state, notifying the proxy thread, etc.
 
-### 并发控制与硬件交互
+## Concurrency control and hardware interaction
 
-`ncclCommIntraBarrierIn/Out` 是 clique 内 comm 的同步原语。它的实现涉及原子操作和自旋等待。`In` 把值写入共享内存，`Out` 等待所有 comm 都写入后读取归约结果。这个 barrier 是**跨进程**的（如果 comm 在不同进程），底层可能用共享内存或网络。
+`ncclCommIntraBarrierIn/Out`is the synchronization primitive for comms within a clique. Its implementation involves atomic operations and spin-waiting.`In`writes the value to shared memory,`Out`waits for all comms to write before reading the reduction result. This barrier is**cross-process**(if the comms are in different processes), and the underlying implementation may use shared memory or the network.
 
-为什么用 barrier 而不是简单的「检查所有 comm 是否还有 plan」？因为「检查」是非原子的：commA 检查时 commB 还有 plan，commA 决定继续；但 commB 在 commA 检查后立即启动完最后一个 plan，进入 final round。commA 还在启动 kernel，commB 已经释放了共享资源。barrier 把「检查」和「决定」变成一个原子操作，消除了这个竞态。
+Why use a barrier instead of simply "checking whether all comms still have plans"? Because "checking" is non-atomic: when commA checks, commB still has a plan, so commA decides to continue; but commB immediately finishes launching its last plan after commA's check and enters the final round. commA is still launching kernels, while commB has already released shared resources. The barrier turns "checking" and "deciding" into a single atomic operation, eliminating this race.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：CUDA graph capture 混用**。
+**Pitfall 1: Mixing CUDA graph capture**。
 
-[FACT:src/group.cc:448-455](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L448-L455)
+[FACT:src/group.cc:448-455]
 
 ```cpp
 if (capturingYes && capturingNo) {
@@ -618,21 +615,21 @@ if (capturingYes && capturingNo) {
 }
 ```
 
-如果 clique 内一部分 comm 在 CUDA graph capture 模式下，另一部分不在，直接报错。注释说「these comms are permanently trashed」——因为已经进入了 barrier 但没有退出，这些 comm 的 barrier 状态永远不一致，后续无法再使用。这是一个**不可恢复错误**，用户必须重建通信域。生产环境中，如果用户混用 graph capture 和非 capture 的 comm，会收到 `ncclInvalidUsage`，但更严重的是 comm 已经损坏。
+If some comms within a clique are in CUDA graph capture mode and others are not, it directly errors out. The comment says "these comms are permanently trashed" — because they have entered the barrier but not exited, the barrier states of these comms will forever be inconsistent, and they can no longer be used afterward. This is an**unrecoverable error**, and the user must rebuild the communication domain. In production, if a user mixes graph-capture and non-capture comms, they will receive`ncclInvalidUsage`, but more seriously, the comm is already corrupted.
 
-**坑 2：`useBarrier` 的配置依赖**。`useBarrier = ncclParamLaunchMode == ncclLaunchModeGroup`。如果用户设置了 `NCCL_LAUNCH_MODE=GROUP`，走 barrier 路径；否则走非 barrier 路径。非 barrier 路径下，`moreRounds` 用 `|=` 累积，但每个 comm 独立判断。如果 commA 还有 plan 而 commB 没有，commB 会进入 final round 执行 `ncclLaunchFinish`，而 commA 还在启动 kernel。这在某些场景下是安全的（comm 之间没有共享资源），但如果共享了 proxy 线程或网络连接，可能导致问题。所以默认推荐用 barrier 模式。
+**Pitfall 2:`useBarrier`configuration dependency**。`useBarrier = ncclParamLaunchMode == ncclLaunchModeGroup`. If the user sets`NCCL_LAUNCH_MODE=GROUP`, the barrier path is taken; otherwise, the non-barrier path is taken. Under the non-barrier path,`moreRounds`uses`|=`to accumulate, but each comm decides independently. If commA still has a plan while commB does not, commB will enter the final round and execute`ncclLaunchFinish`, while commA is still launching kernels. This is safe in some scenarios (there are no shared resources between comms), but if proxy threads or network connections are shared, it may cause problems. Therefore, barrier mode is recommended by default.
 
 ---
 
-## 四、`groupLaunchLegacy` 的完整执行链
+# IV.`groupLaunchLegacy`'s complete execution chain
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-driven Step-by-Step Walkthrough
 
-`groupLaunchLegacy` 是阻塞模式下的完整提交流程。按顺序执行：
+`groupLaunchLegacy`is the complete submission process in blocking mode. Execute in order:
 
-**阶段 1：P2P preconnect**
+**Phase 1: P2P preconnect**
 
-[FACT:src/group.cc:756-774](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L756-L774)
+[FACT:src/group.cc:756-774]
 
 ```cpp
 if (!simInfo && groupCommPreconnectHeadMain != nullptr) {
@@ -644,74 +641,29 @@ if (!simInfo && groupCommPreconnectHeadMain != nullptr) {
     // ...
     ncclIntruQueueEnqueue(asyncJobsMain, (struct ncclAsyncJob*)job);
     struct ncclComm* next = comm->preconnectNext;
-    comm->preconnectNext = reinterpret_cast<struct ncclComm*>(0x1);
+    comm->preconnectNext = reinterpret_cast(0x1);
     comm = next;
   } while (comm != nullptr);
 }
 NCCLCHECKGOTO(asyncJobLaunch(asyncJobsMain, groupAbortFlag), ret, fail);
 ```
 
-对每个需要 preconnect 的 comm 创建一个 `ncclP2PPreconnectFunc` job，然后批量启动。`ncclP2PPreconnectFunc` 内部调用 `ncclTransportP2pSetup` 建立 P2P 连接。
+For each comm that needs preconnect, create a`ncclP2PPreconnectFunc`job, then launch them in batches.`ncclP2PPreconnectFunc`internally calls`ncclTransportP2pSetup`to establish the P2P connection.
 
-**阶段 2：对称内存注册**
+**Phase 2: Symmetric memory registration**
 
-[FACT:src/group.cc:778-808](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L778-L808)
+[FACT:src/group.cc:778-808]
 
 ```cpp
 // only loop through sym alloc and register tasks
-for (int type = ncclGroupTaskTypeSymRegister; type <= ncclGroupTaskTypeSymRegister; ++type) {
-  if (groupCommHeadMain[type]) {
-    // 按 clique 批量执行 ncclCommGroupRegisterSymmetric
-  }
-}
-```
-
-对称内存注册（`ncclCommWindowRegister` 等）按 clique 批量执行。
-
-**阶段 3：集合通信 preconnect**
-
-[FACT:src/group.cc:810-870](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L810-L870)
-
-```cpp
-if (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr) {
-  // 按 clique 逐个 prepare + preconnect
-  // 然后 ncclTasksRegAndEnqueue
-  // 然后 debug check
-}
-```
-
-这是核心阶段。按 clique 逐个调用 `ncclPrepareTasksAndCollPreconnect`，然后 `asyncJobLaunch` 执行 preconnect。preconnect 完成后，调用 `ncclTasksRegAndEnqueue` 把任务注册到 plan 并生成 kernel 启动参数。
-
-**阶段 4：`doLaunches`**
-
-[FACT:src/group.cc:872-874](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L872-L874)
-
-```cpp
-if ((!simInfo) && (groupCommHeadMain[ncclGroupTaskTypeCollective] != nullptr)) {
-  NCCLCHECKGOTO(doLaunches(groupCommHeadMain[ncclGroupTaskTypeCollective], ncclGroupTaskTypeCollective), ret, fail);
-}
-```
-
-启动所有 kernel plan。
-
-**阶段 5：清理**
-
-[FACT:src/group.cc:876-903](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L876-L903)
-
-```cpp
-while (!ncclIntruQueueEmpty(asyncJobsMain)) {
-  struct ncclAsyncJob* job = ncclIntruQueueDequeue(asyncJobsMain);
-  if (!job->destroyFlag && job->comm && !job->comm->config.blocking &&
+for (int type = ncclGroupTaskTypeSymRegister; type destroyFlag && job->comm && !job->comm->config.blocking &&
       groupCommHeadMain[ncclGroupTaskTypeCollective] == nullptr) {
     (void)ncclCommSetAsyncError(job->comm, ret);
   }
   if (job->destructor) job->destructor((void*)job);
 }
 
-for (int type = 0; type < ncclGroupTaskTypeNum; ++type) {
-  while (groupCommHeadMain[type] != nullptr) {
-    struct ncclComm* comm = groupCommHeadMain[type];
-    struct ncclComm* next = comm->groupNext[type];
+for (int type = 0; type groupNext[type];
     // Poll for callbacks sent to us from other threads.
     if (comm->reclaimSteps == GROUP_MAX_RECLAIM_STEPS) {
       NCCLCHECKGOTO(ncclCommPollCallbacks(comm, /*waitSome=*/false), ret, fail);
@@ -728,9 +680,9 @@ for (int type = 0; type < ncclGroupTaskTypeNum; ++type) {
 }
 ```
 
-清理异步 job，然后遍历所有 comm 调用 `ncclGroupCommLeave`。注意 `reclaimSteps` 的计数：每 `GROUP_MAX_RECLAIM_STEPS`（10）次 group 调用，轮询一次 callbacks。这是为了避免每次 group 都轮询 callbacks 的开销，同时保证 callbacks 不会无限堆积。
+Clean up asynchronous jobs, then iterate over all comms and call`ncclGroupCommLeave`. Note the count of`reclaimSteps`: every`GROUP_MAX_RECLAIM_STEPS`(10) group calls, poll callbacks once. This is to avoid the overhead of polling callbacks on every group, while ensuring callbacks do not accumulate indefinitely.
 
-### Mermaid 图：`groupLaunchLegacy` 的数据流
+## Mermaid diagram:`groupLaunchLegacy`data flow of
 
 ```mermaid
 flowchart LR
@@ -741,22 +693,22 @@ flowchart LR
     end
 
     subgraph phase1["阶段1: P2P preconnect"]
-        p2p_job["ncclPreconnectJob<br/>func=ncclP2PPreconnectFunc"]
+        p2p_job["ncclPreconnectJobfunc=ncclP2PPreconnectFunc"]
         p2p_launch["asyncJobLaunch"]
     end
 
     subgraph phase2["阶段2: 对称内存注册"]
-        sym_job["ncclGroupSymmetricJob<br/>func=ncclCommGroupRegisterSymmetric"]
+        sym_job["ncclGroupSymmetricJobfunc=ncclCommGroupRegisterSymmetric"]
     end
 
     subgraph phase3["阶段3: 集合通信 prepare+preconnect"]
         prep["ncclPrepareTasksAndCollPreconnect"]
-        coll_job["ncclPreconnectJob<br/>func=ncclCollPreconnectFunc"]
+        coll_job["ncclPreconnectJobfunc=ncclCollPreconnectFunc"]
         reg_enq["ncclTasksRegAndEnqueue"]
     end
 
     subgraph phase4["阶段4: kernel 启动"]
-        do_launch["doLaunches<br/>轮次调度"]
+        do_launch["doLaunches轮次调度"]
         plan["ncclKernelPlan"]
         kernel["ncclLaunchKernel"]
     end
@@ -769,13 +721,13 @@ flowchart LR
 
 ---
 
-## 五、`groupLaunchEnqueueRearch`：新架构的调度器
+# V.`groupLaunchEnqueueRearch`: The new architecture scheduler
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`groupLaunchEnqueueRearch` 是 NCCL 正在开发的新调度架构。它把任务准备、调度、启动分成更细的阶段，用异步 job 队列管理。目前调度器和启动器模块「尚未实现」，回退到 legacy 的 `doLaunches`。
+`groupLaunchEnqueueRearch`is the new scheduling architecture being developed by NCCL. It divides task preparation, scheduling, and launch into finer stages, managed with an asynchronous job queue. Currently, the scheduler and launcher modules are "not yet implemented," falling back to legacy`doLaunches`。
 
-[FACT:src/group.cc:991-996](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L991-L996)
+[FACT:src/group.cc:991-996]
 
 ```cpp
 // Schedule and launch tasks. Scheduler and launcher module of the enqueue framework
@@ -786,15 +738,17 @@ if (!simInfo && groupCommHeadMain[ncclGroupTaskTypeRawTask] != nullptr) {
 }
 ```
 
-新架构的执行流程：
+Execution flow of the new architecture:
 
-1. **管理任务**：`ncclMgmtTaskJobFunc` 处理 `mgmtTaskQueue` 里的任务（如 destroy）。
-2. **任务准备**：`ncclTaskPrepareJobFunc` 调用 `ncclTaskPrepare`。
-3. **调度和启动**：回退到 `doLaunches`。
+1. **Manage tasks**：`ncclMgmtTaskJobFunc`Handle`mgmtTaskQueue`tasks in (such as destroy).
 
-新架构用 `ncclGroupJobLaunch` 替代 `asyncJobLaunch`，增加了更严格的状态检查：
+2. **Task preparation**：`ncclTaskPrepareJobFunc`Call`ncclTaskPrepare`。
 
-[FACT:src/group.cc:113-116](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L113-L116)
+3. **Scheduling and launch**: Fall back to`doLaunches`。
+
+The new architecture uses`ncclGroupJobLaunch`instead of`asyncJobLaunch`, adding stricter state checks:
+
+[FACT:src/group.cc:113-116]
 
 ```cpp
 } else {
@@ -803,15 +757,15 @@ if (!simInfo && groupCommHeadMain[ncclGroupTaskTypeRawTask] != nullptr) {
 }
 ```
 
-legacy 版本用 `WARN` 而不是 `assert`，新架构用 `assert`。这说明新架构对状态机的正确性要求更高。
+The legacy version uses`WARN`instead of`assert`, while the new architecture uses`assert`. This indicates that the new architecture has higher requirements for state machine correctness.
 
-### 设计思考
+## Design considerations
 
-新架构的动机是**解耦**：legacy 的 `groupLaunchLegacy` 把所有阶段揉在一个函数里，难以维护和扩展。新架构把每个阶段拆成独立的 job 类型，通过队列串联。但目前调度器和启动器还没实现，所以只是「框架先行」。
+The motivation for the new architecture is**decoupling**: The legacy`groupLaunchLegacy`crams all stages into one function, making it difficult to maintain and extend. The new architecture splits each stage into independent job types, connected through a queue. However, the scheduler and launcher are not yet implemented, so it is currently "framework first."
 
-`ncclParamEnqueueRearchEnable()` 控制走新架构还是 legacy：
+`ncclParamEnqueueRearchEnable()`controls whether to use the new architecture or legacy:
 
-[FACT:src/group.cc:1031-1033](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1031-L1033)
+[FACT:src/group.cc:1031-1033]
 
 ```cpp
 static ncclResult_t groupLaunch(struct ncclAsyncJob* job_, ncclSimInfo_t* simInfo = NULL) {
@@ -819,17 +773,17 @@ static ncclResult_t groupLaunch(struct ncclAsyncJob* job_, ncclSimInfo_t* simInf
 }
 ```
 
-用户可以通过环境变量 `NCCL_ENQUEUE_REARCH_ENABLE` 切换。生产环境建议保持默认（legacy），因为新架构还在开发中。
+Users can switch via the environment variable`NCCL_ENQUEUE_REARCH_ENABLE`. For production environments, it is recommended to keep the default (legacy), because the new architecture is still under development.
 
 ---
 
-## 六、非阻塞 group 与异步错误处理
+# VI. Non-blocking group and asynchronous error handling
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-driven Step-by-Step Walkthrough
 
-非阻塞 group 的核心是 `ncclGroupJobComplete` 和 `ncclGroupJobAbort`：
+The core of non-blocking group is`ncclGroupJobComplete`and`ncclGroupJobAbort`：
 
-[FACT:src/group.cc:1166-1190](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1166-L1190)
+[FACT:src/group.cc:1166-1190]
 
 ```cpp
 ncclResult_t ncclGroupJobComplete(struct ncclGroupJob* groupJob) {
@@ -859,13 +813,13 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
 }
 ```
 
-关键设计：
+Key design:
 
-1. **`joined` 原子标志**：用 `COMPILER_ATOMIC_EXCHANGE` 保证只有一个线程能执行 join 逻辑。如果两个线程同时调用 `ncclGroupJobComplete`，只有一个会真正 join，另一个直接跳过。这防止了 double-join。
+1. **`joined`Atomic flag**: Use`COMPILER_ATOMIC_EXCHANGE`to ensure only one thread can execute the join logic. If two threads call`ncclGroupJobComplete`at the same time, only one will actually join, and the other will skip directly. This prevents double-join.
 
-2. **引用计数**：`groupRefCount` 记录有多少个 comm 关联到这个 group job。每个 comm 在 `ncclGroupEndInternal` 里增加引用计数：
+2. **Reference counting**：`groupRefCount`records how many comms are associated with this group job. Each comm increments the reference count in`ncclGroupEndInternal`:
 
-[FACT:src/group.cc:1108-1111](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1108-L1111)
+[FACT:src/group.cc:1108-1111]
 
 ```cpp
 if (job->comm->groupJob == NULL) {
@@ -874,34 +828,38 @@ if (job->comm->groupJob == NULL) {
 }
 ```
 
-只有当所有 comm 都调用了 `ncclGroupJobComplete` 或 `ncclGroupJobAbort`，引用计数减到 0，才删除 group job。这保证了 group job 的生命周期覆盖所有关联的 comm。
+Only when all comms have called`ncclGroupJobComplete`or`ncclGroupJobAbort`, and the reference count drops to 0, is the group job deleted. This ensures that the group job's lifetime covers all associated comms.
 
-3. **abort 语义**：`ncclGroupJobAbort` 先设置 `abortFlag`，然后 join。工作线程在执行过程中检查 `abortFlag`，如果发现被 abort，提前退出。这是「协作式取消」——不是强制杀死线程，而是让线程自己检查标志后退出。
+3. **abort semantics**：`ncclGroupJobAbort`first sets`abortFlag`, then joins. The worker thread checks`abortFlag`during execution, and if it finds it has been aborted, exits early. This is "cooperative cancellation" — not forcibly killing the thread, but letting the thread check the flag and exit on its own.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 3：非阻塞 group 的错误查询**。非阻塞 group 返回 `ncclInProgress`，用户需要通过 `ncclCommGetAsyncError` 查询进度。如果用户忘记查询，直接调用下一次通信，可能遇到 `ncclInProgress` 错误。更严重的是，如果 group job 还在运行，用户调用了 `ncclCommDestroy`，会导致 use-after-free。NCCL 通过 `comm->groupJob` 指针和引用计数来防止这种情况：`ncclCommDestroy` 会先检查 `comm->groupJob`，如果有未完成的 group job，会等待或报错。
+**Pitfall 3: Error querying for non-blocking group**. Non-blocking group returns`ncclInProgress`, and the user needs to query progress through`ncclCommGetAsyncError`. If the user forgets to query and directly calls the next communication, they may encounter`ncclInProgress`errors. More seriously, if the group job is still running and the user calls`ncclCommDestroy`, it will cause use-after-free. NCCL prevents this through`comm->groupJob`pointers and reference counting:`ncclCommDestroy`will first check`comm->groupJob`, and if there is an unfinished group job, it will wait or report an error.
 
-**坑 4：`ncclGroupJobComplete` 的返回值**。如果 group job 执行失败，`ncclAsyncJobComplete` 返回错误码。但 `ncclGroupJobComplete` 只在第一次调用时返回这个错误码，后续调用返回 `ncclSuccess`（因为 `joined` 已经是 true）。用户必须在第一次调用时检查返回值，否则会丢失错误信息。
+**Pitfall 4:`ncclGroupJobComplete`return value of**. If the group job execution fails,`ncclAsyncJobComplete`returns an error code. But`ncclGroupJobComplete`only returns this error code on the first call, and subsequent calls return`ncclSuccess`(because`joined`is already true). The user must check the return value on the first call, otherwise the error information will be lost.
 
 ---
 
-## 本章Summary
+# Chapter Summary
 
-这一章我们拆解了 NCCL 从「任务描述」到「kernel 启动」的完整调度链：
+In this chapter, we broke down NCCL's complete scheduling chain from "task description" to "kernel launch":
 
-1. **Group 语义**：`ncclGroupStart/ncclGroupEnd` 通过 thread_local 变量攒任务，`ncclGroupEnd` 时统一提交。阻塞模式同步执行，非阻塞模式创建线程异步执行。
-2. **任务准备**：`ncclPrepareTasks` 确定算法/协议，`ncclPrepareTasksAndCollPreconnect` 按 clique 逐个 preconnect，避免 split comms 的竞态。
-3. **轮次调度**：`doLaunches` 按 clique 分组，用 barrier 同步 clique 内 comm，每轮启动一个 kernel plan，直到所有 plan 启动完毕。
-4. **异步任务**：`asyncJobLaunch` 用原子状态机和忙等待管理异步 job，支持快速失败和 abort。
-5. **新架构**：`groupLaunchEnqueueRearch` 是正在开发的新调度框架，目前回退到 legacy 的 `doLaunches`。
+1. **Group semantics**：`ncclGroupStart/ncclGroupEnd`accumulate tasks through thread_local variables,`ncclGroupEnd`and submit them uniformly at . Blocking mode executes synchronously, while non-blocking mode creates a thread for asynchronous execution.
 
-下一章将进入 kernel 启动的最后一公里：`ncclLaunchKernel` 如何把 `ncclKernelPlan` 变成 GPU 上真正执行的 kernel，以及设备侧如何读取 `DevComm` 元数据。
+2. **Task preparation**：`ncclPrepareTasks`determines the algorithm/protocol,`ncclPrepareTasksAndCollPreconnect`and preconnects one by one by clique to avoid races in split comms.
 
-## 本章思考与自测
+3. **Round scheduling**：`doLaunches`groups by clique, uses a barrier to synchronize comms within the clique, and launches one kernel plan per round until all plans have been launched.
 
-<details><summary>Q1: 如果把 `ncclGroupCommJoin` 中的 `ncclMemoryStackPush(&comm->memScoped)` 去掉，会发生什么？在什么场景下会导致内存泄漏或数据损坏？</summary>
+4. **Asynchronous tasks**：`asyncJobLaunch`use an atomic state machine and busy waiting to manage asynchronous jobs, supporting fast failure and abort.
 
-**参考解析**：`ncclMemoryStackPush` 为 comm 在 group
+5. **New architecture**：`groupLaunchEnqueueRearch`is a new scheduling framework under development, currently falling back to legacy`doLaunches`。
 
-至此，任务描述已经变成了可执行的启动计划：group 语义把多次 API 调用合并成一次提交，channel 切分把任务分配到多个执行流，doLaunches 的轮次调度则保证了 kernel 之间的顺序与依赖。但计划终究只是计划，host 侧的任务描述如何变成 GPU 上的一个 grid？下一章我们将深入 ncclLaunchKernel，看参数准备、kernel 变体选择与 cudaLaunchKernel 调用，完成从 host 到 device 的最后一跃。
+The next chapter will enter the last mile of kernel launch:`ncclLaunchKernel`how to turn`ncclKernelPlan`into a kernel actually executed on the GPU, and how the device side reads`DevComm`metadata.
+
+# Chapter Reflection and Self-Test
+
+Q1: If`ncclGroupCommJoin`in`ncclMemoryStackPush(&comm->memScoped)`is removed, what will happen? In what scenarios will it cause memory leaks or data corruption?
+
+**Reference analysis**：`ncclMemoryStackPush`for comm in group
+
+At this point, the task description has become an executable launch plan: group semantics merge multiple API calls into a single submission, channel partitioning distributes tasks across multiple execution streams, and doLaunches' round scheduling ensures ordering and dependencies between kernels. But a plan is still just a plan—how does the host-side task description become a grid on the GPU? In the next chapter, we will dive into ncclLaunchKernel to see parameter preparation, kernel variant selection, and the cudaLaunchKernel call, completing the final leap from host to device.

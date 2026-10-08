@@ -1,28 +1,28 @@
-# Chapter 08: Distributed KV Cache & Chunked Prefill: Prefix Caching Architecture
+# Chapter 8: Distributed Parallelism: TP, PP, EP, and Communication Primitives
 
+In the previous chapter we completed the last mile of a single inference lifecycle, from logits sampling to streaming output. But when the model is too large to fit on a single card, this pipeline must be split across multiple devices for coordinated execution. The first-order question in distributed inference is not "how to partition the model," but "after partitioning, who talks to whom and in what way." vLLM assigns these two questions to the process group topology in parallel_state.py and the communicator implementation in custom_all_reduce.py, respectively. This chapter follows the chain of "group creation → partitioning → communication → load rebalancing" to unpack the parallel strategies and underlying communication primitives of TP, PP, and EP layer by layer.
 
-上一章我们走完了单次推理生命周期的最后一公里，从 logits 采样到流式输出。但当模型大到单卡放不下时，这条流水线就必须被切分到多个设备上协同执行。分布式推理的第一性问题不是“怎么切模型”，而是“切完之后，谁和谁说话、用什么方式说话”。vLLM 把这两个问题分别交给 parallel_state.py 的进程组拓扑和 custom_all_reduce.py 的通信器实现。本章沿着“建组 → 切分 → 通信 → 负载再平衡”这条链路，逐层拆开 TP、PP、EP 的并行策略与底层通信原语。
+# 8.1 Process Group Topology: How a Rank Grid Is Carved into TP/PP/DP/EP
 
+## Intuitive Model
 
-## Intuitive Architectural Model
+Think of 8 GPUs as a long table with 8 seats. Tensor Parallelism (TP) requires "people at the same table to raise their glasses simultaneously," Pipeline Parallelism (PP) requires "adjacent seats to pass dishes in relay," Data Parallelism (DP) requires "different tables eat separately but reconcile at the end," and Expert Parallelism (EP) requires "tokens to be triaged by department." Without a unified seating arrangement, each module would`new_group`, a communication misalignment occurs: "I thought you were in the TP group, but you're actually in the DP group" — once any rank is absent from a collective communication, NCCL will hang indefinitely rather than raise an error.
 
-把 8 张 GPU 想成一张 8 个座位的长桌。张量并行（Tensor Parallelism，TP）要求"同桌的人必须同时举杯"，流水线并行（Pipeline Parallelism，PP）要求"相邻座位接力传菜"，数据并行（Data Parallelism，DP）要求"不同桌各吃各的但最后对账"，专家并行（Expert Parallelism，EP）要求"token 按科室分诊"。若没有统一的座位编排，每个模块各自 `new_group`，就会出现"我以为你在 TP 组里，其实你在 DP 组里"的通信错位——集合通信一旦有 rank 缺席，NCCL 会直接挂死而非报错。
+## Data Structures and Memory Layout
 
-## Data Structures & Memory Layout
+`GroupCoordinator`is the carrier for all of this. Its field design directly corresponds to "a single process's multiple identities across multiple parallel dimensions":
 
-`GroupCoordinator` 是这一切的载体。它的字段设计直接对应"一个进程在多个并行维度上的多重身份"：
+- `rank`is the global rank,`ranks`is the list of global ranks of members in this group,`world_size`is the group size[FACT:vllm/distributed/parallel_state.py:434-436]。
+- `local_rank`is used to bind the device,`rank_in_group`is the intra-group index — the source code uses a table to precisely distinguish the two: in a 4-GPU group spanning two nodes, rank 2's`local_rank`is 0 (it is the first GPU on node 1), but`rank_in_group`is 2[FACT:vllm/distributed/parallel_state.py:437-445]。
+- `cpu_group`and`device_group`exist as a pair: the former uses gloo for metadata/object communication, the latter uses NCCL for tensor communication[FACT:vllm/distributed/parallel_state.py:446-447]。
 
-- `rank` 是全局 rank，`ranks` 是本组成员全局 rank 列表，`world_size` 是组大小 [FACT:vllm/distributed/parallel_state.py:434-436](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L434-L436)。
-- `local_rank` 用于绑定设备，`rank_in_group` 是组内序号——源码用一张表精确区分二者：跨两节点的 4 卡组里，rank 2 的 `local_rank` 是 0（它在节点 1 上是第一张卡），但 `rank_in_group` 是 2 [FACT:vllm/distributed/parallel_state.py:437-445](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L437-L445)。
-- `cpu_group` 与 `device_group` 成对存在：前者走 gloo 做元数据/对象通信，后者走 NCCL 做张量通信 [FACT:vllm/distributed/parallel_state.py:446-447](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L446-L447)。
+There is a key design here:**Why does every group need to maintain a CPU group?**Because`broadcast_object`、`send_object`operations like this transmit Python objects (serialized bytes); using NCCL would both waste VRAM and potentially pollute the current CUDA device.`barrier()`The comments state this very plainly: NCCL's barrier internally is a broadcast, which secretly creates GPU tensors and can easily mess up the current device, so a CPU group must be used[FACT:vllm/distributed/parallel_state.py:1355-1362]。
 
-这里有个关键设计：**为什么每个组都要维护一个 CPU 组？** 因为 `broadcast_object`、`send_object` 这类操作传输的是 Python 对象（序列化后的字节），走 NCCL 既浪费显存又可能污染当前 CUDA 设备。`barrier()` 的注释把这一点说得很直白：NCCL 的 barrier 内部是一次 broadcast，会偷偷创建 GPU 张量，容易搞乱当前设备，所以必须用 CPU 组 [FACT:vllm/distributed/parallel_state.py:1355-1362](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1355-L1362)。
+## Step-by-Step：`initialize_model_parallel`How to slice the grid
 
-## Step-by-Step：`initialize_model_parallel` 如何切网格
+Consider a concrete scenario: 8 GPUs, TP=2, PP=4, DP=1. The core is to reshape the one-dimensional rank sequence into a multi-dimensional grid, then slice along each dimension.
 
-代入一个具体场景：8 卡、TP=2、PP=4、DP=1。核心是把一维 rank 序列 reshape 成多维网格，再沿每个维度切分。
-
-第一步，构造 rank 网格。布局顺序被明确定义为 `ExternalDP x DP x PP x PCP x TP` [FACT:vllm/distributed/parallel_state.py:2045-2060](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2045-L2060)：
+Step one, construct the rank grid. The layout order is explicitly defined as`ExternalDP x DP x PP x PCP x TP` [FACT:vllm/distributed/parallel_state.py:2045-2060]：
 
 ```python
 all_ranks = torch.arange(world_size).reshape(
@@ -31,13 +31,13 @@ all_ranks = torch.arange(world_size).reshape(
 )
 ```
 
-第二步，切 TP 组：把网格 view 成 `(-1, tp_size)` 后 unbind，得到 `[g0,g1],[g2,g3],...` [FACT:vllm/distributed/parallel_state.py:2065-2077](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2065-L2077)。注意 TP 组额外传了 `use_message_queue_broadcaster=True`，因为 TP 组需要共享内存广播来分发元数据。
+Step two, slice the TP group: view the grid as`(-1, tp_size)`then unbind, obtaining`[g0,g1],[g2,g3],...` [FACT:vllm/distributed/parallel_state.py:2065-2077]. Note that the TP group additionally passes`use_message_queue_broadcaster=True`, because the TP group needs shared-memory broadcast to distribute metadata.
 
-第三步，切 PP 组：`all_ranks.transpose(2, 4)` 把 PP 维换到最后一维再切，得到 `[g0,g2,g4,g6],[g1,g3,g5,g7]` [FACT:vllm/distributed/parallel_state.py:2175-2188](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2175-L2188)。这正是文档字符串里给出的例子 [FACT:vllm/distributed/parallel_state.py:1997-1997](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1997-L1997)。
+Step three, slice the PP group:`all_ranks.transpose(2, 4)`Move the PP dimension to the last dimension before slicing, obtaining`[g0,g2,g4,g6],[g1,g3,g5,g7]` [FACT:vllm/distributed/parallel_state.py:2175-2188]. This is exactly the example given in the docstring[FACT:vllm/distributed/parallel_state.py:1997-1997]。
 
-第四步，切 DP 组：`transpose(1, 4)` 后切 [FACT:vllm/distributed/parallel_state.py:2195-2202](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2195-L2202)。
+Step four, slice the DP group:`transpose(1, 4)`then slice[FACT:vllm/distributed/parallel_state.py:2195-2202]。
 
-第五步，切 EP 组——这里有个容易忽略的细节：EP 组只在 MoE 模型下创建，dense 模型直接跳过 [FACT:vllm/distributed/parallel_state.py:2210-2241](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2210-L2241)。EP 组的 rank 集合是 `DP x PCP x TP` 的乘积，意味着 EP 复用了 DP 和 TP 的物理卡，而不是独立维度。
+Step five, slice the EP group — there is an easily overlooked detail here: the EP group is only created under MoE models; dense models skip it entirely[FACT:vllm/distributed/parallel_state.py:2210-2241]. The EP group's rank set is the product of`DP x PCP x TP`, meaning EP reuses the physical GPUs of DP and TP rather than being an independent dimension.
 
 ```mermaid
 flowchart TD
@@ -60,41 +60,42 @@ flowchart TD
     no_eplb --> done
 ```
 
-## 设计思考与踩坑
+## Design Considerations and Pitfalls
 
-**EPLB 为什么要独立进程组？** 注释给出了答案：把 EPLB 通信与 MoE 前向的集合通信隔离，防止"执行期的 torch.distributed"与"EPLB 的 torch.distributed"互相死锁 [FACT:vllm/distributed/parallel_state.py:2243-2246](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2243-L2246)。这是一个典型的"用独立通信域换确定性"的权衡——多一个 PG 的显存开销，换来的是不会在权重搬运时卡死前向。
+**Why does EPLB need an independent process group?**The comments provide the answer: to isolate EPLB communication from the collective communication of MoE forward passes, preventing "execution-time torch.distributed" and "EPLB's torch.distributed" from deadlocking each other[FACT:vllm/distributed/parallel_state.py:2243-2246]. This is a classic trade-off of "trading an independent communication domain for determinism" — the cost is the VRAM overhead of one extra PG, and what you get in return is that forward passes won't get stuck during weight transfers.
 
-**DP 组的同步约束**是生产环境最常踩的坑：同一 DP 组内所有 rank 必须同时调用 `generate`，否则死锁 [FACT:vllm/distributed/parallel_state.py:2048-2051](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L2048-L2051)。因为 DP 组内会做梯度/采样结果的 all-reduce，任何 rank 缺席都会让集合通信永久阻塞。
+**Synchronization Constraints of the DP Group**is the most commonly encountered pitfall in production: all ranks within the same DP group must call`generate`simultaneously, otherwise deadlock[FACT:vllm/distributed/parallel_state.py:2048-2051]. This is because the DP group performs all-reduce on gradients/sampling results, and any absent rank will cause the collective communication to block forever.
 
-**销毁顺序**同样有讲究。`destroy()` 先销毁 device communicator，再销毁 device_group 和 cpu_group [FACT:vllm/distributed/parallel_state.py:1380-1393](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1380-L1393)。注释解释了原因：device communicator 可能持有依赖这些 PG 的集合通信工作区（如 FlashInfer PCIe IPC barrier），必须先释放 [FACT:vllm/distributed/parallel_state.py:1377-1377](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1377-L1377)。
+**Destruction Order**Also has its subtleties.`destroy()`First destroy the device communicator, then destroy the device_group and cpu_group[FACT:vllm/distributed/parallel_state.py:1380-1393]. The comments explain why: the device communicator may hold collective communication workspaces that depend on these PGs (such as the FlashInfer PCIe IPC barrier), so it must be released first[FACT:vllm/distributed/parallel_state.py:1377-1377]。
 
+# 8.2 Communication Primitives: How Custom all-reduce Bypasses NCCL
 
-## Intuitive Architectural Model
+## Intuitive Model
 
-NCCL 的 all-reduce 是"通用货车"，能拉任何货、走任何路，但启动开销和协议开销固定。当你要在 8 卡 NVLink 全互联的机器上反复做小张量 all-reduce（TP 的每个 attention/MLP 层都要做），通用货车的"过路费"就变得不可忽视。自定义 all-reduce 是"专用小推车"：只在同机、NVLink 全互联、张量大小合适的场景下启用，用一次 `cudaMemcpy` 换掉 NCCL 的握手与协议开销。
+NCCL's all-reduce is a "general-purpose truck" — it can carry any cargo and take any road, but its startup overhead and protocol overhead are fixed. When you need to repeatedly perform small-tensor all-reduce on an 8-GPU NVLink fully-connected machine (every attention/MLP layer in TP needs it), the "toll" of the general-purpose truck becomes non-negligible. Custom all-reduce is a "dedicated handcart": it is only enabled on the same machine, with full NVLink interconnect, and suitable tensor sizes, using a single`cudaMemcpy`to replace NCCL's handshake and protocol overhead.
 
-## Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-`CustomAllreduce` 的初始化是一场"能力探测 + 资源预分配"的组合。关键字段：
+`CustomAllreduce`The initialization of  is a combination of "capability probing + resource pre-allocation". Key fields:
 
-- `_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8, 16]`：只支持这些组大小 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:113-129](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L113-L129)。
-- `meta_ptrs`：同步元数据 + 中间结果缓冲区，大小 `ops.meta_size() + max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:291-294](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L291-L294)。
-- `buffer_ptrs`：预注册的 IPC 缓冲区，eager 模式下输入张量先拷进来再算 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:298-305](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L298-L305)。
-- `rank_data`：8MB 的 uint8 张量，存放所有 rank 的 IPC 缓冲区指针元组 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:309-315](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L309-L315)。
+- `_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8, 16]`: only supports these group sizes[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:113-129]。
+- `meta_ptrs`: synchronization metadata + intermediate result buffer, size`ops.meta_size() + max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:291-294]。
+- `buffer_ptrs`: pre-registered IPC buffer; in eager mode, input tensors are first copied in before computation[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:298-305]。
+- `rank_data`: an 8MB uint8 tensor storing the IPC buffer pointer tuples of all ranks[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:309-315]。
 
-**为什么缓冲区要预注册？** 因为 CUDA Graph 捕获要求所有地址在捕获时固定。`register_graph_buffers` 在捕获结束时把所有用到的缓冲区地址广播给所有 rank 并注册 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:474-491](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L474-L491)。
+**Why do buffers need to be pre-registered?**Because CUDA Graph capture requires all addresses to be fixed at capture time.`register_graph_buffers`At the end of capture, broadcast all used buffer addresses to all ranks and register them[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:474-491]。
 
-## Step-by-Step：一次 all-reduce 的决策流
+## Step-by-Step: The Decision Flow of a Single all-reduce
 
-代入场景：TP 组内某层 MLP 输出需要 all-reduce，输入是 4MB 的 bf16 张量。
+Consider the scenario: a certain MLP layer's output within the TP group needs all-reduce, and the input is a 4MB bf16 tensor.
 
-第一步，`custom_all_reduce` 检查是否禁用、是否满足 `should_custom_ar` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-533](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L529-L533)。
+Step one,`custom_all_reduce`check whether it is disabled, whether it satisfies`should_custom_ar` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-533]。
 
-第二步，`should_custom_ar` 逐条过滤：world_size > 8 拒绝；dtype 必须是 fp32/fp16/bf16；字节数必须是 16 的倍数；必须弱连续；world_size==2 或全互联才继续 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L493-L508)。
+Step two,`should_custom_ar`Filter item by item: reject if world_size > 8; dtype must be fp32/fp16/bf16; byte count must be a multiple of 16; must be weakly contiguous; only continue if world_size==2 or fully interconnected[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508]。
 
-第三步，根据是否在 CUDA Graph 捕获中分流：捕获中用 `registered=True`（地址已固定），否则 `registered=False`（需要先 memcpy 到预注册缓冲区）[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-545](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L529-L545)。
+Step three, branch based on whether in CUDA Graph capture: during capture use`registered=True`(address already fixed), otherwise`registered=False`(need to memcpy to pre-registered buffer first)[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-545]。
 
-第四步，实际调用 `ops.all_reduce`，传入 `buffer_ptrs[rank]` 和 `max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:519-527](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L519-L527)。
+Step four, actually call`ops.all_reduce`, passing in`buffer_ptrs[rank]`and`max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:519-527]。
 
 ```mermaid
 flowchart TD
@@ -111,42 +112,43 @@ flowchart TD
     eager --> out
 ```
 
-## 设计思考与踩坑
+## Design thinking and pitfalls
 
-**多机场景的降级路径**是这段代码最精妙的部分。`same_node` 为假时，`mnnvl_only` 置真 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:198-199](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L198-L199)，随后检查 MNNVL（Multi-Node NVLink）能力。如果组内不是每张卡都支持 MNNVL，直接禁用自定义集合通信 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:228-233](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L228-L233)。`_group_can_attempt_mnnvl` 用一次 CPU all-reduce（MIN 操作）确保所有 rank 走同一条控制流 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:59-73](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L59-L73)——这是异构集群里避免"部分 rank 进 MNNVL 路径、部分走 NCCL"导致挂死的关键防护。
+**The degradation path for multi-node scenarios**is the most elegant part of this code.`same_node`When is false,`mnnvl_only`set to true[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:198-199], then check MNNVL (Multi-Node NVLink) capability. If not every GPU in the group supports MNNVL, directly disable custom collective communication[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:228-233]。`_group_can_attempt_mnnvl`Use a single CPU all-reduce (MIN operation) to ensure all ranks follow the same control flow[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:59-73]—this is the key safeguard in heterogeneous clusters to avoid "some ranks entering the MNNVL path while others go through NCCL" causing hangs.
 
-**P2P 检查的代价**：`_can_p2p` 会遍历所有 peer 做 `gpu_p2p_access_check`，注释说首次计算很贵但会缓存 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:278-278](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L278-L278)。生产环境如果发现启动慢，可以设 `VLLM_SKIP_P2P_CHECK` 跳过，直接信任驱动的 P2P 报告 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:86-100](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L86-L100)。
+**The cost of P2P checks**：`_can_p2p`will iterate over all peers doing`gpu_p2p_access_check`, the comment says the first computation is expensive but will be cached[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:278-278]. In production, if startup is found to be slow, you can set`VLLM_SKIP_P2P_CHECK`to skip, directly trusting the driver's P2P report[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:86-100]。
 
-**reduce-scatter 的三级后端选择**值得单独看：`_select_reduce_scatter_backend` 按优先级返回 `mnnvl_multimem` > `mnnvl_lamport` > `legacy` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:601-636](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L601-L636)。multimem 路径要求 world_size 在 `(2,4,8)` 且设备能力是 (10,0) 或 (10,3)（Blackwell 级）[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:103-104](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L103-L104)。注意 `VLLM_BATCH_INVARIANT` 会禁用 multimem 路径 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:628](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L628)——因为 multimem 的归约顺序不确定，会破坏批不变性。
+**Three-tier backend selection for reduce-scatter**is worth looking at separately:`_select_reduce_scatter_backend`returns by priority`mnnvl_multimem` > `mnnvl_lamport` > `legacy` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:601-636]. The multimem path requires world_size to be in`(2,4,8)`and device capability to be (10,0) or (10,3) (Blackwell-class)[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:103-104]. Note that`VLLM_BATCH_INVARIANT`will disable the multimem path[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:628]—because multimem's reduction order is nondeterministic, which would break batch invariance.
 
+# 8.3 EPLB: Scheduling logic for expert load rebalancing
 
-## Intuitive Architectural Model
+## Intuitive model
 
-MoE 模型里，256 个逻辑专家分到 32 张卡上，每卡 8 个。但真实流量下，某些"热门专家"（比如处理常见语法结构的）会被大量 token 路由到，导致持有它的卡成为瓶颈，其他卡空转。EPLB（Expert Parallel Load Balancer）就是"给热门专家加副本"：把热门专家的权重复制到空闲卡上，让 token 分流过去。若没有它，MoE 的实际吞吐会被最慢的那张卡锁死。
+In a MoE model, 256 logical experts are distributed across 32 GPUs, 8 per GPU. But under real traffic, some "hot experts" (e.g., those handling common syntactic structures) get routed a large number of tokens, causing the GPU holding them to become a bottleneck while other GPUs sit idle. EPLB (Expert Parallel Load Balancer) is essentially "adding replicas for hot experts": copying the weights of hot experts to idle GPUs so tokens can be diverted there. Without it, MoE's actual throughput would be locked to the slowest GPU.
 
-## Data Structures & Memory Layout
+## Data structures and memory layout
 
-`EplbModelState` 用三张映射表描述"逻辑专家 ↔ 物理专家"的关系：
+`EplbModelState`uses three mapping tables to describe the "logical expert ↔ physical expert" relationship:
 
-- `physical_to_logical_map`：形状 `(num_moe_layers, num_physical_experts)`，每个物理槽位存它承载的逻辑专家 id [FACT:vllm/distributed/eplb/eplb_state.py:105-120](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L105-L120)。
-- `logical_to_physical_map`：形状 `(num_moe_layers, num_logical_experts, max_replicas+1)`，稀疏矩阵，-1 表示无映射 [FACT:vllm/distributed/eplb/eplb_state.py:123-146](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L123-L146)。
-- `logical_replica_count`：每个逻辑专家有几个副本 [FACT:vllm/distributed/eplb/eplb_state.py:147-161](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L147-L161)。
+- `physical_to_logical_map`: shape`(num_moe_layers, num_physical_experts)`, each physical slot stores the logical expert id it carries[FACT:vllm/distributed/eplb/eplb_state.py:105-120]。
+- `logical_to_physical_map`: shape`(num_moe_layers, num_logical_experts, max_replicas+1)`, sparse matrix, -1 means no mapping[FACT:vllm/distributed/eplb/eplb_state.py:123-146]。
+- `logical_replica_count`: how many replicas each logical expert has[FACT:vllm/distributed/eplb/eplb_state.py:147-161]。
 
-`expert_load_window` 是滑动窗口，形状 `(window_size, num_moe_layers, num_physical_experts)` [FACT:vllm/distributed/eplb/eplb_state.py:180-187](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L180-L187)。注释特别指出：现在记录所有物理专家的负载而非仅本地专家，以保证不同 dispatch 方法（naive all-to-all、DeepEP）统计一致；naive all-to-all 下每个 DP rank 贡献相同 token 集，负载会被乘以 dp_size [FACT:vllm/distributed/eplb/eplb_state.py:180-187](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L180-L187)。
+`expert_load_window`is a sliding window, shape`(window_size, num_moe_layers, num_physical_experts)` [FACT:vllm/distributed/eplb/eplb_state.py:180-187]. The comment specifically notes: now it records the load of all physical experts rather than only local experts, to ensure consistent statistics across different dispatch methods (naive all-to-all, DeepEP); under naive all-to-all, each DP rank contributes the same token set, so the load gets multiplied by dp_size[FACT:vllm/distributed/eplb/eplb_state.py:180-187]。
 
-## Step-by-Step：一次重排的完整链路
+## Step-by-Step: The complete chain of one rebalancing
 
-代入场景：`expert_rearrangement_step` 达到阈值，触发 `rearrange()`。
+Scenario:`expert_rearrangement_step`reaches the threshold, triggering`rearrange()`。
 
-第一步，把物理负载映射回逻辑专家。用 `scatter_add_` 按 `physical_to_logical_map` 聚合，无效槽位（<0）填到 `invalid_idx` 桶里最后丢弃 [FACT:vllm/distributed/eplb/eplb_state.py:794-816](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L794-L816)。
+Step one, map physical load back to logical experts. Use`scatter_add_`to aggregate by`physical_to_logical_map`, invalid slots (<0) are filled into the`invalid_idx`bucket and discarded at the end[FACT:vllm/distributed/eplb/eplb_state.py:794-816]。
 
-第二步，跨 rank all-reduce 得到全局逻辑负载。`_allreduce_list` 对多个模型的负载做拼接后一次 all-reduce 再拆开，避免多次通信 [FACT:vllm/distributed/eplb/eplb_state.py:1045-1068](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1045-L1068)。
+Step two, cross-rank all-reduce to get global logical load.`_allreduce_list`concatenates the loads of multiple models then does one all-reduce and splits them back, avoiding multiple communications[FACT:vllm/distributed/eplb/eplb_state.py:1045-1068]。
 
-第三步，调用策略计算新映射。`policy.rebalance_experts` 在 host 上运行，所以负载窗口和当前映射都要拷回 CPU [FACT:vllm/distributed/eplb/eplb_state.py:859-867](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L859-L867)。
+Step three, call the policy to compute the new mapping.`policy.rebalance_experts`runs on host, so both the load window and the current mapping must be copied back to CPU[FACT:vllm/distributed/eplb/eplb_state.py:859-867]。
 
-第四步，ROCm 特化的"跳过重排"判断：如果新映射带来的 rank 负载不均衡改善小于 5%，就跳过这次重排 [FACT:vllm/distributed/eplb/eplb_state.py:869-923](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L869-L923)。这是一个务实的优化——重排本身有通信成本，收益不够就不做。
+Step four, ROCm-specific "skip rebalancing" check: if the new mapping improves rank load imbalance by less than 5%, skip this rebalancing[FACT:vllm/distributed/eplb/eplb_state.py:869-923]. This is a pragmatic optimization—rebalancing itself has communication cost, so if the benefit isn't enough, don't do it.
 
-第五步，执行权重搬运并提交新映射 [FACT:vllm/distributed/eplb/eplb_state.py:925-942](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L925-L942)。
+Step five, perform weight transfer and commit the new mapping[FACT:vllm/distributed/eplb/eplb_state.py:925-942]。
 
 ```mermaid
 sequenceDiagram
@@ -172,38 +174,41 @@ sequenceDiagram
     end
 ```
 
-## 设计思考与踩坑
+## Design thinking and pitfalls
 
-**异步模式的同步原语**是这段代码最微妙的地方。`rebalanced` 标志依赖 GIL 在主线程和 async worker 之间同步 [FACT:vllm/distributed/eplb/eplb_state.py:194-203](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L194-L203)。但注释警告：`rebalanced` 必须在所有 rank 上保持一致，否则 `_all_ranks_result_ready` 里的 all-reduce 会挂死 [FACT:vllm/distributed/eplb/eplb_state.py:664-665](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L664-L665)。`_all_ranks_result_ready` 优先用 CPU 组做 all-reduce，因为 CPU 组更可靠 [FACT:vllm/distributed/eplb/eplb_state.py:1024-1043](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1024-L1043)。
+**Synchronization primitives for async mode**is the most subtle part of this code.`rebalanced`The flag relies on the GIL to synchronize between the main thread and the async worker[FACT:vllm/distributed/eplb/eplb_state.py:194-203]. But the comment warns:`rebalanced`must remain consistent across all ranks, otherwise`_all_ranks_result_ready`the all-reduce inside will hang[FACT:vllm/distributed/eplb/eplb_state.py:664-665]。`_all_ranks_result_ready`Prefer using the CPU group for all-reduce, because the CPU group is more reliable[FACT:vllm/distributed/eplb/eplb_state.py:1024-1043]。
 
-**滑动窗口的"提前录制"优化**：`_should_record_current_step` 只在距离下次重排不超过 `window_size` 步时才开启录制 [FACT:vllm/distributed/eplb/eplb_state.py:689-709](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L689-L709)。注释解释：每个重排周期前 `step_interval - window_size` 步的数据会被滑动窗口覆盖，录了也白录，浪费 GPU 计算 [FACT:vllm/distributed/eplb/eplb_state.py:1196-1199](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1196-L1199)。`should_record_tensor` 是所有层共享的同一个标量张量，一次 `fill_` 更新所有层 [FACT:vllm/distributed/eplb/eplb_state.py:272-278](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L272-L278)。
+**The sliding window's "early recording" optimization**：`_should_record_current_step`only enables recording when the distance to the next rebalancing is no more than`window_size`steps[FACT:vllm/distributed/eplb/eplb_state.py:689-709]. The comment explains: the data of the`step_interval - window_size`steps before each rebalancing cycle will be overwritten by the sliding window, so recording it is wasted effort and wastes GPU compute[FACT:vllm/distributed/eplb/eplb_state.py:1196-1199]。`should_record_tensor`is the same scalar tensor shared by all layers, one`fill_`updates all layers[FACT:vllm/distributed/eplb/eplb_state.py:272-278]。
 
-**弹性 EP 的容量预留**：`enable_elastic_ep` 时，`physical_expert_capacity` 按 `elastic_ep_max_dp_size` 预留，映射表用 -1 填充多余槽位 [FACT:vllm/distributed/eplb/eplb_state.py:375-386](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L375-L386)。这样扩容时不需要重新分配显存，只需把 -1 槽位填上真实专家。`reconfigure_physical_expert_slots` 负责在扩容/缩容时刷新视图 [FACT:vllm/distributed/eplb/eplb_state.py:1135-1160](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1135-L1160)。
+**Capacity reservation for elastic EP**：`enable_elastic_ep`when,`physical_expert_capacity`reserve by`elastic_ep_max_dp_size`, the mapping table fills extra slots with -1[FACT:vllm/distributed/eplb/eplb_state.py:375-386]. This way, scaling up doesn't require reallocating GPU memory, just filling the -1 slots with real experts.`reconfigure_physical_expert_slots`is responsible for refreshing the view during scale-up/scale-down[FACT:vllm/distributed/eplb/eplb_state.py:1135-1160]。
 
-**`_commit_eplb_maps` 的 pin memory 处理**：当 `PIN_MEMORY` 开启且源在 CPU 时，先拷到 pinned 内存再 `non_blocking=True` 异步拷贝到 GPU [FACT:vllm/distributed/eplb/eplb_state.py:1392-1400](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1392-L1400)。这是为了避免 H2D 拷贝阻塞主线程——映射表每层每轮都要更新，同步拷贝会成为瓶颈。
+**`_commit_eplb_maps`'s pin memory handling**: when`PIN_MEMORY`is enabled and the source is on CPU, first copy to pinned memory then`non_blocking=True`asynchronously copy to GPU[FACT:vllm/distributed/eplb/eplb_state.py:1392-1400]. This is to avoid H2D copies blocking the main thread—the mapping table is updated every layer every round, and synchronous copies would become a bottleneck.
 
+# Design thinking
 
-三块代码共享一个设计哲学：**用能力探测换确定性降级**。`GroupCoordinator` 在 `world_size == 1` 时直接 bypass 所有集合通信 [FACT:vllm/distributed/parallel_state.py:736-738](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L736-L738)；`CustomAllreduce` 在任一条件不满足时返回 `None` 让调用方回退 NCCL [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:532-533](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L532-L533)；EPLB 在改善不足 5% 时跳过重排 [FACT:vllm/distributed/eplb/eplb_state.py:916](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L916)。这种"快速失败 + 优雅降级"的模式，让同一份代码能在从单卡到多机 MNNVL 的全谱系硬件上运行，而不需要为每种配置写分支。
+The three pieces of code share one design philosophy:**Trade capability detection for deterministic degradation**。`GroupCoordinator`When`world_size == 1`directly bypass all collective communication[FACT:vllm/distributed/parallel_state.py:736-738]；`CustomAllreduce`return when any condition is not met`None`let the caller fall back to NCCL[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:532-533]; EPLB skips rearrangement when the improvement is less than 5%[FACT:vllm/distributed/eplb/eplb_state.py:916]. This "fail fast + graceful degradation" pattern allows the same code to run across the full spectrum of hardware from a single GPU to multi-machine MNNVL, without needing to write branches for every configuration.
 
-另一个共性是**控制流一致性优先于性能**。`_group_can_attempt_mnnvl` 用 CPU all-reduce 强制所有 rank 走同一分支 [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:59-73](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L59-L73)，`_all_ranks_result_ready` 同理 [FACT:vllm/distributed/eplb/eplb_state.py:1024-1043](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1024-L1043)。在分布式系统里，"部分 rank 走了快路径、部分走了慢路径"比"所有 rank 都走慢路径"危险得多——前者会挂死，后者只是慢。
+Another commonality is**control-flow consistency takes priority over performance**。`_group_can_attempt_mnnvl`use CPU all-reduce to force all ranks onto the same branch[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:59-73]，`_all_ranks_result_ready`similarly[FACT:vllm/distributed/eplb/eplb_state.py:1024-1043]. In distributed systems, "some ranks take the fast path while others take the slow path" is far more dangerous than "all ranks take the slow path" - the former hangs, while the latter is merely slow.
 
+# Chapter Summary
 
-- `GroupCoordinator` 把一维 rank 序列 reshape 成 `ExternalDP x DP x PP x PCP x TP` 网格，沿各维度切分出 TP/PP/DP/EP/EPLB 进程组；每个组同时维护 CPU（gloo）和 device（NCCL）两个 PG。
-- `CustomAllreduce` 通过能力探测（同机、NVLink 全互联、张量大小、dtype、16 字节对齐）决定是否接管 all-reduce，多机场景降级到 MNNVL 或 NCCL。
-- EPLB 用三张映射表描述逻辑/物理专家关系，通过滑动窗口统计负载、策略计算新映射、通信器搬运权重，支持同步与异步两种模式。
-- 三者的共同设计原则：能力探测 + 确定性降级 + 控制流一致性优先。
+- `GroupCoordinator`Reshape the one-dimensional rank sequence into a`ExternalDP x DP x PP x PCP x TP`grid, and partition TP/PP/DP/EP/EPLB process groups along each dimension; each group simultaneously maintains two PGs: CPU (gloo) and device (NCCL).
+- `CustomAllreduce`Use capability detection (same machine, NVLink full interconnect, tensor size, dtype, 16-byte alignment) to decide whether to take over all-reduce, and degrade to MNNVL or NCCL in multi-machine scenarios.
+- EPLB uses three mapping tables to describe the logical/physical expert relationships, counts load through a sliding window, computes a new mapping via a strategy, and moves weights through a communicator, supporting both synchronous and asynchronous modes.
+- The shared design principles of the three: capability detection + deterministic degradation + control-flow consistency first.
 
+# Chapter Review Questions
 
-Q1: `GroupCoordinator.destroy()` 先销毁 device communicator 再销毁 process group [FACT:vllm/distributed/parallel_state.py:1380-1393](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1380-L1393)。如果把顺序反过来，先销毁 PG 再销毁 communicator，在什么场景下会崩溃？
+Q1: `GroupCoordinator.destroy()`Destroy the device communicator first, then destroy the process group[FACT:vllm/distributed/parallel_state.py:1380-1393]. If the order is reversed, destroying the PG first and then the communicator, in what scenario would it crash?
 
-**参考解析**：注释明确指出 device communicator 可能持有依赖这些 PG 的集合通信工作区，例如 FlashInfer PCIe IPC barrier [FACT:vllm/distributed/parallel_state.py:1377-1377](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/parallel_state.py#L1377-L1377)。如果先销毁 PG，communicator 的 `destroy()` 内部若还要用这些 PG 做一次 barrier 或清理通信，就会访问已销毁的 ProcessGroup，触发 use-after-free 或 NCCL 内部断言失败。正确顺序是"依赖者先死"：communicator 依赖 PG，所以 communicator 先销毁。
+**Reference Analysis**: The comments explicitly point out that the device communicator may hold collective communication workspaces that depend on these PGs, such as the FlashInfer PCIe IPC barrier[FACT:vllm/distributed/parallel_state.py:1377-1377]. If the PG is destroyed first, and the communicator's`destroy()`internals still need to use these PGs for a barrier or cleanup communication, it will access an already-destroyed ProcessGroup, triggering a use-after-free or an NCCL internal assertion failure. The correct order is "dependents die first": the communicator depends on the PG, so the communicator is destroyed first.
 
-Q2: `should_custom_ar` 要求 `inp_size % 16 == 0` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/device_communicators/custom_all_reduce.py#L493-L508)。如果去掉这个检查，一个 15 字节的 bf16 张量（比如 7.5 个元素，实际不可能，但假设是 8 个元素 = 16 字节边界情况）会怎样？为什么自定义 kernel 需要这个对齐？
+Q2: `should_custom_ar`Requires`inp_size % 16 == 0` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508]. If this check is removed, what happens to a 15-byte bf16 tensor (for example, 7.5 elements, which is actually impossible, but suppose it is the boundary case of 8 elements = 16 bytes)? Why does the custom kernel need this alignment?
 
-**参考解析**：自定义 all-reduce kernel 内部用向量化加载（如 128-bit load），要求地址和大小按 16 字节对齐才能用 `float4` 之类的宽加载指令。不对齐会导致 kernel 读取越界或触发 misaligned address 异常。更隐蔽的是，`buffer_ptrs` 预注册缓冲区按 `max_size` 分配，如果输入大小不是 16 的倍数，拷贝进缓冲区后尾部可能有残留数据被一起归约，产生静默错误。所以这个检查既是正确性防护也是性能前提。
+**Reference Analysis**: The custom all-reduce kernel internally uses vectorized loads (such as 128-bit load), requiring the address and size to be 16-byte aligned in order to use`float4`wide load instructions such as these. Misalignment causes the kernel to read out of bounds or trigger a misaligned address exception. More subtly,`buffer_ptrs`the pre-registered buffer is allocated according to`max_size`. If the input size is not a multiple of 16, after copying into the buffer there may be residual data at the tail that gets reduced together, producing silent errors. So this check is both a correctness safeguard and a performance prerequisite.
 
-Q3: EPLB 异步模式下，`rebalanced` 标志依赖 GIL 同步 [FACT:vllm/distributed/eplb/eplb_state.py:194-203](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L194-L203)，且注释警告所有 rank 必须保持一致否则 all-reduce 挂死 [FACT:vllm/distributed/eplb/eplb_state.py:664-665](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L664-L665)。假设某个 rank 因为网络抖动，async worker 提前把 `rebalanced` 置为 False，而其他 rank 还是 True，`_all_ranks_result_ready` 会发生什么？
+Q3: In EPLB asynchronous mode,`rebalanced`the flag relies on GIL synchronization[FACT:vllm/distributed/eplb/eplb_state.py:194-203], and the comments warn that all ranks must remain consistent, otherwise all-reduce hangs[FACT:vllm/distributed/eplb/eplb_state.py:664-665]. Suppose a certain rank, due to network jitter, has its async worker set`rebalanced`to False early, while other ranks are still True,`_all_ranks_result_ready`what happens?
 
-**参考解析**：`_all_ranks_result_ready` 对 `has_result` 做 all-reduce 求和，然后判断是否等于组大小 [FACT:vllm/distributed/eplb/eplb_state.py:1030-1032](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L1030-L1032)。如果某个 rank 的 `rebalanced` 提前变 False，它的 `pending_result` 可能已被消费，`has_result` 为 0，导致求和结果小于组大小，其他 rank 会一直等待。更糟的是，如果这个 rank 已经退出 `while ms.rebalanced` 循环，它不会再参与后续的 all-reduce，其他 rank 的 all-reduce 会永久阻塞——这就是注释所说的"hang at collective communication calls"。防护手段是 `_all_ranks_result_ready` 用 CPU 组而非 device 组，且 `drain_async` 在重排前显式排空所有 pending result [FACT:vllm/distributed/eplb/eplb_state.py:985-1022](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/distributed/eplb/eplb_state.py#L985-L1022)。
+**Reference Analysis**：`_all_ranks_result_ready`Perform`has_result`an all-reduce sum, then check whether it equals the group size[FACT:vllm/distributed/eplb/eplb_state.py:1030-1032]. If a certain rank's`rebalanced`becomes False early, its`pending_result`may already have been consumed,`has_result`is 0, causing the sum result to be less than the group size, and the other ranks will keep waiting. Worse, if this rank has already exited the`while ms.rebalanced`loop, it will no longer participate in subsequent all-reduces, and the other ranks' all-reduce will block forever - this is what the comments call "hang at collective communication calls". The safeguard is`_all_ranks_result_ready`to use the CPU group rather than the device group, and`drain_async`to explicitly drain all pending results before rearrangement.[FACT:vllm/distributed/eplb/eplb_state.py:985-1022]。
 
-至此，我们理清了卡间通信的建组、切分与负载再平衡机制。但分布式推理的通信挑战不止于单实例内部——当 prefill 与 decode 被拆到不同实例上时，KV Cache 需要跨节点传输。下一章我们将离开“卡间通信”，进入“实例间通信”：KV Cache 如何在分离式部署的 prefill 与 decode 实例之间传输，KV Connector 抽象如何统一 NIXL、Mooncake 等传输后端。
+At this point, we have clarified the group formation, partitioning, and load rebalancing mechanisms for inter-GPU communication. However, the communication challenges of distributed inference go beyond a single instance—when prefill and decode are split across different instances, the KV Cache needs to be transferred across nodes. In the next chapter, we will leave "inter-GPU communication" and enter "inter-instance communication": how KV Cache is transferred between prefill and decode instances in disaggregated deployment, and how the KV Connector abstraction unifies transfer backends such as NIXL and Mooncake.

@@ -1,59 +1,58 @@
-# Chapter 03: Initialization: How ncclCommInitRank Forms a Communicator Domain
+# Chapter 3: Initialization: How ncclCommInitRank Builds a Group of Isolated Processes into a Communicator
 
+In the previous chapter, we established five core abstractions that run through the entire book: ncclComm, channel, algorithm, protocol, and transport. Together they form the common vocabulary of "one communication = several channels × one algorithm × one protocol × several transports." Now we need to answer a more fundamental question: how exactly is this ncclComm object constructed from nothing? When you call ncclCommInitRank, NCCL needs to complete a series of complex operations within a few hundred milliseconds: confirm that all ranks have arrived, exchange device information, probe machine topology, compute data paths, allocate GPU memory and host memory, and finally package all of this into an ncclComm object. This chapter will follow this call chain, drilling down from the API entry point all the way to the last capillary of initTransportsRank.
 
-上一章我们建立了贯穿全书的五个核心抽象：ncclComm、channel、algorithm、protocol 和 transport，它们共同构成了「一次通信 = 若干 channel × 一个 algorithm × 一个 protocol × 若干 transport」的公共词汇表。现在，我们要回答一个更根本的问题：这个 ncclComm 对象究竟是如何从无到有构建出来的？当你调用 ncclCommInitRank 时，NCCL 需要在几百毫秒内完成一系列复杂操作：确认所有 rank 到齐、交换设备信息、探测机器拓扑、计算数据路径、分配 GPU 显存与主机内存，最终将这一切打包成一个 ncclComm 对象。本章将沿着这条调用链，从 API 入口一路下钻到 initTransportsRank 的最后一根毛细血管。
+# 3.1 API Entry: The Synchronous Shell and Asynchronous Core of ncclCommInitRank
 
-## 3.1 API 入口：ncclCommInitRank 的同步外壳与异步内核
+## Intuitive Model
 
-### Intuitive Architectural Model
+`ncclCommInitRank`On the surface, it is "creating a communication domain," but in reality what it does is "launch a background task, then (by default) wait for it to complete." This is like ordering food at a restaurant: the act of ordering (the API call) returns instantly, but the kitchen preparing the food (the actual initialization) happens in the background. The default "blocking mode" simply makes you wait at the counter until the food is ready, while "non-blocking mode" gives you a pickup number so you can go do something else first.
 
-`ncclCommInitRank` 表面上是"建一个通信域"，实际上它做的是"发起一个后台任务，然后（默认情况下）等它完成"。这就像你去餐厅点餐：点餐这个动作（API 调用）瞬间返回，但厨房做菜（真正的初始化）是在后台进行的。默认的"阻塞模式"只是让你在柜台前等到菜做好，而"非阻塞模式"则给你一个取餐号，你可以先去干别的。
+Without this asynchronous design layer, NCCL would not be able to cooperate with scenarios such as CUDA Graph capture and parallel initialization of multiple communication domains during initialization—all initialization would become serialized blocking operations that cannot overlap with user code.
 
-如果没有这层异步设计，NCCL 在初始化期间就无法与 CUDA Graph 捕获、多通信域并行初始化等场景配合——所有初始化都会变成串行的、无法与用户代码重叠的阻塞操作。
+## Data Structures and Memory Layout
 
-### Data Structures & Memory Layout
+Let us first look at the API entry point itself.`ncclCommInitRank`It is an extremely thin synchronous shell:
 
-先看 API 入口本身。`ncclCommInitRank` 是一个极薄的同步外壳：
+[FACT:src/init.cc:2946-2970]
 
-[FACT:src/init.cc:2946-2970](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2946-L2970)
+It does four things: call`ncclInitEnv()`load the environment variable plugin, turn on NVTX performance markers, read the current CUDA device number, and then call`ncclGroupStartInternal()`enter group semantics, and finally delegate the actual work to`ncclCommInitRankDev`。
 
-它做了四件事：调用 `ncclInitEnv()` 加载环境变量插件、打开 NVTX 性能标记、读取当前 CUDA 设备号、然后调用 `ncclGroupStartInternal()` 进入 group 语义，最后把实际工作委托给 `ncclCommInitRankDev`。
+Note`ncclGroupStartInternal()` / `ncclGroupEndInternal()`This pair of calls—even if you are initializing only one communication domain, NCCL still wraps it in group semantics. This is to uniformly handle the scenario where "the user initializes multiple communication domains within one group," avoiding the need to write two code paths for single-domain and multi-domain cases.
 
-注意 `ncclGroupStartInternal()` / `ncclGroupEndInternal()` 这一对调用——即使你只初始化一个通信域，NCCL 也把它包在 group 语义里。这是为了统一处理"用户在一个 group 里初始化多个通信域"的场景，避免为单通信域和多通信域写两套代码路径。
+The real parameter validation and object allocation happen in`ncclCommInitRankDev`inside:
 
-真正的参数校验和对象分配在 `ncclCommInitRankDev` 里：
+[FACT:src/init.cc:2851-2943]
 
-[FACT:src/init.cc:2851-2943](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2851-L2943)
+This function is the "central dispatch desk" of the entire chain. It first performs parameter validation (`nId`range,`nranks`/`myrank`validity), then allocates`ncclComm`the structure itself, as well as three fields related to the abort mechanism:`abortFlag`(host-side atomic flag),`abortFlagDev`(device-visible pinned memory copy),`abortFlagRefCount`(reference count, because child communication domains created by split may share the parent communication domain's abortFlag).
 
-这个函数是整条链路的"总调度台"。它先做参数校验（`nId` 范围、`nranks`/`myrank` 合法性），然后分配 `ncclComm` 结构体本身，以及三个与中止机制相关的字段：`abortFlag`（主机侧原子标志）、`abortFlagDev`（设备侧可见的固定内存副本）、`abortFlagRefCount`（引用计数，因为 split 出来的子通信域可能共享父通信域的 abortFlag）。
+There is a detail worth noting here—`comm->startMagic = comm->endMagic = NCCL_MAGIC`：
 
-这里有一个值得注意的细节——`comm->startMagic = comm->endMagic = NCCL_MAGIC`：
+[FACT:src/init.cc:2886-2886]
 
-[FACT:src/init.cc:2886-2886](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2886-L2886)
+This pair of magic values acts like a "seal" clamped at the beginning and end of the`ncclComm`structure. Any out-of-bounds write or structure corruption will destroy this pair of magic values, and subsequent operations can detect memory trampling by validating them. This is a cheap but effective memory integrity protection.
 
-这对 magic 值像"封条"一样夹在 `ncclComm` 结构体的首尾。任何越界写入或结构体损坏都会破坏这对 magic，后续操作可以通过校验它们来检测内存踩踏。这是一种廉价但有效的内存完整性防护。
+## Step-by-Step Walkthrough
 
-### Step-by-Step Walkthrough
+When`ncclCommInitRankDev`reaches the end, it constructs a`ncclCommInitRankAsyncJob`and starts an asynchronous task:
 
-当 `ncclCommInitRankDev` 走到最后，它构造一个 `ncclCommInitRankAsyncJob` 并启动异步任务：
+[FACT:src/init.cc:2896-2929]
 
-[FACT:src/init.cc:2896-2929](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2896-L2929)
+`job`The structure carries all the parameters needed for initialization. Note that`job->commId`is**copied**out, rather than directly referencing the user-passed`commId`：
 
-`job` 结构体承载了所有初始化所需的参数。注意 `job->commId` 是**拷贝**出来的，而不是直接引用用户传入的 `commId`：
+[FACT:src/init.cc:2903-2910]
 
-[FACT:src/init.cc:2903-2910](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2903-L2910)
+Why copy? The source code comments give the answer:`ncclUniqueId`and`ncclBootstrapHandle`have different alignment requirements, and the array passed in by the user may not be correctly aligned to the boundary required by`ncclBootstrapHandle`Copying to newly allocated memory can guarantee alignment. This is a typical "ABI compatibility trap"—what the user sees is`ncclUniqueId`but internally it must be used as`ncclBootstrapHandle`The two have the same size but different alignment.
 
-为什么要拷贝？源码注释给出了答案：`ncclUniqueId` 和 `ncclBootstrapHandle` 的对齐要求不同，用户传入的数组可能没有正确对齐到 `ncclBootstrapHandle` 所需的边界。拷贝到新分配的内存可以保证对齐。这是一个典型的"ABI 兼容性陷阱"——用户看到的是 `ncclUniqueId`，内部要当 `ncclBootstrapHandle` 用，两者大小相同但对齐不同。
+Finally, according to the value of`ncclParamEnqueueRearchEnable()`the task either enters the management queue or is started directly through`ncclAsyncLaunch`:
 
-最后，根据 `ncclParamEnqueueRearchEnable()` 的值，任务要么进入管理队列，要么直接通过 `ncclAsyncLaunch` 启动：
+[FACT:src/init.cc:2922-2929]
 
-[FACT:src/init.cc:2922-2929](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2922-L2929)
+`ncclAsyncLaunch`creates a new thread to execute`ncclCommInitRankFunc`If it is blocking mode (the default), the caller waits in`ncclGroupEndInternal()`for this thread to complete; if it is non-blocking mode, the caller returns immediately, and the user later polls the status through`ncclCommGetAsyncError`.
 
-`ncclAsyncLaunch` 会创建一个新线程执行 `ncclCommInitRankFunc`。如果是阻塞模式（默认），调用方会在 `ncclGroupEndInternal()` 里等待这个线程完成；如果是非阻塞模式，调用方立即返回，用户后续通过 `ncclCommGetAsyncError` 轮询状态。
+## Design Considerations
 
-### 设计思考
-
-这里的设计核心是"同步 API + 异步实现"。为什么不让 `ncclCommInitRank` 直接同步执行所有初始化？因为 NCCL 需要支持 `ncclCommInitRankConfig` 的非阻塞模式，而非阻塞模式要求初始化在后台线程运行。如果同步路径和异步路径是两套代码，维护成本会翻倍。统一走异步、同步路径只是"启动后立即等待"，代码只有一份。
+The core of the design here is "synchronous API + asynchronous implementation." Why not let`ncclCommInitRank`directly execute all initialization synchronously? Because NCCL needs to support`ncclCommInitRankConfig`non-blocking mode, and non-blocking mode requires initialization to run in a background thread. If the synchronous path and the asynchronous path were two separate pieces of code, the maintenance cost would double. By uniformly going through the asynchronous path, the synchronous path is just "start and immediately wait," and there is only one copy of the code.
 
 ```mermaid
 flowchart TD
@@ -79,119 +78,119 @@ flowchart TD
     enq -->|否| async --> func
 ```
 
-## 3.2 Bootstrap：rank 之间的第一条控制通道
+# 3.2 Bootstrap: The First Control Channel Between Ranks
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-Bootstrap 是 NCCL 的"会前微信群"。在正式通信开始之前，所有 rank 需要先建立一条控制通道，用来交换"我是谁、我在哪台机器、我的 GPU 是什么型号、我的网卡地址是什么"这些元数据。没有 bootstrap，rank 之间就是一群互不相识的陌生人，无法协调任何通信。
+Bootstrap is NCCL's "pre-meeting WeChat group." Before formal communication begins, all ranks need to first establish a control channel to exchange metadata such as "who I am, which machine I am on, what model my GPU is, and what my NIC address is." Without bootstrap, the ranks are just a group of strangers who do not know each other and cannot coordinate any communication.
 
-如果 bootstrap 失败或超时，整个通信域初始化就会卡死——这是生产环境中最常见的 NCCL 挂起原因之一。
+If bootstrap fails or times out, the entire communication domain initialization will hang—this is one of the most common causes of NCCL hangs in production environments.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-Bootstrap 的核心状态保存在 `bootstrapState` 结构体中：
+The core state of Bootstrap is stored in the`bootstrapState`structure:
 
-[FACT:src/bootstrap.cc:527-546](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L527-L546)
+[FACT:src/bootstrap.cc:527-546]
 
-这个结构体有几个关键字段值得展开：
+Several key fields in this struct are worth elaborating on:
 
-- `ring`：一个联合体，要么是网络设备句柄（`net.sendComm`/`net.recvComm`），要么是一对 socket（`socket.send`/`socket.recv`）。这对应两种 bootstrap 模式：基于 socket 的默认模式和基于网络设备的 `NCCL_OOB_NET_ENABLE` 模式。
-- `listen`：监听端信息，同样有网络和 socket 两种形态。
-- `peerP2pAddresses` / `peerProxyAddresses`：所有 rank 的 P2P 地址和 proxy 地址数组，通过 ring allgather 填充。
-- `unexpectedConnections`：一个链表，缓存"收到了但还没被匹配"的连接。这是 bootstrap 协议的一个关键设计——因为接收方无法预知谁会先连过来，所以必须先把不匹配的连接存起来。
-- `asyncSendQueue` + `asyncSendLock` + `asyncSendCond`：异步发送队列及其同步原语，用于 TLS 加密模式下的并发发送。
+- `ring`: a union, either a network device handle (`net.sendComm`/`net.recvComm`), or a pair of sockets (`socket.send`/`socket.recv`). This corresponds to two bootstrap modes: the default socket-based mode and the network-device-based`NCCL_OOB_NET_ENABLE`mode.
+- `listen`: listener-side information, which likewise has two forms: network and socket.
+- `peerP2pAddresses` / `peerProxyAddresses`: arrays of P2P addresses and proxy addresses for all ranks, populated via ring allgather.
+- `unexpectedConnections`: a linked list that caches connections that have been "received but not yet matched." This is a key design of the bootstrap protocol—because the receiver cannot predict who will connect first, unmatched connections must be stored first.
+- `asyncSendQueue` + `asyncSendLock` + `asyncSendCond`: the asynchronous send queue and its synchronization primitives, used for concurrent sends in TLS encryption mode.
 
-`bootstrapState` 的分配发生在 `bootstrapInit` 开头：
+`bootstrapState`The allocation of`bootstrapInit`occurs at the beginning of
 
-[FACT:src/bootstrap.cc:769-776](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L769-L776)
+[FACT:src/bootstrap.cc:769-776]
 
-注意 `comm->bootstrap = state` 这一行——bootstrap 状态被挂到通信域上，后续所有 bootstrap 操作都通过 `comm->bootstrap` 访问。
+Note the`comm->bootstrap = state`line—the bootstrap state is attached to the communicator, and all subsequent bootstrap operations access it through`comm->bootstrap`.
 
-### Step-by-Step Walkthrough
+## Step-by-Step Walkthrough
 
-`bootstrapInit` 是 bootstrap 的主干函数。让我们按执行顺序拆解：
+`bootstrapInit`is the main function of bootstrap. Let's break it down in execution order:
 
-**第一步：确定 magic 值。** magic 是 bootstrap 通信的"暗号"，只有持有相同 magic 的 rank 才能互相连接。
+**Step 1: Determine the magic value.**magic is the "secret code" for bootstrap communication; only ranks holding the same magic can connect to each other.
 
-[FACT:src/bootstrap.cc:778-788](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L778-L788)
+[FACT:src/bootstrap.cc:778-788]
 
-如果是正常初始化（`handles != NULL`），magic 来自第一个 handle；如果是 split/grow（`parent != NULL`），magic 通过 `hashCombine(parent->magic, parent->childCount)` 派生。这保证了每个子通信域有唯一的 magic。
+If it is normal initialization (`handles != NULL`), magic comes from the first handle; if it is split/grow (`parent != NULL`), magic is derived via`hashCombine(parent->magic, parent->childCount)`. This ensures each sub-communicator has a unique magic.
 
-**第二步：创建监听 socket。** 每个 rank 需要两个监听端点：一个用于 ring 邻居连接（`STATE_LISTEN(state, socket)`），一个用于 root 连接（`listenSockRoot`）：
+**Step 2: Create listening sockets.**Each rank needs two listening endpoints: one for ring neighbor connections (`STATE_LISTEN(state, socket)`), and one for root connections (`listenSockRoot`）：
 
-[FACT:src/bootstrap.cc:797-831](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L797-L831)
+[FACT:src/bootstrap.cc:797-831]
 
-这里有一个关键的分工：ring 监听 socket 使用 `comm->magic`，而 root 监听 socket 使用 `BOOTSTRAP_HANDLE(handles, curr_root)->magic`。为什么？因为 root 是全局协调者，所有 rank 都要连它，所以它用统一的 magic；而 ring 邻居是点对点的，用通信域自己的 magic 就够了。
+There is a key division of labor here: the ring listening socket uses`comm->magic`, while the root listening socket uses`BOOTSTRAP_HANDLE(handles, curr_root)->magic`. Why? Because root is the global coordinator, and all ranks need to connect to it, so it uses a unified magic; whereas ring neighbors are point-to-point, so the communicator's own magic is sufficient.
 
-**第三步：错峰连接。** 当 rank 数量很大时，所有 rank 同时连 root 会造成连接风暴。NCCL 用 `NCCL_UID_STAGGER_RATE` 和 `NCCL_UID_STAGGER_THRESHOLD` 来控制错峰：
+**Step 3: Staggered connections.**When the number of ranks is very large, all ranks connecting to root simultaneously causes a connection storm. NCCL uses`NCCL_UID_STAGGER_RATE`and`NCCL_UID_STAGGER_THRESHOLD`to control staggering:
 
-[FACT:src/bootstrap.cc:833-843](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L833-L843)
+[FACT:src/bootstrap.cc:833-843]
 
-当某个 root 负责的 rank 数超过阈值（默认 256）时，每个 rank 根据自己在 root 下的局部 ID 计算延迟微秒数，然后 sleep。这是一个简单但有效的"令牌桶"式限流。
+When the number of ranks handled by a root exceeds a threshold (default 256), each rank calculates a delay in microseconds based on its local ID under that root, and then sleeps. This is a simple but effective "token bucket"-style rate limiting.
 
-**第四步：向 root 发送自己的连接信息。** 每个 rank 把自己的监听地址发给 root：
+**Step 4: Send your own connection information to root.**Each rank sends its listening address to root:
 
-[FACT:src/bootstrap.cc:845-867](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L845-L867)
+[FACT:src/bootstrap.cc:845-867]
 
-root 收到所有 rank 的信息后，会做一次"环形配对"——把 rank i 的地址发给 rank i-1，把 rank i+1 的地址发给 rank i。这样每个 rank 就知道了自己 ring 上的前后邻居。
+After root receives the information of all ranks, it performs a "ring pairing"—sending rank i's address to rank i-1, and rank i+1's address to rank i. In this way, each rank learns its predecessor and successor neighbors on the ring.
 
-**第五步：建立 ring 连接。** 每个 rank 连接自己的"下一个"邻居，同时接受"上一个"邻居的连接：
+**Step 5: Establish ring connections.**Each rank connects to its "next" neighbor while accepting the connection from its "previous" neighbor:
 
-[FACT:src/bootstrap.cc:885-894](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L885-L894)
+[FACT:src/bootstrap.cc:885-894]
 
-这里 `socketRingConnect` 内部使用了 `bootstrapConcurrent`——在 TLS 加密模式下，connect 和 accept 必须并发执行，否则会死锁（因为 TLS 握手需要双方同时参与）。非加密模式下则串行执行 connect 再 accept。
+Here`socketRingConnect`internally uses`bootstrapConcurrent`—in TLS encryption mode, connect and accept must be executed concurrently, otherwise it will deadlock (because the TLS handshake requires both parties to participate simultaneously). In non-encrypted mode, connect is executed serially followed by accept.
 
-**第六步：AllGather 所有地址。** ring 建立后，通过 `ringAllInfo` 把所有 rank 的 P2P 地址、proxy 地址、UDS 地址做一次 allgather：
+**Step 6: AllGather all addresses.**After the ring is established, perform an allgather of all ranks' P2P addresses, proxy addresses, and UDS addresses via`ringAllInfo`:
 
-[FACT:src/bootstrap.cc:934-938](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L934-L938)
+[FACT:src/bootstrap.cc:934-938]
 
-`ringAllInfo` 内部调用 `bootstrapAllGather`，后者在 socket 模式下使用 `socketRingAllGather`——一个双向 ring allgather 算法，N 个 rank 只需要 N/2 步：
+`ringAllInfo`internally calls`bootstrapAllGather`, which in socket mode uses`socketRingAllGather`—a bidirectional ring allgather algorithm, requiring only N/2 steps for N ranks:
 
-[FACT:src/bootstrap.cc:1363-1412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1363-L1412)
+[FACT:src/bootstrap.cc:1363-1412]
 
-这个双向算法是 bootstrap 性能的关键优化。传统的单向 ring allgather 需要 N-1 步，双向版本把步数减半。每一步同时向两个方向发送和接收数据，用 `socketDoubleSendRecv` 把 4 个操作（2 发 2 收）打包成一次系统调用。
+This bidirectional algorithm is a key optimization for bootstrap performance. The traditional unidirectional ring allgather requires N-1 steps, while the bidirectional version halves the number of steps. Each step simultaneously sends and receives data in both directions, using`socketDoubleSendRecv`to package 4 operations (2 sends and 2 receives) into a single system call.
 
-### 并发控制与底层交互
+## Concurrency control and low-level interaction
 
-Bootstrap 的并发控制有几个层次：
+Bootstrap's concurrency control has several layers:
 
-**第一层：abort 检查。** 所有阻塞循环都定期检查 abortFlag：
+**Layer 1: abort checking.**All blocking loops periodically check abortFlag:
 
-[FACT:src/bootstrap.cc:150-159](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L150-L159)
+[FACT:src/bootstrap.cc:150-159]
 
-`BOOTSTRAP_N_CHECK_ABORT` 设为 10000，意味着每 10000 次循环检查一次 abort 标志。这个数字是性能与响应性的折中——检查太频繁会影响性能，检查太少会导致 abort 响应延迟。
+`BOOTSTRAP_N_CHECK_ABORT`Set to 10000, meaning the abort flag is checked once every 10000 loop iterations. This number is a tradeoff between performance and responsiveness—checking too frequently hurts performance, while checking too infrequently delays abort response.
 
-**第二层：异步发送队列。** 在 TLS 加密模式下，`bootstrapSend` 不能同步执行（因为 TLS 握手需要接收方也参与），所以 NCCL 把发送操作放到独立线程：
+**Layer 2: asynchronous send queue.**In TLS encryption mode,`bootstrapSend`cannot be executed synchronously (because the TLS handshake requires the receiver to participate as well), so NCCL places send operations on a separate thread:
 
-[FACT:src/bootstrap.cc:1161-1217](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1161-L1217)
+[FACT:src/bootstrap.cc:1161-1217]
 
-这里有一个精妙的顺序保证机制。`bootstrapAsyncSendMain` 在发送前会检查队列中是否有"更早的、发往同一 (peer, tag) 的发送"：
+There is an ingenious ordering guarantee mechanism here.`bootstrapAsyncSendMain`Before sending, it checks whether there is an "earlier send to the same (peer, tag)" in the queue:
 
-[FACT:src/bootstrap.cc:1124-1152](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1124-L1152)
+[FACT:src/bootstrap.cc:1124-1152]
 
-为什么要保证同一 (peer, tag) 的发送顺序？源码注释解释得很清楚：接收方按 (peer, tag) 匹配连接，如果两个发往同一 (peer, tag) 的消息到达顺序颠倒，接收方会把它们匹配错。NVLS 初始化期间会多次向同一 peer 用同一 tag 广播，所以这个顺序保证是必须的。
+Why must the send order for the same (peer, tag) be guaranteed? The source code comments explain this clearly: the receiver matches connections by (peer, tag). If two messages destined for the same (peer, tag) arrive out of order, the receiver will match them incorrectly. During NVLS initialization, broadcasts are sent multiple times to the same peer with the same tag, so this ordering guarantee is essential.
 
-**第三层：意外连接队列。** 接收方无法预知谁会先连过来，所以 `socketAccept` 会把不匹配的连接存入 `unexpectedConnections` 链表：
+**Third layer: the unexpected connection queue.**The receiver cannot predict who will connect first, so`socketAccept`it stores unmatched connections in a`unexpectedConnections`linked list:
 
-[FACT:src/bootstrap.cc:1276-1300](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1276-L1300)
+[FACT:src/bootstrap.cc:1276-1300]
 
-这个设计解决了一个经典的分布式问题：多个 rank 可能同时向你发起连接，但你的 `bootstrapRecv` 调用顺序是固定的。如果不匹配的连接被直接丢弃，发送方会超时；如果阻塞等待，又可能死锁。存入队列是最安全的做法。
+This design solves a classic distributed problem: multiple ranks may initiate connections to you simultaneously, but your`bootstrapRecv`call order is fixed. If unmatched connections were simply dropped, the sender would time out; if it blocked and waited, it could deadlock. Storing them in a queue is the safest approach.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑一：bootstrap 超时导致初始化挂起。** 如果某个 rank 因为网络问题无法连接到 root，其他所有 rank 都会在 `ncclSocketAccept` 或 `ncclSocketRecv` 上无限等待。NCCL 没有内置的 bootstrap 超时机制，唯一的逃生通道是 abortFlag。生产环境中建议设置 `NCCL_UID_STAGGER_RATE` 来缓解大规模集群的连接风暴。
+**Pitfall 1: bootstrap timeout causing initialization to hang.**If a rank cannot connect to the root due to network issues, all other ranks will wait indefinitely on`ncclSocketAccept`or`ncclSocketRecv`. NCCL has no built-in bootstrap timeout mechanism; the only escape route is abortFlag. In production environments, it is recommended to set`NCCL_UID_STAGGER_RATE`to mitigate connection storms in large-scale clusters.
 
-**坑二：`NCCL_COMM_ID` 与多 handle 冲突。** 当用户设置 `NCCL_COMM_ID` 环境变量时，NCCL 会强制把 `nId` 降为 1：
+**Pitfall 2:`NCCL_COMM_ID`conflicts with multiple handles.**When the user sets the`NCCL_COMM_ID`environment variable, NCCL forcibly downgrades`nId`to 1:
 
-[FACT:src/init.cc:2912-2921](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L2912-L2921)
+[FACT:src/init.cc:2912-2921]
 
-这意味着 `ncclCommInitRankScalable` 的多 handle 特性会被静默禁用。如果你在用 scalable 初始化又设了 `NCCL_COMM_ID`，行为会和你预期的不一样。
+This means that`ncclCommInitRankScalable`'s multi-handle feature is silently disabled. If you are using scalable initialization and also set`NCCL_COMM_ID`, the behavior will differ from what you expect.
 
-**坑三：TLS 模式下的死锁。** 在 TLS 加密模式下，如果 connect 和 accept 不并发执行，双方都会卡在 TLS 握手。`bootstrapConcurrent` 就是为了解决这个问题：
+**Pitfall 3: deadlock in TLS mode.**In TLS encryption mode, if connect and accept are not executed concurrently, both sides will get stuck in the TLS handshake.`bootstrapConcurrent`This is precisely to solve this problem:
 
-[FACT:src/bootstrap.cc:648-669](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L648-L669)
+[FACT:src/bootstrap.cc:648-669]
 
-非加密模式下串行执行（先 send 后 recv），加密模式下启动一个线程处理 send，主线程处理 recv。
+In non-encrypted mode, execution is serial (send first, then recv); in encrypted mode, a thread is started to handle send, while the main thread handles recv.
 
 ```mermaid
 sequenceDiagram
@@ -217,204 +216,215 @@ sequenceDiagram
     Note over R0,R2: 所有地址交换完成
 ```
 
-## 3.3 commAlloc：通信域对象的内存骨架
+# 3.3 commAlloc: the memory skeleton of the communicator object
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`commAlloc` 是通信域的"毛坯房交付"——它分配结构体内存、初始化所有字段到安全默认值、创建必要的 CUDA 对象和同步原语，但还没有填充拓扑信息、通道配置、传输连接这些"精装修"内容。如果把 `ncclComm` 比作一栋大楼，`commAlloc` 就是打地基和浇筑框架，`initTransportsRank` 才是内部装修。
+`commAlloc`is the "roughcast delivery" of a communicator—it allocates the struct memory, initializes all fields to safe defaults, and creates the necessary CUDA objects and synchronization primitives, but has not yet filled in the "fine decoration" content such as topology information, channel configuration, and transport connections. If`ncclComm`is compared to a building,`commAlloc`is laying the foundation and pouring the frame,`initTransportsRank`is the interior decoration.
 
-如果没有 `commAlloc` 的初始化，后续代码访问未初始化的字段会导致不可预测的行为——比如 `comm->channels[c].id` 如果是随机值，通道初始化逻辑就会误判通道状态。
+Without the initialization performed by`commAlloc`, subsequent code accessing uninitialized fields will lead to unpredictable behavior—for example, if`comm->channels[c].id`is a random value, the channel initialization logic will misjudge the channel state.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-`commAlloc` 的签名和开头校验：
+`commAlloc`The signature and initial validation of
 
-[FACT:src/init.cc:512-526](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L512-L526)
+[FACT:src/init.cc:512-526]
 
-它首先校验 `ndev` 和 `rank` 的合法性，然后构造两个内存栈（`memPermanent` 和 `memScoped`），设置 `rank` 和 `nRanks`。这两个内存栈是 NCCL 的内存管理基础设施——`memPermanent` 用于生命周期与通信域相同的分配，`memScoped` 用于临时分配。
+It first validates the legality of`ndev`and`rank`, then constructs two memory stacks (`memPermanent`and`memScoped`), and sets`rank`and`nRanks`. These two memory stacks are NCCL's memory management infrastructure—`memPermanent`is used for allocations whose lifetime is the same as the communicator,`memScoped`is used for temporary allocations.
 
-接下来是 CUDA 设备探测：
+Next is CUDA device probing:
 
-[FACT:src/init.cc:528-531](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L528-L531)
+[FACT:src/init.cc:528-531]
 
-`cudaGetDevice` 获取当前设备号，`ncclCudaCompCap` 获取计算能力。源码注释说得很直白："Try to create a CUDA object right away. If there is something wrong with the device we're on, better know it early."——尽早暴露设备问题，避免在初始化后期才发现。
+`cudaGetDevice`obtains the current device number,`ncclCudaCompCap`obtains the compute capability. The source code comment says it plainly: "Try to create a CUDA object right away. If there is something wrong with the device we're on, better know it early."—expose device problems as early as possible to avoid discovering them late in initialization.
 
-然后是共享资源的分配或继承：
+Then comes the allocation or inheritance of shared resources:
 
-[FACT:src/init.cc:533-555](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L533-L555)
+[FACT:src/init.cc:533-555]
 
-这里有一个重要的分支：如果 `parent == NULL || !parent->shareResources`，就创建新的 `ncclSharedResources`；否则继承父通信域的共享资源并增加引用计数。`ncclSharedResources` 包含设备流、主机流、启动事件、scratch 事件等——这些资源在 split 场景下可以被子通信域复用，避免重复创建。
+There is an important branch here: if`parent == NULL || !parent->shareResources`, create a new`ncclSharedResources`; otherwise inherit the parent communicator's shared resources and increment the reference count.`ncclSharedResources`contains device streams, host streams, launch events, scratch events, etc.—these resources can be reused by sub-communicators in split scenarios, avoiding repeated creation.
 
-注意 `sharedRes->refCount = 1` 这一行——初始引用计数为 1，每次 split 共享时递增，最后一个引用释放时才真正销毁。
+Note the`sharedRes->refCount = 1`line—the initial reference count is 1, incremented each time it is shared by split, and only truly destroyed when the last reference is released.
 
-接下来是网络、RMA、GIN 的初始化：
+Next is the initialization of network, RMA, and GIN:
 
-[FACT:src/init.cc:547-549](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L547-L549)
+[FACT:src/init.cc:547-549]
 
-这三个子系统分别负责网络传输、远程内存访问、GPU 发起的网络通信。它们的初始化顺序有讲究——`ncclNetInit` 必须先于 `ncclRmaInit`，因为 RMA 依赖网络插件。
+These three subsystems are respectively responsible for network transport, remote memory access, and GPU-initiated network communication. Their initialization order matters—`ncclNetInit`must precede`ncclRmaInit`, because RMA depends on the network plugin.
 
-内存管理器的初始化：
+Initialization of the memory manager:
 
-[FACT:src/init.cc:567-576](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L567-L576)
+[FACT:src/init.cc:567-576]
 
-同样有共享/新建两种路径。`ncclMemManager` 负责管理 CUDA 内存池和注册缓存。
+There are likewise two paths: shared/new.`ncclMemManager`is responsible for managing the CUDA memory pool and registration cache.
 
-通道初始化标记：
+Channel initialization marker:
 
-[FACT:src/init.cc:607-608](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L607-L608)
+[FACT:src/init.cc:607-608]
 
-这一行把所有通道的 `id` 设为 -1，表示"未初始化"。后续 `setupChannel` 会检查这个值来决定是否需要初始化。
+This line sets all channels'`id`to -1, indicating "uninitialized". Later,`setupChannel`will check this value to decide whether initialization is needed.
 
-中断队列的构造：
+Construction of interrupt queues:
 
-[FACT:src/init.cc:619-632](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L619-L632)
+[FACT:src/init.cc:619-632]
 
-NCCL 使用侵入式队列（intrusive queue）来管理各种任务。这些队列在 `commAlloc` 阶段全部构造为空，后续任务入队时直接使用。
+NCCL uses intrusive queues to manage various tasks. These queues are all constructed as empty during the`commAlloc`phase, and are used directly when subsequent tasks are enqueued.
 
-CUDA 内存池的创建：
+Creation of the CUDA memory pool:
 
-[FACT:src/init.cc:636-652](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L636-L652)
+[FACT:src/init.cc:636-652]
 
-如果设备支持内存池（`cudaDevAttrMemoryPoolsSupported`），就创建一个 pinned 类型的内存池，并把释放阈值设为最大值（`~uint64_t(0)`），意思是"永远不自动释放"。这是为了避免 CUDA 运行时在 NCCL 不知情的情况下回收内存。
+If the device supports memory pools (`cudaDevAttrMemoryPoolsSupported`), create a pinned-type memory pool and set the release threshold to the maximum value (`~uint64_t(0)`), meaning "never automatically release". This is to prevent the CUDA runtime from reclaiming memory without NCCL's knowledge.
 
-### Step-by-Step Walkthrough
+## Step-by-Step Walkthrough
 
-让我们跟踪一个具体的初始化场景：单机 8 卡，每个进程一个 rank，正常初始化。
+Let us trace a specific initialization scenario: a single machine with 8 GPUs, one rank per process, normal initialization.
 
-1. `commAlloc(comm, NULL, 8, rank)` 被调用，`parent == NULL`。
-2. 校验通过，`comm->rank = rank`，`comm->nRanks = 8`。
-3. `cudaGetDevice` 返回当前设备号，`comm->compCap` 被设置。
-4. 创建新的 `ncclSharedResources`，引用计数为 1。
-5. `ncclNetInit` 初始化网络插件（可能是 Socket 或 IB）。
-6. `ncclMemManagerInit` 创建内存管理器。
-7. `getBusId` 获取 PCI 总线 ID，`ncclNvmlDeviceGetHandleByPciBusId` 获取 NVML 句柄。
-8. `dmaBufSupported` 检测 DMA-BUF 支持。
-9. 分配 `connectSend` / `connectRecv` 位图数组。
-10. 所有通道 `id` 设为 -1。
-11. 构造所有中断队列。
-12. 创建 CUDA 内存池。
+1. `commAlloc(comm, NULL, 8, rank)`is called,`parent == NULL`。
 
-### 设计思考
+2. Validation passes,`comm->rank = rank`，`comm->nRanks = 8`。
 
-`commAlloc` 中最值得玩味的设计是"尽早失败"原则。它在函数开头就调用 `cudaGetDevice`，而不是等到后面需要设备信息时再调用。这样做的好处是：如果设备有问题（比如被其他进程独占），错误会在初始化早期就暴露，而不是在分配了大量内存之后才发现。
+3. `cudaGetDevice`returns the current device number,`comm->compCap`is set.
 
-另一个设计是 `preconnectNext` 的初始化：
+4. Create a new`ncclSharedResources`, with a reference count of 1.
 
-[FACT:src/init.cc:598-598](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L598-L598)
+5. `ncclNetInit`Initialize the network plugin (possibly Socket or IB).
 
-`reinterpret_cast<struct ncclComm*>(0x1)` 是一个哨兵值，用于标记"下一个预连接"的状态。这种用非法指针值作为状态标记的手法在系统编程中很常见——它比额外的布尔字段更省内存，但需要小心不要解引用。
+6. `ncclMemManagerInit`Create the memory manager.
 
-## 3.4 initTransportsRank：拓扑发现与通道分配
+7. `getBusId`Get the PCI bus ID,`ncclNvmlDeviceGetHandleByPciBusId`Get the NVML handle.
 
-### Intuitive Architectural Model
+8. `dmaBufSupported`Detect DMA-BUF support.
 
-`initTransportsRank` 是初始化的"心脏"。它做三件大事：通过两次 AllGather 交换所有 rank 的设备信息和拓扑信息；根据这些信息计算 ring/tree/collnet/nvls 等算法的图结构；最后建立所有传输连接。如果把通信域比作一个城市的交通系统，`initTransportsRank` 就是规划所有道路、立交桥和公交线路的过程。
+9. Allocate`connectSend` / `connectRecv`bitmap array.
 
-如果没有这一步，NCCL 就不知道数据该走哪条路——它可能让数据绕远路，或者根本找不到可达的路径。
+10. All channels`id`set to -1.
 
-### Data Structures & Memory Layout
+11. Construct all interrupt queues.
 
-`initTransportsRank` 的局部变量非常多，我们挑关键的看：
+12. Create CUDA memory pool.
 
-[FACT:src/init.cc:1163-1179](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1163-L1179)
+## Design considerations
 
-这里把 `comm->graphs` 数组中的各个图结构取出来，建立别名。`graphs` 数组按算法索引，注意 `nvlsGraph` 被用了两次（NVLS 和 NVLSTree 共享同一个图结构）。
+`commAlloc`The most intriguing design is the "fail fast" principle. It calls`cudaGetDevice`at the beginning of the function, rather than waiting until device information is needed later. The benefit is that if there's a problem with the device (e.g., it's exclusively held by another process), the error is exposed early in initialization, rather than after allocating a large amount of memory.
 
-两个关键的临时结构体：
+Another design is the initialization of`preconnectNext`:
 
-[FACT:src/init.cc:1181-1206](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1181-L1206)
+[FACT:src/init.cc:598-598]
 
-`graphInfo` 保存单个 rank 对某个算法的图信息（通道数、带宽、类型等），`allGatherInfo` 是 AllGather 的数据单元，包含所有算法的图信息加上拓扑 rank 信息。
+`reinterpret_cast<struct ncclComm*>(0x1)`is a sentinel value used to mark the state of "the next pre-connection." This technique of using an invalid pointer value as a state marker is common in systems programming—it saves memory compared to an extra boolean field, but care must be taken not to dereference it.
 
-### Step-by-Step Walkthrough
+# 3.4 initTransportsRank: Topology Discovery and Channel Allocation
 
-**阶段一：AllGather1——交换设备信息。**
+## Intuitive model
 
-[FACT:src/init.cc:1234-1239](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1234-L1239)
+`initTransportsRank`is the "heart" of initialization. It does three major things: exchange device information and topology information of all ranks through two AllGathers; compute the graph structures for algorithms such as ring/tree/collnet/nvls based on this information; and finally establish all transport connections. If the communication domain is likened to a city's transportation system,`initTransportsRank`is the process of planning all roads, overpasses, and bus routes.
 
-每个 rank 调用 `fillInfo` 填充自己的 `ncclPeerInfo`，然后通过 `bootstrapAllGather` 交换。`fillInfo` 填充的信息包括：rank 号、CUDA 设备号、NVML 设备号、NCCL 版本、git hash、主机 hash、进程 hash、GPU UUID、总线 ID、显存大小、驱动版本等。
+Without this step, NCCL wouldn't know which path data should take—it might route data on a detour, or fail to find any reachable path at all.
 
-[FACT:src/init.cc:888-982](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L888-L982)
+## Data structures and memory layout
 
-注意 `info->hostHash = getHostHash() + commHash` 和 `info->pidHash = getPidHash() + commHash`——host hash 和 pid hash 都加上了 commHash。这是为了区分同一台机器上的不同通信域。
+`initTransportsRank`has a large number of local variables; let's look at the key ones:
 
-AllGather 完成后，每个 rank 遍历所有 peer 的信息，计算全局属性：
+[FACT:src/init.cc:1163-1179]
 
-[FACT:src/init.cc:1250-1303](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1250-L1303)
+Here, the various graph structures in the`comm->graphs`array are extracted and aliases are created.`graphs`The array is indexed by algorithm; note that`nvlsGraph`is used twice (NVLS and NVLSTree share the same graph structure).
 
-这个循环做了很多事：检测版本不匹配、统计节点数、计算 `cuMemSupport` 的交集、检测是否有多个 rank 使用同一个 GPU、计算 GIN 类型掩码的交集等。注意 `nNodes` 的统计方式——每当遇到不同 hostHash 就递增，这假设 rank 是按节点连续排列的。
+Two key temporary structures:
 
-**阶段二：拓扑发现。**
+[FACT:src/init.cc:1181-1206]
 
-[FACT:src/init.cc:1390-1403](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1390-L1403)
+`graphInfo`holds the graph information of a single rank for a certain algorithm (number of channels, bandwidth, type, etc.),`allGatherInfo`is the data unit for AllGather, containing graph information for all algorithms plus topology rank information.
 
-这六步是拓扑发现的核心流程：`ncclTopoGetSystem` 枚举系统设备构建拓扑图，`ncclTopoComputePaths` 计算 GPU 到 NIC 的路径，`ncclTopoTrimSystem` 移除不可达设备，再次计算路径，`ncclTopoSearchInit` 初始化搜索状态，最后打印拓扑。
+## Step-by-Step Walkthrough
 
-**阶段三：图计算。**
+**Phase one: AllGather1—exchange device information.**
 
-[FACT:src/init.cc:1421-1468](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1421-L1468)
+[FACT:src/init.cc:1234-1239]
 
-依次计算 ring、tree、collnet chain、collnet direct、nvls 五种图。每种图有不同的 pattern 和通道数约束。注意 `treeGraph->minChannels = ringGraph->nChannels`——tree 的通道数被约束为与 ring 相同，这是为了保证不同算法之间的通道对齐。
+Each rank calls`fillInfo`to fill its own`ncclPeerInfo`, then exchanges via`bootstrapAllGather`.`fillInfo`The information filled in includes: rank number, CUDA device number, NVML device number, NCCL version, git hash, host hash, process hash, GPU UUID, bus ID, memory size, driver version, etc.
 
-**阶段四：AllGather3——交换图信息。**
+[FACT:src/init.cc:888-982]
 
-[FACT:src/init.cc:1490-1533](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1490-L1533)
+Note`info->hostHash = getHostHash() + commHash`and`info->pidHash = getPidHash() + commHash`—both host hash and pid hash have commHash added. This is to distinguish different communication domains on the same machine.
 
-每个 rank 把自己的图信息填入 `allGather3Data[rank]`，然后再次 `bootstrapAllGather`。这次交换的信息包括：每种算法的 pattern/nChannels/bwIntra/bwInter/typeIntra/typeInter/crossNic、CPU 架构、P2P 通道数、网络设备数、CollNet 设备数等。
+After AllGather completes, each rank iterates through all peers' information and computes global attributes:
 
-AllGather3 完成后，每个 rank 遍历所有 peer 的图信息，取最小值/最大值来对齐：
+[FACT:src/init.cc:1250-1303]
 
-[FACT:src/init.cc:1687-1703](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1687-L1703)
+This loop does many things: detects version mismatches, counts the number of nodes, computes the intersection of`cuMemSupport`, detects whether multiple ranks use the same GPU, computes the intersection of GIN type masks, etc. Note the counting method for`nNodes`—it increments each time a different hostHash is encountered, which assumes ranks are arranged contiguously by node.
 
-注意这里的对齐策略：`nChannels`、`sameChannels`、`bwIntra`、`bwInter` 取最小值，`typeIntra`、`typeInter`、`crossNic` 取最大值。为什么？因为通道数和带宽受限于最弱的链路，而类型和 crossNic 需要取并集以确保兼容性。
+**Phase two: Topology discovery.**
 
-**阶段五：建立传输连接。**
+[FACT:src/init.cc:1390-1403]
 
-[FACT:src/init.cc:1811-1892](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1811-L1892)
+These six steps are the core process of topology discovery:`ncclTopoGetSystem`enumerates system devices to build the topology graph,`ncclTopoComputePaths`computes GPU-to-NIC paths,`ncclTopoTrimSystem`removes unreachable devices and computes paths again,`ncclTopoSearchInit`initializes search state, and finally prints the topology.
 
-这里有两个分支：`runtimeConn` 为真时只做通道 setup 不做连接（延迟到运行时连接），否则立即建立所有连接。连接顺序是：ring → tree → NVLS → PAT → NVLS tree → CollNet。
+**Phase three: Graph computation.**
 
-### 并发控制与硬件交互
+[FACT:src/init.cc:1421-1468]
 
-`initTransportsRank` 中有几个值得注意的并发/硬件交互点：
+Sequentially compute five graphs: ring, tree, collnet chain, collnet direct, and nvls. Each graph has different pattern and channel count constraints. Note`treeGraph->minChannels = ringGraph->nChannels`—the tree's channel count is constrained to be the same as ring's, to ensure channel alignment between different algorithms.
 
-**CPU 亲和性设置：**
+**Phase four: AllGather3—exchange graph information.**
 
-[FACT:src/init.cc:1406-1412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1406-L1412)
+[FACT:src/init.cc:1490-1533]
 
-NCCL 把当前线程绑定到 GPU 附近的 CPU 核心，确保主机内存分配是本地 NUMA 节点的。这减少了跨 NUMA 访问的延迟。
+Each rank fills its graph information into`allGather3Data[rank]`, then`bootstrapAllGather`again. The information exchanged this time includes: pattern/nChannels/bwIntra/bwInter/typeIntra/typeInter/crossNic for each algorithm, CPU architecture, P2P channel count, number of network devices, number of CollNet devices, etc.
 
-**NVLS 初始化：**
+After AllGather3 completes, each rank iterates through all peers' graph information and takes the minimum/maximum values to align:
 
-[FACT:src/init.cc:1419-1419](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1419-L1419)
+[FACT:src/init.cc:1687-1703]
 
-`ncclNvlsInit` 检测 NVLink SHARP 支持。NVLS 允许交换机直接执行 reduce 操作，大幅降低 AllReduce 延迟。
+Note the alignment strategy here:`nChannels`、`sameChannels`、`bwIntra`、`bwInter`takes the minimum,`typeIntra`、`typeInter`、`crossNic`takes the maximum. Why? Because channel count and bandwidth are limited by the weakest link, while type and crossNic need to take the union to ensure compatibility.
 
-**Proxy 线程创建：**
+**Phase five: Establish transport connections.**
 
-[FACT:src/init.cc:1780-1786](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1780-L1786)
+[FACT:src/init.cc:1811-1892]
 
-Proxy 线程负责异步推进网络 I/O。它在 `initTransportsRank` 中被创建，之后所有网络操作都通过 proxy 进行。
+There are two branches here:`runtimeConn`When true, only channel setup is done without connections (deferred to runtime), otherwise all connections are established immediately. The connection order is: ring → tree → NVLS → PAT → NVLS tree → CollNet.
 
-### 生产避坑指南
+## Concurrency control and hardware interaction
 
-**坑一：网络设备数不匹配。** 如果不同 rank 的本地网卡数量不同，NCCL 会报错：
+`initTransportsRank`There are several noteworthy concurrency/hardware interaction points in
 
-[FACT:src/init.cc:1576-1596](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1576-L1596)
+**CPU affinity setting:**
 
-除非设置 `NCCL_IGNORE_NET_MISMATCH=1`。这在异构集群中很常见——有些节点有 8 张网卡，有些只有 4 张。忽略不匹配可能导致性能下降，因为通道数会被最弱的节点限制。
+[FACT:src/init.cc:1406-1412]
 
-**坑二：多 rank 共用同一 GPU。** 如果两个 rank 的 GPU UUID 相同，NCCL 会拒绝初始化：
+NCCL binds the current thread to a CPU core near the GPU, ensuring that host memory allocations are on the local NUMA node. This reduces the latency of cross-NUMA accesses.
 
-[FACT:src/init.cc:1291-1296](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1291-L1296)
+**NVLS initialization:**
 
-除非设置 `NCCL_MULTI_RANK_GPU_ENABLE=1`。这个检查防止了用户误配置导致的性能问题。
+[FACT:src/init.cc:1419-1419]
 
-**坑三：CollNet 节点数不足。** CollNet 需要至少 `NCCL_COLLNET_NODE_THRESHOLD` 个节点才能启用：
+`ncclNvlsInit`Detect NVLink SHARP support. NVLS allows the switch to directly perform reduce operations, greatly reducing AllReduce latency.
 
-[FACT:src/init.cc:1720-1728](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1720-L1728)
+**Proxy thread creation:**
 
-默认阈值是 2。单节点环境下 CollNet 会被自动禁用。
+[FACT:src/init.cc:1780-1786]
+
+The proxy thread is responsible for asynchronously driving network I/O. It is created in`initTransportsRank`, and all subsequent network operations go through the proxy.
+
+## Production Pitfall Guide
+
+**Pitfall 1: Mismatched number of network devices.**If different ranks have different numbers of local NICs, NCCL will report an error:
+
+[FACT:src/init.cc:1576-1596]
+
+Unless`NCCL_IGNORE_NET_MISMATCH=1`is set. This is common in heterogeneous clusters—some nodes have 8 NICs, others only 4. Ignoring the mismatch can lead to performance degradation, because the number of channels will be limited by the weakest node.
+
+**Pitfall 2: Multiple ranks sharing the same GPU.**If two ranks have the same GPU UUID, NCCL will refuse to initialize:
+
+[FACT:src/init.cc:1291-1296]
+
+Unless`NCCL_MULTI_RANK_GPU_ENABLE=1`is set. This check prevents performance issues caused by user misconfiguration.
+
+**Pitfall 3: Insufficient number of CollNet nodes.**CollNet requires at least`NCCL_COLLNET_NODE_THRESHOLD`nodes to be enabled:
+
+[FACT:src/init.cc:1720-1728]
+
+The default threshold is 2. In a single-node environment, CollNet is automatically disabled.
 
 ```mermaid
 flowchart TD
@@ -445,41 +455,41 @@ flowchart TD
     devcomm --> barrier --> done
 ```
 
-## 3.5 NCCL_PARAM：环境变量体系的编译期魔法
+# 3.5 NCCL_PARAM: The compile-time magic of the environment variable system
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`NCCL_PARAM` 是 NCCL 的"配置开关工厂"。它用宏在编译期生成一个函数，运行时第一次调用时读取环境变量并缓存结果。这就像家里的电灯开关——你拨一下（调用函数），灯就亮了（返回配置值），之后开关状态被记住，不需要每次都重新拨。
+`NCCL_PARAM`It is NCCL's "configuration switch factory." It uses a macro to generate a function at compile time, and on the first runtime call it reads the environment variable and caches the result. This is like a light switch at home—you flip it (call the function), the light turns on (returns the configuration value), and afterward the switch state is remembered, so you don't need to flip it again every time.
 
-如果没有这套机制，NCCL 就需要在每个使用配置的地方手动调用 `getenv` 并解析字符串，代码会变得极其冗长且容易出错。
+Without this mechanism, NCCL would need to manually call`getenv`and parse strings everywhere configuration is used, making the code extremely verbose and error-prone.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-`NCCL_PARAM` 宏的定义：
+`NCCL_PARAM`The definition of the macro:
 
-[FACT:src/include/param.h:22-31](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/param.h#L22-L31)
+[FACT:src/include/param.h:22-31]
 
-这个宏展开后生成一个函数 `ncclParam##name()`，内部有三个静态变量：
+This macro expands to generate a function`ncclParam##name()`, with three static variables inside:
 
-- `uninitialized = INT64_MIN`：哨兵值，表示"尚未初始化"。
-- `noCache`：三态标志，-1 表示未初始化，0 表示缓存，1 表示不缓存。
-- `cache`：缓存的值，初始为 `uninitialized`。
+- `uninitialized = INT64_MIN`: sentinel value, indicating "not yet initialized."
+- `noCache`: tri-state flag, -1 means uninitialized, 0 means cache, 1 means do not cache.
+- `cache`: the cached value, initially`uninitialized`。
 
-函数逻辑是：如果 `cache` 还是 `uninitialized`，调用 `ncclLoadParam` 加载；否则直接返回 `cache`。`COMPILER_EXPECT(..., false)` 告诉编译器这个分支很少走，优化热路径。
+The function logic is: if`cache`is still`uninitialized`, call`ncclLoadParam`to load; otherwise directly return`cache`。`COMPILER_EXPECT(..., false)`tells the compiler that this branch is rarely taken, optimizing the hot path.
 
-`ncclLoadParam` 的实现：
+`ncclLoadParam`The implementation of:
 
-[FACT:src/misc/param.cc:78-108](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L78-L108)
+[FACT:src/misc/param.cc:78-108]
 
-它用互斥锁保护整个加载过程，先检查 `noCache` 策略，再检查缓存是否有效，然后读取环境变量并解析。解析失败时使用默认值并打印警告。
+It uses a mutex to protect the entire loading process, first checking the`noCache`policy, then checking whether the cache is valid, and then reading and parsing the environment variable. On parse failure, it uses the default value and prints a warning.
 
-### Step-by-Step Walkthrough
+## Step-by-Step Walkthrough
 
-以 `NCCL_PARAM(BuffSize, "BUFFSIZE", -2)` 为例：
+Taking`NCCL_PARAM(BuffSize, "BUFFSIZE", -2)`as an example:
 
-[FACT:src/init.cc:1007-1007](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1007-L1007)
+[FACT:src/init.cc:1007-1007]
 
-宏展开后生成：
+After macro expansion it generates:
 
 ```cpp
 int64_t ncclParamBuffSize() {
@@ -494,152 +504,156 @@ int64_t ncclParamBuffSize() {
 }
 ```
 
-第一次调用时，`cache == uninitialized`，进入 `ncclLoadParam`。它读取 `NCCL_BUFFSIZE` 环境变量，如果没设置就返回默认值 -2。然后根据 `noCache` 策略决定是否缓存。
+On the first call,`cache == uninitialized`, enters`ncclLoadParam`. It reads the`NCCL_BUFFSIZE`environment variable, and if it is not set, returns the default value -2. Then, based on the`noCache`policy, it decides whether to cache.
 
-`noCache` 策略由 `ncclParamIsCacheDisabled` 决定：
+`noCache`The policy is determined by`ncclParamIsCacheDisabled`:
 
-[FACT:src/misc/param.cc:74-76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L74-L76)
+[FACT:src/misc/param.cc:74-76]
 
-如果环境变量名匹配某个模式（比如以 `_` 结尾），就不缓存，每次都重新读取。这允许用户在运行时动态修改某些配置。
+If the environment variable name matches a certain pattern (for example, ends with`_`), it is not cached and is re-read every time. This allows users to dynamically modify certain configurations at runtime.
 
-### 设计思考
+## Design considerations
 
-这套设计的精妙之处在于"零成本抽象"：热路径上只有一次原子加载和比较，没有锁、没有字符串解析。冷路径（首次加载）才付出完整代价。`COMPILER_EXPECT` 提示编译器把热路径放在指令缓存的前面，进一步提高性能。
+The brilliance of this design lies in "zero-cost abstraction": on the hot path there is only one atomic load and comparison, with no locks and no string parsing. Only the cold path (first load) pays the full cost.`COMPILER_EXPECT`It hints to the compiler to place the hot path earlier in the instruction cache, further improving performance.
 
-另一个设计是 `noCache` 的三态设计。-1 表示"还没决定"，0 表示"缓存"，1 表示"不缓存"。这个决定只在首次加载时做一次，之后不再改变。
+Another design is the tri-state design of`noCache`. -1 means "not yet decided," 0 means "cache," and 1 means "do not cache." This decision is made only once on the first load and does not change afterward.
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑一：环境变量拼写错误。** 如果用户写了 `NCCL_BUFSIZE` 而不是 `NCCL_BUFFSIZE`，NCCL 不会报错，只会使用默认值。建议用 `NCCL_DEBUG=ENV` 查看所有被识别的环境变量。
+**Pitfall 1: Misspelled environment variable.**If the user writes`NCCL_BUFSIZE`instead of`NCCL_BUFFSIZE`, NCCL will not report an error and will only use the default value. It is recommended to use`NCCL_DEBUG=ENV`to view all recognized environment variables.
 
-**坑二：`NCCL_CONF_FILE` 的加载顺序。** NCCL 会依次加载 `$NCCL_CONF_FILE`（或 `~/.nccl.conf`）和 `/etc/nccl.conf`：
+**Pitfall 2: The loading order of`NCCL_CONF_FILE`.**NCCL loads`$NCCL_CONF_FILE`(or`~/.nccl.conf`) and`/etc/nccl.conf`：
 
-[FACT:src/misc/param.cc:52-67](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L52-L67)
+[FACT:src/misc/param.cc:52-67]
 
-后加载的文件会覆盖先加载的。如果两个文件都设置了同一个变量，`/etc/nccl.conf` 的值会生效。
+in sequence. Files loaded later override those loaded earlier. If both files set the same variable,`/etc/nccl.conf`'s value takes effect.
 
-**坑三：`noCache` 变量的线程安全。** 源码注释说 "noCache is only load/stored within the mutex, no need for atomic"：
+**Pitfall 3: Thread safety of the`noCache`variable.**The source comment says "noCache is only load/stored within the mutex, no need for atomic":
 
-[FACT:src/misc/param.cc:74-76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/param.cc#L74-L76)
+[FACT:src/misc/param.cc:74-76]
 
-这意味着 `noCache` 的读写都在互斥锁保护下，不需要原子操作。但 `cache` 的读取是无锁的（热路径），所以用原子加载。
+This means that reads and writes of`noCache`are both protected by the mutex and do not require atomic operations. But reads of`cache`are lock-free (hot path), so atomic loads are used.
 
-## 3.6 devCommSetup：把通信域映射到设备
+# 3.6 devCommSetup: Mapping the communication domain to the device
 
-### Intuitive Architectural Model
+## Intuitive model
 
-`devCommSetup` 是通信域的"设备侧投影"。GPU kernel 运行在设备上，无法直接访问主机内存中的 `ncclComm` 结构体。所以 NCCL 需要把通信域的关键字段拷贝到设备可访问的内存中，形成 `ncclDevComm`。这就像把公司的通讯录复印一份放到每个员工的工位上——员工不用每次都跑去找前台问同事电话。
+`devCommSetup`It is the "device-side projection" of the communication domain. GPU kernels run on the device and cannot directly access the`ncclComm`structure in host memory. Therefore, NCCL needs to copy the key fields of the communication domain into device-accessible memory, forming`ncclDevComm`. This is like making a copy of the company directory and placing it at every employee's workstation—employees don't have to run to the front desk every time to ask for a colleague's phone number.
 
-如果没有 `devCommSetup`，GPU kernel 就无法知道自己的 rank、通道配置、缓冲区大小等信息，集合通信 kernel 根本无法启动。
+Without`devCommSetup`, the GPU kernel cannot know its own rank, channel configuration, buffer size, and other information, and the collective communication kernel cannot start at all.
 
-### Data Structures & Memory Layout
+## Data structures and memory layout
 
-`devCommSetup` 使用一个临时结构体 `ncclKernelCommAndChannels` 来打包要拷贝到设备的数据：
+`devCommSetup`It uses a temporary structure`ncclKernelCommAndChannels`to package the data to be copied to the device:
 
-[FACT:src/init.cc:712-746](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L712-L746)
+[FACT:src/init.cc:712-746]
 
-这个结构体包含 `ncclDevComm`（设备侧通信域）和通道数组。函数先把主机侧的数据填入临时结构体，然后一次性 `cudaMemcpyAsync` 到设备。
+This structure contains`ncclDevComm`(the device-side communication domain) and the channel array. The function first fills the host-side data into the temporary structure, then performs a single`cudaMemcpyAsync`to the device.
 
-关键字段的填充：
+Filling of key fields:
 
-[FACT:src/init.cc:734-746](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L734-L746)
+[FACT:src/init.cc:734-746]
 
-注意 `comm->devComm = &devCommAndChans->comm`——主机侧的 `comm->devComm` 指向设备内存中的 `ncclDevComm`。后续 kernel 启动时会把 `comm->devComm` 作为参数传入。
+Note`comm->devComm = &devCommAndChans->comm`—the host-side`comm->devComm`points to the`ncclDevComm`in device memory. When the kernel is subsequently launched,`comm->devComm`will be passed in as a parameter.
 
-通道信息的填充：
+Filling of channel information:
 
-[FACT:src/init.cc:829-843](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L829-L843)
+[FACT:src/init.cc:829-843]
 
-每个通道的 peers、ring、tree、collnetChain、collnetDirect、nvls 指针都被拷贝到设备侧。注意 `ring.userRanks` 需要额外的一次 `cudaMemcpyAsync`，因为它是一个数组。
+The peers, ring, tree, collnetChain, collnetDirect, and nvls pointers of each channel are copied to the device side. Note that`ring.userRanks`requires an additional`cudaMemcpyAsync`because it is an array.
 
-### Step-by-Step Walkthrough
+## Step-by-Step Walkthrough
 
-1. 获取设备流：`ncclStrongStreamAcquire` 获取一个强流（strong stream），确保后续的异步拷贝有序执行。
-2. 分配设备内存：`ncclCudaCallocAsync` 分配 `devCommAndChans`。
-3. 填充主机侧临时结构体：设置 rank、nRanks、node、nNodes、abortFlag、buffSizes 等。
-4. 分配并拷贝 `rankToLocalRank` 数组。
-5. 计算 `workFifoBytes`：根据 CC（Confidential Computing）状态决定。
-6. 分配 workFifo 缓冲区：GDR 模式用 `ncclGdrCudaCalloc`，否则用 `ncclCudaHostCalloc`。
-7. 分配 profiler 计数器。
-8. 分配进度计数器（如果启用）。
-9. 填充通道信息。
-10. 一次性拷贝到设备：`ncclCudaMemcpyAsync(devCommAndChans, &tmpCommAndChans, 1, deviceStream)`。
-11. 释放强流并同步。
+1. Get the device stream:`ncclStrongStreamAcquire`Get a strong stream to ensure that subsequent asynchronous copies execute in order.
 
-### 设计思考
+2. Allocate device memory:`ncclCudaCallocAsync`Allocate`devCommAndChans`。
 
-`devCommSetup` 中最值得注意的设计是"批量拷贝"。NCCL 没有为每个字段单独调用 `cudaMemcpy`，而是把所有字段打包到一个临时结构体，用一次 `cudaMemcpyAsync` 完成。这大幅减少了 CUDA API 调用次数和同步开销。
+3. Fill the host-side temporary struct: set rank, nRanks, node, nNodes, abortFlag, buffSizes, etc.
 
-另一个设计是 `workFifoBytes` 的 CC 处理：
+4. Allocate and copy the`rankToLocalRank`array.
 
-[FACT:src/init.cc:750-763](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L750-L763)
+5. Compute`workFifoBytes`: determined based on the CC (Confidential Computing) state.
 
-在 CC（Confidential Computing）模式下，`workFifoBytes` 被设为 0，因为 GDR 拷贝在 CC 模式下不可用。这是一个硬件限制的优雅降级。
+6. Allocate the workFifo buffer: use`ncclGdrCudaCalloc`in GDR mode, otherwise use`ncclCudaHostCalloc`。
 
-### 生产避坑指南
+7. Allocate profiler counters.
 
-**坑一：`devCommSetup` 必须在 barrier 之前调用。** 源码注释解释了原因：
+8. Allocate progress counters (if enabled).
 
-[FACT:src/init.cc:1950-1952](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1950-L1952)
+9. Fill channel information.
 
-如果在 barrier 之后调用，可能有线程已经开始启动 NCCL kernel，而此时设备内存还没分配完，会导致死锁。
+10. Copy to the device in one go:`ncclCudaMemcpyAsync(devCommAndChans, &tmpCommAndChans, 1, deviceStream)`。
 
-**坑二：`workFifoBytes` 必须是 2 的幂。** 如果不是，NCCL 会警告并使用默认值：
+11. Release the strong stream and synchronize.
 
-[FACT:src/init.cc:757-762](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L757-L762)
+## Design considerations
 
-## 本章思考与自测
+`devCommSetup`The most noteworthy design in this is "batch copy". NCCL does not call`cudaMemcpy`separately for each field; instead, it packs all fields into a temporary struct and uses a single`cudaMemcpyAsync`to complete it. This greatly reduces the number of CUDA API calls and synchronization overhead.
 
-<details><summary>Q1: 如果将 [FACT:src/init.cc:1291-1296](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1291-L1296) 中检测"多个 rank 使用同一 GPU"的逻辑去掉，在什么场景下会导致问题？为什么 NCCL 默认拒绝这种配置？</summary>
+Another design is`workFifoBytes`'s CC handling:
 
-**参考解析**：
+[FACT:src/init.cc:750-763]
 
-这段代码检测同一主机上两个 rank 的 GPU UUID 是否相同。如果相同且 `NCCL_MULTI_RANK_GPU_ENABLE=0`（默认），就返回 `ncclInvalidUsage`。
+In CC (Confidential Computing) mode,`workFifoBytes`is set to 0 because GDR copy is unavailable in CC mode. This is an elegant degradation due to a hardware limitation.
 
-去掉这个检查后，多个 rank 会共享同一个 GPU。这会导致：
+## Production pitfall guide
 
-1. **P2P 传输冲突**：NCCL 的 P2P 传输假设每个 rank 独占一个 GPU。如果两个 rank 共享 GPU，它们会同时向同一个 GPU 的同一块缓冲区写入数据，导致数据竞争和结果错误。
+**Pitfall 1:`devCommSetup`must be called before the barrier.**The source code comments explain the reason:
 
-2. **通道分配冲突**：`comm->channels` 中的通道资源（缓冲区、FIFO）是按 rank 分配的。共享 GPU 的 rank 会争抢同一份资源。
+[FACT:src/init.cc:1950-1952]
 
-3. **性能灾难**：即使没有正确性问题，两个 rank 共享一个 GPU 的算力和显存带宽，性能会急剧下降。
+If it is called after the barrier, some threads may have already started launching the NCCL kernel, while device memory has not yet been fully allocated, which can cause a deadlock.
 
-NCCL 默认拒绝这种配置是为了"快速失败"——与其让用户在一个错误配置上浪费数小时调试，不如在初始化时就明确报错。`NCCL_MULTI_RANK_GPU_ENABLE=1` 是给那些明确知道自己在做什么的用户（比如 MPS 场景）准备的逃生通道。
+**Pitfall 2:`workFifoBytes`must be a power of 2.**If it is not, NCCL will warn and use the default value:
 
-</details>
+[FACT:src/init.cc:757-762]
 
-<details><summary>Q2: 如果将 [FACT:src/bootstrap.cc:1129-1134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1129-L1134) 中等待"同一 (peer, tag) 的更早发送"的逻辑去掉，在什么场景下会导致接收方匹配错误？</summary>
+# Chapter review and self-test
 
-**参考解析**：
+Q1: If the logic in[FACT:src/init.cc:1291-1296]that detects "multiple ranks using the same GPU" is removed, in what scenarios would it cause problems? Why does NCCL reject this configuration by default?
 
-这段代码在异步发送线程中等待，直到队列中没有更早的、发往同一 (peer, tag) 的发送。
+**Reference analysis**：
 
-去掉这个等待后，两个发往同一 (peer, tag) 的发送可能并发执行，到达接收方的顺序不确定。接收方的 `socketAccept` 按 (peer, tag) 匹配连接：
+This code checks whether the GPU UUIDs of two ranks on the same host are the same. If they are the same and`NCCL_MULTI_RANK_GPU_ENABLE=0`(default), it returns`ncclInvalidUsage`。
 
-[FACT:src/bootstrap.cc:1291-1292](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/bootstrap.cc#L1291-L1292)
+After removing this check, multiple ranks will share the same GPU. This will cause:
 
-如果发送方 A 先调用 `bootstrapSend` 但后到达，发送方 B 后调用但先到达，接收方会把 B 的消息当作 A 的响应。这会导致数据错位——接收方以为收到的是第一个请求的响应，实际上是第二个请求的。
+1. **P2P transfer conflicts**: NCCL's P2P transfer assumes that each rank exclusively occupies one GPU. If two ranks share a GPU, they will simultaneously write data to the same buffer of the same GPU, causing data races and incorrect results.
 
-源码注释明确指出了这个场景："NVLS setup broadcasts to the same peers with the same tag several times during init"。NVLS 初始化期间会多次向同一 peer 用同一 tag 广播，如果顺序颠倒，NVLS 配置会完全错乱。
+2. **Channel allocation conflicts**：`comm->channels`The channel resources (buffers, FIFO) in are allocated per rank. Ranks sharing a GPU will contend for the same resources.
 
-这个顺序保证的代价是：同一 (peer, tag) 的发送被串行化。但不同 (peer, tag) 的发送仍然并发，所以整体吞吐量不受影响。
+3. **Performance disaster**: Even if there are no correctness issues, two ranks sharing one GPU's compute power and memory bandwidth will cause performance to drop sharply.
 
-</details>
+NCCL rejects this configuration by default in order to "fail fast" - rather than letting users waste hours debugging a misconfiguration, it is better to report an error clearly during initialization.`NCCL_MULTI_RANK_GPU_ENABLE=1`is an escape hatch prepared for users who clearly know what they are doing (such as in MPS scenarios).
 
-<details><summary>Q3: 如果将 [FACT:src/init.cc:1691-1697](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/init.cc#L1691-L1697) 中对齐策略从"nChannels 取 min、typeIntra 取 max"改为"全部取 min"或"全部取 max"，会分别导致什么问题？</summary>
+Q2: If the logic in[FACT:src/bootstrap.cc:1129-1134]that waits for "an earlier send to the same (peer, tag)" is removed, in what scenarios would it cause the receiver to match incorrectly?
 
-**参考解析**：
+**Reference analysis**：
 
-当前策略是：`nChannels`、`sameChannels`、`bwIntra`、`bwInter` 取 min，`typeIntra`、`typeInter`、`crossNic` 取 max。
+This code waits in the asynchronous send thread until there is no earlier send to the same (peer, tag) in the queue.
 
-**如果全部取 min**：`typeIntra` 和 `typeInter` 取 min 会导致某些 rank 的传输类型被降级。比如 rank A 支持 P2P（typeIntra=P2P），rank B 只支持 SHM（typeIntra=SHM），取 min 后所有 rank 都用 SHM。但 SHM 的枚举值可能比 P2P 小，取 min 会选到错误的类型。实际上 `typeIntra` 是一个位掩码或枚举，取 max 是为了选择"能力最强"的类型。
+After removing this wait, two sends to the same (peer, tag) may execute concurrently, and the order in which they arrive at the receiver is uncertain. The receiver's`socketAccept`matches connections by (peer, tag):
 
-**如果全部取 max**：`nChannels` 取 max 会导致某些 rank 被分配超过其能力的通道数。比如 rank A 只能支持 4 个通道，rank B 支持 8 个，取 max 后所有 rank 都尝试用 8 个通道，rank A 会失败或性能下降。`bwIntra` 取 max 会导致带宽估计过于乐观，tuning 模块可能选择不适合的算法。
+[FACT:src/bootstrap.cc:1291-1292]
 
-这个对齐策略的本质是：**资源约束取交集（min），能力枚举取并集（max）**。通道数和带宽是"上限"约束，必须取最保守的值；传输类型是"能力"枚举，取最大值确保所有 rank 都能找到兼容的传输方式。
+If sender A calls`bootstrapSend`first but arrives later, and sender B calls later but arrives first, the receiver will treat B's message as A's response. This causes data misalignment - the receiver thinks it received the response to the first request, but it is actually the response to the second request.
 
-</details>
+The source code comments explicitly point out this scenario: "NVLS setup broadcasts to the same peers with the same tag several times during init". During NVLS initialization, broadcasts are sent multiple times to the same peer with the same tag. If the order is reversed, the NVLS configuration will be completely disrupted.
 
-下一章我们将深入Topology Discovery & Physical Graph Search，看 NCCL 如何枚举机器里的 GPU、网卡、PCI 交换机，构建出一张完整的拓扑图，并在这张图上搜索最优的 ring 和 tree 结构。本章建立的 bootstrap 通信、commAlloc 内存骨架、initTransportsRank 主干流程，将在下一章中逐一展开其拓扑细节。
+The cost of this ordering guarantee is that sends to the same (peer, tag) are serialized. However, sends to different (peer, tag) are still concurrent, so overall throughput is not affected.
 
-至此，我们已经完整走过了 ncclCommInitRank 的调用链，看清了 ncclComm 对象从零构建的全过程。但初始化过程中有一个关键环节我们只是匆匆掠过：NCCL 是如何探测机器内部的 GPU 和网卡，并据此决定数据该走哪条路的？这正是下一章要深入的主题——Topology Discovery & Physical Graph Search。我们将拆解 src/graph/topo.cc 如何枚举 PCI/NVLink/网卡设备并构建拓扑图，src/graph/search.cc 如何在该图上搜索最优路径，以及 src/graph/rings.cc 与 trees.cc 如何将搜索结果具体化为 Ring 与 Tree 算法拓扑。理解了这套机制，你就能明白为什么 NCCL 能在不同机器上自动选到合适的算法。
+Q3: If the alignment strategy in[FACT:src/init.cc:1691-1697]is changed from "take min for nChannels and max for typeIntra" to "take min for all" or "take max for all", what problems would each cause?
+
+**Reference analysis**：
+
+The current strategy is:`nChannels`、`sameChannels`、`bwIntra`、`bwInter`take min,`typeIntra`、`typeInter`、`crossNic`take max.
+
+**If all take min**：`typeIntra`and`typeInter`Taking min would cause the transport type of some ranks to be downgraded. For example, if rank A supports P2P (typeIntra=P2P) and rank B only supports SHM (typeIntra=SHM), taking min would make all ranks use SHM. But the enum value of SHM may be smaller than that of P2P, so taking min would select the wrong type. In reality`typeIntra`is a bitmask or enum, and taking max is to select the "most capable" type.
+
+**If max is taken for everything**：`nChannels`Taking max would cause some ranks to be allocated more channels than they can support. For example, if rank A can only support 4 channels and rank B supports 8, taking max would make all ranks try to use 8 channels, and rank A would fail or suffer performance degradation.`bwIntra`Taking max would make the bandwidth estimate overly optimistic, and the tuning module might select an unsuitable algorithm.
+
+The essence of this alignment strategy is:**Resource constraints take the intersection (min), capability enums take the union (max)**. Channel count and bandwidth are "upper bound" constraints and must take the most conservative value; transport type is a "capability" enum, and taking the maximum ensures that all ranks can find a compatible transport method.
+
+In the next chapter, we will dive into topology discovery and graph search, and see how NCCL enumerates the GPUs, NICs, and PCI switches in a machine, builds a complete topology graph, and searches this graph for the optimal ring and tree structures. The bootstrap communication, commAlloc memory skeleton, and initTransportsRank main flow established in this chapter will have their topology details unfolded one by one in the next chapter.
+
+At this point, we have fully walked through the call chain of ncclCommInitRank and seen the entire process of building the ncclComm object from scratch. But there is one key step in the initialization process that we only briefly skimmed over: how does NCCL detect the GPUs and NICs inside a machine and use that to decide which path the data should take? This is exactly the topic to be explored in depth in the next chapter—topology discovery and graph search. We will break down how src/graph/topo.cc enumerates PCI/NVLink/NIC devices and builds the topology graph, how src/graph/search.cc searches for the optimal path on that graph, and how src/graph/rings.cc and trees.cc materialize the search results into Ring and Tree algorithm topologies. Once you understand this mechanism, you will understand why NCCL can automatically select suitable algorithms on different machines.

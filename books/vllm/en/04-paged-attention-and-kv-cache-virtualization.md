@@ -1,20 +1,20 @@
-# Chapter 04: Memory Management & PagedAttention: KV Cache Virtualization
+# Chapter 4: Scheduler: Continuous Batching and Memory-Aware Request Orchestration
 
+After requests enter EngineCore's input queue, they are not executed immediately. Which requests to process at each step, how many token budgets to allocate to each request, and who to sacrifice first when GPU memory is insufficient—these decisions are all concentrated in the`Scheduler.schedule()`method. This chapter starts from the scheduler's data structures and traces how a single`schedule()`call organizes the waiting queue, running list, and KV cache pool into an executable batch.
 
-请求进入 EngineCore 的输入队列后，并不会立即被执行。每一步处理哪些请求、为每个请求分配多少 token 预算、显存不足时优先牺牲谁，这些决策都集中在 `Scheduler.schedule()` 方法中。本章从调度器的数据结构入手，追踪一次 `schedule()` 调用如何将 waiting 队列、running 列表和 KV cache 池组织成一个可执行的批次。
+# 4.1 Scheduler Data Structures: Three Queues and One Memory Pool
 
+The core question the scheduler must answer is:**Under limited token budget and KV block budget, which requests should advance by how many tokens at this step?**To understand it, we must first see clearly what state it holds.
 
-调度器要回答的核心问题是：**在有限的 token 预算和 KV block 预算下，这一步该让哪些请求前进多少 token？** 要理解它，先要看清它手里握着哪些状态。
+The scheduler maintains three types of request containers.`self.requests`is a global dictionary,`req_id -> Request`, the single source of truth for all active requests[FACT:vllm/v1/core/sched/scheduler.py:208-209]。`self.waiting`and`self.skipped_waiting`are two priority queues; the former holds requests normally waiting to be scheduled, while the latter holds requests that temporarily cannot be scheduled due to asynchronous dependencies or constraints (such as waiting for remote KV or waiting for structured output grammar compilation)[FACT:vllm/v1/core/sched/scheduler.py:208-209]。`self.running`is an ordinary list, storing requests that have already entered the running state and hold KV blocks[FACT:vllm/v1/core/sched/scheduler.py:208-209]。
 
-调度器维护三类请求容器。`self.requests` 是全局字典，`req_id -> Request`，所有活跃请求的唯一真相来源 [FACT:vllm/v1/core/sched/scheduler.py:208-209](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L208-L209)。`self.waiting` 和 `self.skipped_waiting` 是两个优先级队列，前者放正常等待调度的请求，后者放因异步依赖或约束暂时无法调度的请求（如等待远程 KV、等待结构化输出语法编译）[FACT:vllm/v1/core/sched/scheduler.py:208-209](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L208-L209)。`self.running` 是一个普通列表，存放已经进入运行态、持有 KV block 的请求 [FACT:vllm/v1/core/sched/scheduler.py:208-209](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L208-L209)。
+There is a design here that is easy to overlook:`max_num_running_reqs`and`max_num_active_reqs`are two different upper limits. The former comes from`max_num_seqs`, determining the number of slots for the model runner; the latter comes from`max_num_active_seqs`, only limiting the number of requests that can enter RUNNING, and by default equal to the former[FACT:vllm/v1/core/sched/scheduler.py:123-131]. This separation allows reducing the actual concurrent decode batch size without shrinking CUDA graph capture capacity.
 
-这里有一个容易被忽略的设计：`max_num_running_reqs` 与 `max_num_active_reqs` 是两个不同的上限。前者来自 `max_num_seqs`，决定 model runner 的槽位数；后者来自 `max_num_active_seqs`，只限制能进入 RUNNING 的请求数，默认等于前者 [FACT:vllm/v1/core/sched/scheduler.py:123-131](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L123-L131)。这个分离允许在不缩小 CUDA graph 捕获容量的前提下，压低实际并发解码批大小。
+The memory side is uniformly managed by`KVCacheManager`, which internally holds`BlockPool`。`BlockPool`The core of is`self.blocks`(a list of all`KVCacheBlock`) and`free_block_queue`(a doubly linked list of free blocks arranged in eviction order)[FACT:vllm/v1/core/block_pool.py:171-177]. Note the existence of`null_block`: it is the first block popped from the head of the free queue,`is_null=True`, reference counting does not participate in regular maintenance, and it is specifically used as a placeholder[FACT:vllm/v1/core/block_pool.py:183-187]. When a certain token position of a request does not need a real KV block (for example, a position skipped by the sliding window), this null block is filled into the block table.
 
-显存侧由 `KVCacheManager` 统一管理，它内部持有 `BlockPool`。`BlockPool` 的核心是 `self.blocks`（全部 `KVCacheBlock` 的列表）和 `free_block_queue`（一个按驱逐顺序排列的空闲块双向链表）[FACT:vllm/v1/core/block_pool.py:171-177](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L171-L177)。注意 `null_block` 的存在：它是从空闲队列头部弹出的第一个块，`is_null=True`，引用计数不参与常规维护，专门用作占位符 [FACT:vllm/v1/core/block_pool.py:183-187](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L183-L187)。当请求的某个 token 位置不需要真实 KV block（例如被滑动窗口跳过的位置）时，block table 里就填这个 null block。
+The index structure for prefix caching is`BlockHashToBlockMap`, which maps`BlockHashWithGroupId`to a`KVCacheBlock`or a`{block_id: KVCacheBlock}`dictionary[FACT:vllm/v1/core/block_pool.py:56-59]. Why use a union type? The comment gives the answer: most hashes correspond to only one block, and using a dictionary would cause unnecessary GC overhead; only when the same hash is shared by multiple blocks does it upgrade to a dictionary[FACT:vllm/v1/core/block_pool.py:56-59]. This is a typical trade-off of type complexity for runtime overhead.
 
-前缀缓存的索引结构是 `BlockHashToBlockMap`，它把 `BlockHashWithGroupId` 映射到一个 `KVCacheBlock` 或一个 `{block_id: KVCacheBlock}` 字典 [FACT:vllm/v1/core/block_pool.py:56-59](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L56-L59)。为什么要用联合类型？注释给出了答案：大多数哈希只对应一个块，用字典会产生不必要的 GC 开销；只有当同一个哈希被多个块共享时才升级为字典 [FACT:vllm/v1/core/block_pool.py:56-59](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L56-L59)。这是一个典型的用类型复杂度换运行时开销的取舍。
-
-`KVCacheBlocks` 是调度器与 KV cache 管理器之间的接口对象，它把内部数据结构隐藏起来。它的 `blocks` 字段是 `tuple[Sequence[KVCacheBlock], ...]`，外层维度是 KV cache group，内层是块序列 [FACT:vllm/v1/core/kv_cache_manager.py:41-54](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L41-L54)。注释明确解释了为什么不用块作为外层维度：那会假设所有 group 的块数相同，而未来可能给不同 group 配置不同的 block size [FACT:vllm/v1/core/kv_cache_manager.py:43-48](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L43-L48)。
+`KVCacheBlocks`is the interface object between the scheduler and the KV cache manager, hiding the internal data structures. Its`blocks`field is`tuple[Sequence[KVCacheBlock], ...]`, the outer dimension is the KV cache group, and the inner dimension is the block sequence[FACT:vllm/v1/core/kv_cache_manager.py:41-54]. The comment explicitly explains why blocks are not used as the outer dimension: that would assume all groups have the same number of blocks, whereas in the future different groups may be configured with different block sizes[FACT:vllm/v1/core/kv_cache_manager.py:43-48]。
 
 ```mermaid
 flowchart LR
@@ -37,26 +37,27 @@ flowchart LR
     MAP -->|"get_cached_block"| W
 ```
 
-这张图锚定了调度器与显存池之间的数据流：waiting 队列的请求通过 `allocate_slots` 进入 running，running 的请求被抢占时回到 waiting，释放的块回到空闲队列，而前缀缓存哈希表是 waiting 请求命中缓存的入口。
+This diagram anchors the data flow between the scheduler and the memory pool: requests in the waiting queue enter running through`allocate_slots`, running requests return to waiting when preempted, freed blocks return to the free queue, and the prefix caching hash table is the entry point for waiting requests to hit the cache.
 
+# 4.2 schedule() main flow: running first, waiting supplement, preemption as fallback
 
-`schedule()` 是整个调度器的核心方法，它返回一个 `SchedulerOutput`，描述这一步要执行什么。方法开头的注释点明了设计哲学：调度器里没有"解码阶段"和"预填充阶段"的区分，每个请求只有 `num_computed_tokens` 和 `num_tokens_with_spec`，调度器的任务就是让前者追上后者 [FACT:vllm/v1/core/sched/scheduler.py:559-568](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L559-L568)。这个统一视角是 chunked prefill、prefix caching、投机解码能共存的基础。
+`schedule()`is the core method of the entire scheduler, and it returns a`SchedulerOutput`, describing what to execute in this step. The comment at the beginning of the method points out the design philosophy: there is no distinction between the "decode phase" and the "prefill phase" in the scheduler; each request only has`num_computed_tokens`and`num_tokens_with_spec`, and the scheduler's task is to let the former catch up with the latter[FACT:vllm/v1/core/sched/scheduler.py:559-568]. This unified perspective is the foundation for chunked prefill, prefix caching, and speculative decoding to coexist.
 
-## 4.2.1 预算初始化与阈值计算
+## 4.2.1 Budget initialization and threshold calculation
 
-进入主循环前，调度器先设定两个预算：`token_budget` 初始化为 `max_num_scheduled_tokens`，`input_budget` 初始化为 `max_num_batched_tokens` [FACT:vllm/v1/core/sched/scheduler.py:577-580](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L577-L580)。两者通常相等，但当模型可能在批次中追加 token（如投机解码）时，`max_num_scheduled_tokens` 会小于 `max_num_batched_tokens`，差值就是留给 draft token 的空间。
+Before entering the main loop, the scheduler first sets two budgets:`token_budget`initialized to`max_num_scheduled_tokens`，`input_budget`initialized to`max_num_batched_tokens` [FACT:vllm/v1/core/sched/scheduler.py:577-580]. The two are usually equal, but when the model may append tokens within a batch (such as speculative decoding),`max_num_scheduled_tokens`will be less than`max_num_batched_tokens`, and the difference is the space reserved for draft tokens.
 
-`long_prefill_token_threshold` 的处理值得单独看。它的作用是防止一个长 prefill 饿死其他请求，但如果当前只有一个请求，就没有人会被饿死，所以阈值被置零 [FACT:vllm/v1/core/sched/scheduler.py:606-616](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L606-L616)。当 `adaptive_long_prefill_threshold` 开启时，阈值还会被抬高到 `input_budget // num_eligible_reqs`，保证不会把单个请求的预算压到公平份额以下 [FACT:vllm/v1/core/sched/scheduler.py:617-622](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L617-L622)。
+`long_prefill_token_threshold`The handling of is worth looking at separately. Its purpose is to prevent a long prefill from starving other requests, but if there is only one request currently, no one will be starved, so the threshold is set to zero[FACT:vllm/v1/core/sched/scheduler.py:606-616]. When`adaptive_long_prefill_threshold`is enabled, the threshold is also raised to`input_budget // num_eligible_reqs`, ensuring that a single request's budget is not squeezed below its fair share[FACT:vllm/v1/core/sched/scheduler.py:617-622]。
 
-## 4.2.2 running 请求的调度循环
+## 4.2.2 Scheduling loop for running requests
 
-主循环从 `self.running` 的头部开始遍历，`req_index` 是游标 [FACT:vllm/v1/core/sched/scheduler.py:624-627](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L624-L627)。对每个请求，先做一系列跳过判断：
+The main loop traverses from the head of`self.running`,`req_index`is the cursor[FACT:vllm/v1/core/sched/scheduler.py:624-627]. For each request, a series of skip checks are performed first:
 
-- 异步调度下，如果请求的输出占位符表明它已经达到 `max_tokens`，跳过以避免多跑一步 [FACT:vllm/v1/core/sched/scheduler.py:631-645](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L631-L645)。
-- V2 + PP + 异步场景下，如果当前步还没到 `next_decode_eligible_step`，跳过以匹配 worker 侧的采样 token 广播节奏 [FACT:vllm/v1/core/sched/scheduler.py:647-651](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L647-L651)。
-- DP prefill 均衡开启时，非节奏对齐步上的 prefill chunk 被推迟 [FACT:vllm/v1/core/sched/scheduler.py:653-657](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L653-L657)。
+- Under asynchronous scheduling, if the request's output placeholder indicates that it has reached`max_tokens`, skip to avoid running an extra step[FACT:vllm/v1/core/sched/scheduler.py:631-645]。
+- In the V2 + PP + asynchronous scenario, if the current step has not yet reached`next_decode_eligible_step`, skip to match the sampling token broadcast rhythm on the worker side[FACT:vllm/v1/core/sched/scheduler.py:647-651]。
+- When DP prefill balancing is enabled, prefill chunks on non-rhythm-aligned steps are postponed[FACT:vllm/v1/core/sched/scheduler.py:653-657]。
 
-通过跳过判断后，计算这个请求本步能前进多少 token：
+After passing the skip checks, calculate how many tokens this request can advance in this step:
 
 ```
 num_new_tokens = request.num_tokens_with_spec
@@ -64,23 +65,23 @@ num_new_tokens = request.num_tokens_with_spec
                - request.num_computed_tokens
 ```
 
-然后依次被 `long_prefill_token_threshold`、`token_budget`、`input_budget - draft_slots` 和 `max_model_len` 约束 [FACT:vllm/v1/core/sched/scheduler.py:670-688](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L670-L688)。如果请求带编码器输入，还要经过 `_try_schedule_encoder_inputs` 调整 [FACT:vllm/v1/core/sched/scheduler.py:700-712](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L700-L712)。
+Then it is constrained in turn by`long_prefill_token_threshold`、`token_budget`、`input_budget - draft_slots`and`max_model_len`. If the request carries encoder input, it also needs to be adjusted by[FACT:vllm/v1/core/sched/scheduler.py:670-688]`_try_schedule_encoder_inputs`Next is the most critical step: allocating KV blocks.[FACT:vllm/v1/core/sched/scheduler.py:700-712]。
 
-接下来是最关键的一步：分配 KV block。`allocate_slots` 被包在一个 `while True` 循环里 [FACT:vllm/v1/core/sched/scheduler.py:742-747](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L742-L747)。如果返回 `None`，说明显存不够，调度器开始抢占：按策略选出牺牲者（PRIORITY 策略选优先级最低的，FCFS 策略选 running 列表末尾的）[FACT:vllm/v1/core/sched/scheduler.py:761-767](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L761-L767)，调用 `_preempt_request` 把它踢回 waiting 队列，然后重试分配 [FACT:vllm/v1/core/sched/scheduler.py:801-806](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L801-L806)。如果牺牲者就是当前请求自己，说明已经没有可抢占的对象，跳出循环，当前请求也无法调度 [FACT:vllm/v1/core/sched/scheduler.py:807-813](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L807-L813)。
+is wrapped in a`allocate_slots`loop`while True`. If it returns[FACT:vllm/v1/core/sched/scheduler.py:742-747], it means there is not enough memory, and the scheduler begins preemption: select a victim according to the policy (the PRIORITY policy selects the lowest-priority one, and the FCFS policy selects the one at the end of the running list)`None`, call[FACT:vllm/v1/core/sched/scheduler.py:761-767]to kick it back to the waiting queue, and then retry allocation`_preempt_request`. If the victim is the current request itself, it means there is no object left to preempt, so break out of the loop, and the current request cannot be scheduled either[FACT:vllm/v1/core/sched/scheduler.py:801-806]There is a subtle detail in the preemption logic: under the PRIORITY policy, if the preempted request is already in[FACT:vllm/v1/core/sched/scheduler.py:807-813]。
 
-抢占逻辑里有一个精妙的细节：PRIORITY 策略下，如果被抢占的请求已经在 `scheduled_running_reqs` 里（即本步已经为它分配过资源），需要把它的 token 预算、block、投机 token、编码器预算全部归还 [FACT:vllm/v1/core/sched/scheduler.py:779-797](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L779-L797)。这保证了预算账本的一致性。
+(that is, resources have already been allocated for it in this step), its token budget, blocks, speculative tokens, and encoder budget all need to be returned`scheduled_running_reqs`. This ensures the consistency of the budget ledger.[FACT:vllm/v1/core/sched/scheduler.py:779-797]After successful allocation, the request is added to
 
-分配成功后，请求被加入 `scheduled_running_reqs`，记录 block 和 token 数，扣减预算 [FACT:vllm/v1/core/sched/scheduler.py:815-823](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L815-L823)。投机解码相关的 token 在这里被裁剪并记录 [FACT:vllm/v1/core/sched/scheduler.py:825-841](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L825-L841)。
+, recording the block and token counts, and deducting the budget`scheduled_running_reqs`. Tokens related to speculative decoding are trimmed and recorded here[FACT:vllm/v1/core/sched/scheduler.py:815-823]4.2.3 Admission of waiting requests[FACT:vllm/v1/core/sched/scheduler.py:825-841]。
 
-## 4.2.3 waiting 请求的准入
+## After the running loop ends, if no preemption occurred in this step and the scheduler is not paused, start processing the waiting queue
 
-running 循环结束后，如果本步没有发生抢占且调度器未暂停，开始处理 waiting 队列 [FACT:vllm/v1/core/sched/scheduler.py:868-872](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L868-L872)。准入前先检查两个上限：`max_num_active_reqs` 和 `input_budget` [FACT:vllm/v1/core/sched/scheduler.py:873-879](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L873-L879)。
+. Before admission, check two upper limits first:[FACT:vllm/v1/core/sched/scheduler.py:868-872]and`max_num_active_reqs`Scheduling waiting requests has one more prefix cache lookup step than running requests. When`input_budget` [FACT:vllm/v1/core/sched/scheduler.py:873-879]。
 
-waiting 请求的调度比 running 多了一个前缀缓存查找步骤。当 `request.num_computed_tokens == 0` 时，调用 `_get_local_prefix_cache_hit` 查找本地缓存命中 [FACT:vllm/v1/core/sched/scheduler.py:932-939](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L932-L939)。如果配置了 KV connector，还会查询远程缓存命中 [FACT:vllm/v1/core/sched/scheduler.py:942-954](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L942-L954)。
+, call`request.num_computed_tokens == 0`to look up local cache hits`_get_local_prefix_cache_hit`. If a KV connector is configured, remote cache hits are also queried[FACT:vllm/v1/core/sched/scheduler.py:932-939]Here there is a delicate logic for handling conflicts between local and remote hits. A local hit may not be block-aligned ([FACT:vllm/v1/core/sched/scheduler.py:942-954]。
 
-这里有一个处理本地与远程命中冲突的精细逻辑。本地命中可能不是块对齐的（`partial_tail`），而远程命中如果严格超过本地完整命中，就丢弃本地的子块尾部，让远程加载覆盖它，避免写时复制 [FACT:vllm/v1/core/sched/scheduler.py:977-988](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L977-L988)。反之则保留本地尾部，不加载外部 [FACT:vllm/v1/core/sched/scheduler.py:989-995](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L989-L995)。
+), and if the remote hit strictly exceeds the local complete hit, discard the local sub-block tail and let the remote load overwrite it, avoiding copy-on-write`partial_tail`. Otherwise, keep the local tail and do not load external[FACT:vllm/v1/core/sched/scheduler.py:977-988]After successful admission, the request is popped from the waiting queue, its state is set to RUNNING, and it is added to the running list[FACT:vllm/v1/core/sched/scheduler.py:989-995]。
 
-准入成功后，请求从 waiting 队列弹出，状态设为 RUNNING，加入 running 列表 [FACT:vllm/v1/core/sched/scheduler.py:1263-1319](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1263-L1319)。如果本步之后它仍在 prefill 中（`num_computed_tokens + num_new_tokens < request.num_tokens`），加入 `_inflight_prefills` 集合 [FACT:vllm/v1/core/sched/scheduler.py:1326-1328](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1326-L1328)。
+. If it is still in prefill after this step ([FACT:vllm/v1/core/sched/scheduler.py:1263-1319]), add it to the`num_computed_tokens + num_new_tokens < request.num_tokens`set`_inflight_prefills`Copy[FACT:vllm/v1/core/sched/scheduler.py:1326-1328]。
 
 ```mermaid
 flowchart TD
@@ -113,12 +114,13 @@ flowchart TD
     break_wait --> build
 ```
 
-这张控制流图覆盖了 `schedule()` 的两大循环和抢占分支。注意 running 循环中 `allocate_slots` 失败后的抢占重试路径，以及 waiting 循环中 blocked 状态请求被移入 `skipped_waiting` 的旁路。
+'s two major loops and the preemption branch. Note the preemption retry path after`schedule()`fails in the running loop, and the blocked-state requests in the waiting loop being moved into`allocate_slots` 失败后的抢占重试路径，以及 waiting 循环中 blocked 状态请求被移入 `skipped_waiting`bypass.
 
+# 4.3 The Core of Memory Awareness: allocate_slots and Preemption
 
-`allocate_slots` 是调度器与显存之间的闸门。它的参数列表本身就是一份显存账本：`num_new_tokens` 是要新计算的 token 数，`num_new_computed_tokens` 是前缀缓存新命中的 token 数，`num_external_computed_tokens` 是 connector 提供的外部命中数，`num_lookahead_tokens` 是投机解码预留的槽位 [FACT:vllm/v1/core/kv_cache_manager.py:371-383](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L371-L383)。
+`allocate_slots`is the gate between the scheduler and GPU memory. Its parameter list is itself a memory ledger:`num_new_tokens`is the number of tokens to be newly computed,`num_new_computed_tokens`is the number of tokens newly hit in the prefix cache,`num_external_computed_tokens`is the number of external hits provided by the connector,`num_lookahead_tokens`is the slots reserved for speculative decoding.[FACT:vllm/v1/core/kv_cache_manager.py:371-383]。
 
-方法开头的注释用一张 ASCII 图精确描述了块布局 [FACT:vllm/v1/core/kv_cache_manager.py:417-438](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L417-L438)：
+The comment at the beginning of the method precisely describes the block layout with an ASCII diagram.[FACT:vllm/v1/core/kv_cache_manager.py:417-438]：
 
 ```
 |  |  |   |   |  |
@@ -126,62 +128,66 @@ flowchart TD
                         |                       |
 ```
 
-`comp` 是已计算 token，`new_comp` 是前缀缓存命中，`ext_comp` 是外部命中，`new` 是本步新计算，`lookahead` 是投机预留。分配分三个阶段：先释放不需要的块并检查是否有足够空闲块，再处理前缀 token，最后为新计算 token 分配块 [FACT:vllm/v1/core/kv_cache_manager.py:458-461](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L458-L461)。
+`comp`is already-computed tokens,`new_comp`is prefix cache hits,`ext_comp`is external hits,`new`is newly computed in this step,`lookahead`is speculative reservation. Allocation is divided into three stages: first release unneeded blocks and check whether there are enough free blocks, then process prefix tokens, and finally allocate blocks for newly computed tokens.[FACT:vllm/v1/core/kv_cache_manager.py:458-461]。
 
-## 4.3.1 水位线与准入控制
+## 4.3.1 Watermark and Admission Control
 
-`allocate_slots` 里有两个准入闸门。第一个是 `full_sequence_must_fit`：当开启时，先检查整个请求序列（而非仅第一个 chunk）能否装下，装不下直接返回 `None` [FACT:vllm/v1/core/kv_cache_manager.py:515-531](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L515-L531)。这防止 chunked prefill 下过度准入导致 KV cache 抖动。
+`allocate_slots`There are two admission gates in .`full_sequence_must_fit`: when enabled, it first checks whether the entire request sequence (not just the first chunk) can fit, and if not, directly returns`None` [FACT:vllm/v1/core/kv_cache_manager.py:515-531]. This prevents excessive admission under chunked prefill from causing KV cache thrashing.
 
-第二个是水位线。`watermark_blocks` 只在请求状态为 WAITING 或 PREEMPTED 且已有请求被调度时生效 [FACT:vllm/v1/core/kv_cache_manager.py:506-513](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L506-L513)。它要求分配后至少保留一定比例的空闲块，避免频繁驱逐和抢占。`reserved_blocks` 则用于异步 KV 加载场景，确保在途 prefill 的预留块不被新请求吃掉 [FACT:vllm/v1/core/kv_cache_manager.py:564-570](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L564-L570)。
+The second is the watermark.`watermark_blocks`It only takes effect when the request state is WAITING or PREEMPTED and some request has already been scheduled.[FACT:vllm/v1/core/kv_cache_manager.py:506-513]It requires that at least a certain proportion of free blocks be retained after allocation, avoiding frequent eviction and preemption.`reserved_blocks`It is used for asynchronous KV loading scenarios to ensure that the reserved blocks for in-flight prefill are not consumed by new requests.[FACT:vllm/v1/core/kv_cache_manager.py:564-570]。
 
-## 4.3.2 抢占的代价与恢复
+## 4.3.2 The Cost and Recovery of Preemption
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `_preempt_request` 做了一件看似暴力但必要的事：把请求的 `num_computed_tokens` 重置为 0 [FACT:vllm/v1/core/sched/scheduler.py:1560-1561](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1560-L1561)。这意味着被抢占的请求下次调度时要从头重新 prefill。为什么这么设计？ 因为 vLLM 的 KV block 是请求私有的，抢占时必须释放全部块，而释放后无法保证重新分配时能拿到相同的块，所以只能从头计算。前缀缓存的存在让这个代价部分被抵消：如果被抢占请求的前缀已经被缓存，重新调度时能命中缓存，不必真正重算。
+> **[Design Inference & Architectural Trade-offs]**
+> `_preempt_request`does something that seems brute-force but is necessary: it resets the request's`num_computed_tokens`to 0.[FACT:vllm/v1/core/sched/scheduler.py:1560-1561]. This means that a preempted request must re-prefill from scratch the next time it is scheduled. Why is it designed this way? Because vLLM's KV blocks are private to each request, all blocks must be released upon preemption, and after release there is no guarantee that the same blocks can be obtained upon reallocation, so it can only recompute from scratch. The existence of the prefix cache partially offsets this cost: if the prefix of the preempted request has already been cached, it can hit the cache when rescheduled, and does not need to be truly recomputed.
 
-抢占还处理了异步调度下的"陈旧输出"问题。`num_stale_output_tokens` 被设为 `num_in_flight_tokens`，标记所有在途输出为陈旧 [FACT:vllm/v1/core/sched/scheduler.py:1571-1574](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1571-L1574)。这些 token 仍会被交付（丢弃会扰动投机解码接受率），但不会修改重置后的计数器。`drop_stale_output` 标志决定是丢弃还是交付 [FACT:vllm/v1/core/sched/scheduler.py:1539-1547](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1539-L1547)。
+Preemption also handles the "stale output" problem under asynchronous scheduling.`num_stale_output_tokens`is set to`num_in_flight_tokens`, marking all in-flight outputs as stale.[FACT:vllm/v1/core/sched/scheduler.py:1571-1574]. These tokens will still be delivered (discarding them would perturb the speculative decoding acceptance rate), but they will not modify the reset counters.`drop_stale_output`The flag determines whether to discard or deliver.[FACT:vllm/v1/core/sched/scheduler.py:1539-1547]。
 
-## 4.3.3 延迟释放：异步连接器的写后读风险
+## 4.3.3 Delayed Release: The Read-After-Write Risk of Asynchronous Connectors
 
-当使用 KV connector 且存在多个在途批次时，`defer_block_free` 被设为 `True` [FACT:vllm/v1/core/sched/scheduler.py:175-181](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L175-L181)。原因是：一个步骤可能仍在写入已释放请求的 KV 块，而消费者 connector 可能通过一个未与该写入排序的加载重新分配并填充这些块。
+When a KV connector is used and there are multiple in-flight batches,`defer_block_free`is set to`True` [FACT:vllm/v1/core/sched/scheduler.py:175-181]. The reason is that a step may still be writing the KV blocks of an already released request, while a consumer connector may reallocate and fill those blocks through a load that is not ordered with that write.
 
-延迟释放通过 `deferred_frees` 双端队列实现，每个条目是 `(fence_seq, blocks)` [FACT:vllm/v1/core/sched/scheduler.py:388-390](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L388-L390)。`_free_request_blocks` 检查 `_request_blocks_can_be_freed`，如果请求的最后调度步还没被处理完，就把块放入延迟队列 [FACT:vllm/v1/core/sched/scheduler.py:2679-2688](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L2679-L2688)。`_drain_deferred_frees` 在 `update_from_output` 中推进 `processed_step_seq` 后调用，释放 fence 已满足的块 [FACT:vllm/v1/core/sched/scheduler.py:2701-2706](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L2701-L2706)。
+Delayed release is implemented through`deferred_frees`a double-ended queue, where each entry is`(fence_seq, blocks)` [FACT:vllm/v1/core/sched/scheduler.py:388-390]。`_free_request_blocks`checks`_request_blocks_can_be_freed`. If the request's last scheduling step has not yet been processed, the blocks are placed into the delayed queue.[FACT:vllm/v1/core/sched/scheduler.py:2679-2688]。`_drain_deferred_frees`is advanced in`update_from_output`and then called to release blocks whose fence has been satisfied.`processed_step_seq`4.4 Prefix Cache Hit Determination and Block Lifecycle[FACT:vllm/v1/core/sched/scheduler.py:2701-2706]。
 
+# The lookup entry point for the prefix cache is
 
-前缀缓存的查找入口是 `KVCacheManager.get_computed_blocks`。它先检查是否启用缓存且请求未标记跳过读取 [FACT:vllm/v1/core/kv_cache_manager.py:286-287](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L286-L287)。然后调用 `coordinator.find_longest_cache_hit`，传入 `request.block_hashes` 和 `max_cache_hit_length = request.num_tokens - 1` [FACT:vllm/v1/core/kv_cache_manager.py:295-300](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L295-L300)。
+. It first checks whether the cache is enabled and whether the request is marked to skip reading.`KVCacheManager.get_computed_blocks`. Then it calls[FACT:vllm/v1/core/kv_cache_manager.py:286-287], passing in`coordinator.find_longest_cache_hit`and`request.block_hashes`Why`max_cache_hit_length = request.num_tokens - 1` [FACT:vllm/v1/core/kv_cache_manager.py:295-300]。
 
-为什么是 `num_tokens - 1`？注释解释了：当所有 token 都命中缓存时，必须重算最后一个 token 才能获得 logits [FACT:vllm/v1/core/kv_cache_manager.py:289-294](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L289-L294)。这是一个容易被忽略的边界：即使前缀完全命中，也至少要计算一个 token。
+? The comment explains: when all tokens hit the cache, the last token must still be recomputed to obtain logits.`num_tokens - 1`. This is an easily overlooked boundary: even if the prefix is fully hit, at least one token must still be computed.[FACT:vllm/v1/core/kv_cache_manager.py:289-294]The lifecycle of a block is managed by
 
-块的生命周期由 `BlockPool` 管理。`get_new_blocks` 从空闲队列头部弹出块，如果启用缓存，先调用 `_maybe_evict_cached_block` 清除其哈希元数据，然后增加引用计数 [FACT:vllm/v1/core/block_pool.py:683-702](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L683-L702)。`free_blocks` 则根据块是否有哈希决定放回队列头还是尾：无哈希的块 LIFO 复用（更好的 GPU 局部性），有哈希的块 FIFO 复用（LRU 驱逐行为）[FACT:vllm/v1/core/block_pool.py:785-805](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L785-L805)。
+.`BlockPool`pops a block from the head of the free queue. If caching is enabled, it first calls`get_new_blocks`to clear its hash metadata, and then increments the reference count.`_maybe_evict_cached_block`Then, depending on whether the block has a hash, it is placed back at the head or tail of the queue: blocks without a hash are reused LIFO (better GPU locality), and blocks with a hash are reused FIFO (LRU eviction behavior).[FACT:vllm/v1/core/block_pool.py:683-702]。`free_blocks`is the moment when a block is written into the prefix cache hash table. It traverses newly full blocks, skips null blocks and masked blocks, computes a hash for each block, and inserts it into[FACT:vllm/v1/core/block_pool.py:785-805]。
 
-`cache_full_blocks` 是块被写入前缀缓存哈希表的时刻。它遍历新满的块，跳过 null 块和被 mask 的块，为每个块计算哈希并插入 `cached_block_hash_to_block` [FACT:vllm/v1/core/block_pool.py:272-300](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L272-L300)。如果块已经有哈希（部分块升级为满块的场景），先移除旧哈希再插入新哈希 [FACT:vllm/v1/core/block_pool.py:285-293](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L285-L293)。
+`cache_full_blocks`. If a block already has a hash (the scenario where a partial block is upgraded to a full block), first remove the old hash and then insert the new hash.`cached_block_hash_to_block` [FACT:vllm/v1/core/block_pool.py:272-300]The method handles reference counting on cache hits: if the block is in the free queue ([FACT:vllm/v1/core/block_pool.py:285-293]。
 
-`touch` 方法处理缓存命中时的引用计数：如果块在空闲队列中（`ref_cnt == 0`），先把它从队列移除，再增加引用计数 [FACT:vllm/v1/core/block_pool.py:754-770](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/block_pool.py#L754-L770)。这保证了被命中的块不会被驱逐。
+`touch`), first remove it from the queue, and then increment the reference count.`ref_cnt == 0`. This ensures that a hit block will not be evicted.[FACT:vllm/v1/core/block_pool.py:754-770]Design Considerations
 
+# [Design Inference and Architectural Trade-offs]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **为什么抢占选择"从头重算"而非"部分保留"？**  部分保留需要记录每个请求的块在抢占时的物理位置，并在重新调度时尝试恢复映射。但块池是全局共享的，其他请求可能已经占用了那些块。维护这种映射的复杂度和内存开销超过了重算的代价，尤其在前缀缓存能命中大部分前缀的情况下。
+> **[Design Inference & Architectural Trade-offs]**
+> **Partial retention requires recording the physical location of each request's blocks at preemption time, and attempting to restore the mapping upon rescheduling. But the block pool is globally shared, and other requests may already have occupied those blocks. The complexity and memory overhead of maintaining such a mapping exceed the cost of recomputation, especially when the prefix cache can hit most of the prefix.**[Design Inference and Architectural Trade-offs]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **水位线为什么默认是 0？**  水位线是防止频繁抢占的保险，但它以牺牲显存利用率为代价。默认关闭意味着 vLLM 优先追求吞吐而非稳定性，用户需要根据负载特征自行开启。
+> **[Design Inference & Architectural Trade-offs]**
+> **The watermark is a safeguard against frequent preemption, but it comes at the cost of sacrificing memory utilization. Disabling it by default means vLLM prioritizes throughput over stability, and users need to enable it themselves according to workload characteristics.**[Design Inference and Architectural Trade-offs]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **`skipped_waiting` 队列的存在意义。**  如果没有这个队列，被阻塞的请求会一直占据 waiting 队列头部，导致后面的请求无法被调度（FCFS 策略下）。把它分离出来，调度器可以跳过阻塞请求继续处理后面的，同时保留阻塞请求的状态以便后续提升。
+> **[Design Inference & Architectural Trade-offs]**
+> **`skipped_waiting` 队列的存在意义。**Without this queue, blocked requests would remain at the head of the waiting queue, preventing subsequent requests from being scheduled (under FCFS policy). By separating it out, the scheduler can skip blocked requests and continue processing those behind them, while preserving the state of blocked requests for later promotion.
 
+# Chapter Summary
 
-调度器的核心是 `schedule()` 方法中的两个循环：running 循环优先保证已运行请求前进，waiting 循环在预算允许时准入新请求。显存不足时通过抢占 running 列表中优先级最低的请求来腾出空间，被抢占请求的 `num_computed_tokens` 重置为 0，但前缀缓存能抵消部分重算代价。`allocate_slots` 是显存闸门，通过 `full_sequence_must_fit`、水位线和 `reserved_blocks` 三层准入控制防止过度分配。前缀缓存通过块哈希索引实现跨请求共享，命中判定以 `num_tokens - 1` 为上限以保证至少计算一个 token 获得 logits。
+The core of the scheduler is the`schedule()`two loops in the method: the running loop prioritizes advancing already-running requests, while the waiting loop admits new requests when budget allows. When VRAM is insufficient, space is freed by preempting the lowest-priority request in the running list. The preempted request's`num_computed_tokens`is reset to 0, but prefix caching can offset part of the recomputation cost.`allocate_slots`is the VRAM gate, through`full_sequence_must_fit`, watermark, and`reserved_blocks`three-tier admission control to prevent over-allocation. Prefix caching enables cross-request sharing through block hash indexing, with hit determination capped at`num_tokens - 1`to ensure at least one token is computed to obtain logits.
 
+# Chapter Review and Self-Test
 
-Q1: 在 `schedule()` 的 running 循环中，如果 `allocate_slots` 返回 `None` 且 `_request_blocks_can_be_freed` 对牺牲者返回 `False`，代码会 `break` 跳出循环。如果去掉这个检查，直接调用 `_preempt_request`，在什么场景下会导致状态不一致？
+Q1: In`schedule()`'s running loop, if`allocate_slots`returns`None`and`_request_blocks_can_be_freed`returns`False`for the victim, the code will`break`break out of the loop. If this check is removed and`_preempt_request`is called directly, in what scenario would this cause state inconsistency?
 
-**参考解析**：`_request_blocks_can_be_freed` 检查 `request.last_sched_seq <= self.processed_step_seq` [FACT:vllm/v1/core/sched/scheduler.py:2672-2677](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L2672-L2677)。当 `defer_block_free` 开启时，如果牺牲者的最后调度步还没被处理完，它的块可能仍被在途 GPU 步骤写入。直接抢占会调用 `_free_request_blocks`，而后者在 `_request_blocks_can_be_freed` 为 `False` 时会把块放入 `deferred_frees` 而非立即释放 [FACT:vllm/v1/core/sched/scheduler.py:2679-2688](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L2679-L2688)。但抢占的语义是"立即腾出块给当前请求"，延迟释放无法满足这个需求，`allocate_slots` 会再次失败，形成死循环。更严重的是，如果牺牲者的块被延迟释放后又被当前请求分配，而 GPU 仍在写入牺牲者的块，就会产生数据竞争。
+**Reference Analysis**：`_request_blocks_can_be_freed`checks`request.last_sched_seq <= self.processed_step_seq` [FACT:vllm/v1/core/sched/scheduler.py:2672-2677]. When`defer_block_free`is enabled, if the victim's last scheduling step has not yet been processed, its blocks may still be written by in-flight GPU steps. Direct preemption would call`_free_request_blocks`, and the latter, when`_request_blocks_can_be_freed`is`False`, would place the blocks into`deferred_frees`rather than immediately freeing[FACT:vllm/v1/core/sched/scheduler.py:2679-2688]. But the semantics of preemption is "immediately free blocks for the current request," and delayed freeing cannot satisfy this requirement, so`allocate_slots`would fail again, forming an infinite loop. More seriously, if the victim's blocks are delayed-freed and then allocated to the current request while the GPU is still writing to the victim's blocks, a data race would occur.
 
-Q2: `get_computed_blocks` 中 `max_cache_hit_length = request.num_tokens - 1`。如果改为 `request.num_tokens`，在什么情况下会导致输出错误？
+Q2: `get_computed_blocks`in`max_cache_hit_length = request.num_tokens - 1`. If changed to`request.num_tokens`, under what circumstances would this cause incorrect output?
 
-**参考解析**：当请求的所有 token 都命中缓存时，`num_computed_tokens` 会等于 `num_tokens`。此时调度器认为不需要计算任何新 token，但采样 logits 需要最后一个位置的隐藏状态，而隐藏状态来自前向传播。如果没有任何 token 被计算，就没有 logits 可采样，请求会卡住或产生错误输出。注释明确说明了这一点 [FACT:vllm/v1/core/kv_cache_manager.py:289-294](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L289-L294)。此外，`allocate_slots` 要求 `num_computed_tokens` 是块大小对齐的，重算最后一个 token 可能触发整个块的重算，这是当前实现的已知限制。
+**Reference Analysis**: When all tokens of a request hit the cache,`num_computed_tokens`would equal`num_tokens`. At this point the scheduler considers that no new tokens need to be computed, but sampling logits requires the hidden state of the last position, and the hidden state comes from the forward pass. If no token is computed, there are no logits to sample from, and the request would stall or produce incorrect output. The comment explicitly states this[FACT:vllm/v1/core/kv_cache_manager.py:289-294]. Additionally,`allocate_slots`requires`num_computed_tokens`to be block-size aligned; recomputing the last token may trigger recomputation of the entire block, which is a known limitation of the current implementation.
 
-Q3: `_preempt_request` 把 `num_computed_tokens` 重置为 0，但保留了 `request.num_tokens`（prompt + 已生成 token）。如果被抢占请求重新调度时前缀缓存未命中，它需要重算多少 token？如果命中，又能省下多少？
+Q3: `_preempt_request`resets`num_computed_tokens`to 0, but preserves`request.num_tokens`(prompt + generated tokens). If a preempted request is rescheduled and the prefix cache misses, how many tokens does it need to recompute? If it hits, how much can be saved?
 
-**参考解析**：`num_computed_tokens = 0` 意味着重新调度时从第一个 token 开始 [FACT:vllm/v1/core/sched/scheduler.py:1561](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/sched/scheduler.py#L1561)。`request.num_tokens` 保持不变，包含原始 prompt 和已生成的输出 token。如果前缀缓存未命中，需要重算全部 `num_tokens` 个 token 的 prefill。如果命中，`get_computed_blocks` 会返回命中的块，`num_computed_tokens` 从命中位置开始 [FACT:vllm/v1/core/kv_cache_manager.py:296-300](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/core/kv_cache_manager.py#L296-L300)。注意被抢占请求的输出 token 也在 `num_tokens` 中，它们的前缀哈希在生成时已被缓存（如果启用），所以重新调度时这些输出 token 的前缀也可能命中。但 `max_cache_hit_length = num_tokens - 1` 意味着最后一个 token 总要重算。
+**Reference Analysis**：`num_computed_tokens = 0`means that upon rescheduling, it starts from the first token[FACT:vllm/v1/core/sched/scheduler.py:1561]。`request.num_tokens`remains unchanged, containing the original prompt and generated output tokens. If the prefix cache misses, all`num_tokens`tokens need to be recomputed via prefill. If it hits,`get_computed_blocks`returns the hit blocks, and`num_computed_tokens`starts from the hit position[FACT:vllm/v1/core/kv_cache_manager.py:296-300]. Note that the preempted request's output tokens are also in`num_tokens`, and their prefix hashes were cached at generation time (if enabled), so upon rescheduling, the prefixes of these output tokens may also hit. But`max_cache_hit_length = num_tokens - 1`means the last token must always be recomputed.
 
-调度器输出的 `SchedulerOutput` 明确了这一步的执行内容：新请求的块 ID、缓存请求的 token 数、投机 token、编码器输入等。下一章将追踪这个输出如何被 ModelRunner 消费，从 `SchedulerOutput` 一路走到 GPU 前向传播。
+The scheduler's output`SchedulerOutput`clarifies the execution content of this step: block IDs for new requests, number of cached tokens for cached requests, speculative tokens, encoder inputs, etc. The next chapter will trace how this output is consumed by the ModelRunner, from`SchedulerOutput`all the way to the GPU forward pass.

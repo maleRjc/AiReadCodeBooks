@@ -39,8 +39,8 @@
             <svg class="chevron-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
           </button>
           <div class="lang-dropdown-menu" id="lang-menu">
-            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" data-base="./">🇨🇳 简体中文</a>
-            <a href="en/#ch-01" class="lang-dropdown-item" data-lang="en" data-base="./en/">🇺🇸 English</a>
+            <a href="#ch-01" class="lang-dropdown-item active" data-lang="zh" onclick="window.switchLanguage('zh', event)">🇨🇳 简体中文</a>
+            <a href="en/index.html#ch-01" class="lang-dropdown-item" data-lang="en" onclick="window.switchLanguage('en', event)">🇺🇸 English</a>
           </div>
         </div>
         <a href="https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/vllm" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
@@ -95,10 +95,10 @@
       </div>
 
 
-      <section class="reader-chapter-section active-chapter" id="ch-01" data-title="第 1 章：第 1 章：vLLM 设计哲学与宏观架构：高吞吐大模型推理引擎">
+      <section class="reader-chapter-section active-chapter" id="ch-01" data-title="第 1 章：vLLM 设计哲学与宏观架构：高吞吐大模型推理引擎">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 01</span>
-          <h2 class="reader-chapter-title">第 1 章：第 1 章：vLLM 设计哲学与宏观架构：高吞吐大模型推理引擎</h2>
+          <h2 class="reader-chapter-title">第 1 章：vLLM 设计哲学与宏观架构：高吞吐大模型推理引擎</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -308,10 +308,10 @@ class VllmConfig:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache">
+      <section class="reader-chapter-section" id="ch-02" data-title="第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 02</span>
-          <h2 class="reader-chapter-title">第 2 章：第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache</h2>
+          <h2 class="reader-chapter-title">第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -375,10 +375,10 @@ class VllmConfig:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：第 3 章：请求生命周期：从 HTTP/CLI 到 EngineCore 的端到端链路">
+      <section class="reader-chapter-section" id="ch-03" data-title="第 3 章：请求生命周期：从 HTTP/CLI 到 EngineCore 的端到端链路">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 03</span>
-          <h2 class="reader-chapter-title">第 3 章：第 3 章：请求生命周期：从 HTTP/CLI 到 EngineCore 的端到端链路</h2>
+          <h2 class="reader-chapter-title">第 3 章：请求生命周期：从 HTTP/CLI 到 EngineCore 的端到端链路</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -518,10 +518,10 @@ class VllmConfig:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：第 4 章：资源感知与内存管理：PagedAttention 与 KV Cache 显存虚拟化">
+      <section class="reader-chapter-section" id="ch-04" data-title="第 4 章：资源感知与内存管理：PagedAttention 与 KV Cache 显存虚拟化">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 04</span>
-          <h2 class="reader-chapter-title">第 4 章：第 4 章：资源感知与内存管理：PagedAttention 与 KV Cache 显存虚拟化</h2>
+          <h2 class="reader-chapter-title">第 4 章：资源感知与内存管理：PagedAttention 与 KV Cache 显存虚拟化</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -662,10 +662,10 @@ class VllmConfig:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：第 5 章：连续批处理引擎：Continuous Batching 与迭代级调度">
+      <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：连续批处理引擎：Continuous Batching 与迭代级调度">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 05</span>
-          <h2 class="reader-chapter-title">第 5 章：第 5 章：连续批处理引擎：Continuous Batching 与迭代级调度</h2>
+          <h2 class="reader-chapter-title">第 5 章：连续批处理引擎：Continuous Batching 与迭代级调度</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -856,10 +856,10 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：第 6 章：模型执行器与分布式并行：ModelRunner、Worker 与 Tensor/Pipeline Parallel">
+      <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：模型执行器与分布式并行：ModelRunner、Worker 与 Tensor/Pipeline Parallel">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 06</span>
-          <h2 class="reader-chapter-title">第 6 章：第 6 章：模型执行器与分布式并行：ModelRunner、Worker 与 Tensor/Pipeline Parallel</h2>
+          <h2 class="reader-chapter-title">第 6 章：模型执行器与分布式并行：ModelRunner、Worker 与 Tensor/Pipeline Parallel</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -998,10 +998,10 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：第 7 章：CUDA Graph 与执行加速：静态图捕获与低延迟调度">
+      <section class="reader-chapter-section" id="ch-07" data-title="第 7 章：CUDA Graph 与执行加速：静态图捕获与低延迟调度">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 07</span>
-          <h2 class="reader-chapter-title">第 7 章：第 7 章：CUDA Graph 与执行加速：静态图捕获与低延迟调度</h2>
+          <h2 class="reader-chapter-title">第 7 章：CUDA Graph 与执行加速：静态图捕获与低延迟调度</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -1132,10 +1132,10 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：第 8 章：KV 传输与多节点缓存：Prefix Caching 与 Chunked Prefill">
+      <section class="reader-chapter-section" id="ch-08" data-title="第 8 章：KV 传输与多节点缓存：Prefix Caching 与 Chunked Prefill">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 08</span>
-          <h2 class="reader-chapter-title">第 8 章：第 8 章：KV 传输与多节点缓存：Prefix Caching 与 Chunked Prefill</h2>
+          <h2 class="reader-chapter-title">第 8 章：KV 传输与多节点缓存：Prefix Caching 与 Chunked Prefill</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -1296,10 +1296,10 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：第 9 章：投机解码加速：Speculative Decoding 的实现与加速比评测">
+      <section class="reader-chapter-section" id="ch-09" data-title="第 9 章：投机解码加速：Speculative Decoding 的实现与加速比评测">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 09</span>
-          <h2 class="reader-chapter-title">第 9 章：第 9 章：投机解码加速：Speculative Decoding 的实现与加速比评测</h2>
+          <h2 class="reader-chapter-title">第 9 章：投机解码加速：Speculative Decoding 的实现与加速比评测</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -1650,10 +1650,10 @@ idle. A peer that has lost its NIC holds one indefinitely.
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：第 10 章：量化与压缩支持：AWQ、GPTQ、FP8 与量化内核实现">
+      <section class="reader-chapter-section" id="ch-10" data-title="第 10 章：量化与压缩支持：AWQ、GPTQ、FP8 与量化内核实现">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 10</span>
-          <h2 class="reader-chapter-title">第 10 章：第 10 章：量化与压缩支持：AWQ、GPTQ、FP8 与量化内核实现</h2>
+          <h2 class="reader-chapter-title">第 10 章：量化与压缩支持：AWQ、GPTQ、FP8 与量化内核实现</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -1774,10 +1774,10 @@ idle. A peer that has lost its NIC holds one indefinitely.
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：第 11 章：服务端并发与架构：AsyncLLMEngine 与 OpenAI 兼容 API 适配">
+      <section class="reader-chapter-section" id="ch-11" data-title="第 11 章：服务端并发与架构：AsyncLLMEngine 与 OpenAI 兼容 API 适配">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 11</span>
-          <h2 class="reader-chapter-title">第 11 章：第 11 章：服务端并发与架构：AsyncLLMEngine 与 OpenAI 兼容 API 适配</h2>
+          <h2 class="reader-chapter-title">第 11 章：服务端并发与架构：AsyncLLMEngine 与 OpenAI 兼容 API 适配</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -1974,10 +1974,10 @@ class QuantSpec:
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：第 12 章：性能剖析与基准测试：吞吐量优化、TTFT/ITL 延迟拆解与 Profiling">
+      <section class="reader-chapter-section" id="ch-12" data-title="第 12 章：性能剖析与基准测试：吞吐量优化、TTFT/ITL 延迟拆解与 Profiling">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 12</span>
-          <h2 class="reader-chapter-title">第 12 章：第 12 章：性能剖析与基准测试：吞吐量优化、TTFT/ITL 延迟拆解与 Profiling</h2>
+          <h2 class="reader-chapter-title">第 12 章：性能剖析与基准测试：吞吐量优化、TTFT/ITL 延迟拆解与 Profiling</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -2105,10 +2105,10 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：第 13 章：生产部署与稳定性：GPU 显存泄漏排查、死锁预防与高可用">
+      <section class="reader-chapter-section" id="ch-13" data-title="第 13 章：生产部署与稳定性：GPU 显存泄漏排查、死锁预防与高可用">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 13</span>
-          <h2 class="reader-chapter-title">第 13 章：第 13 章：生产部署与稳定性：GPU 显存泄漏排查、死锁预防与高可用</h2>
+          <h2 class="reader-chapter-title">第 13 章：生产部署与稳定性：GPU 显存泄漏排查、死锁预防与高可用</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>
@@ -2300,10 +2300,10 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：第 14 章：演进历程与架构前瞻：vLLM v1 到未来推理系统的演化路径">
+      <section class="reader-chapter-section" id="ch-14" data-title="第 14 章：演进历程与架构前瞻：vLLM v1 到未来推理系统的演化路径">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 14</span>
-          <h2 class="reader-chapter-title">第 14 章：第 14 章：演进历程与架构前瞻：vLLM v1 到未来推理系统的演化路径</h2>
+          <h2 class="reader-chapter-title">第 14 章：演进历程与架构前瞻：vLLM v1 到未来推理系统的演化路径</h2>
           <div class="reader-chapter-meta">
             <span>官方源: vllm-project/vllm</span>
             <span>·</span>

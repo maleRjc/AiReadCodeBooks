@@ -1,32 +1,32 @@
-# Chapter 05: Continuous Batching Engine: Iteration-Level Dynamic Scheduling
+# Chapter 5: Model Execution Backbone: From SchedulerOutput to GPU Forward Pass
 
+In the previous chapter, we saw how the Scheduler, in each step's scheduling loop, determines which requests enter the running queue, which are preempted, and which wait due to insufficient VRAM, ultimately producing a SchedulerOutput—which describes what to compute in this step: which requests, how many tokens each, and which KV blocks to use. But this list is only a logical intent; the GPU needs physical tensors. This chapter traces how SchedulerOutput is distributed by the Executor to Workers, then translated by GPUModelRunner into GPU-executable inputs such as input_ids, positions, slot_mapping, and block table, and finally injects the cross-layer shared batch description into each model layer through forward_context, completing the leap from scheduling decisions to forward propagation.
 
-上一章我们看到，Scheduler 在每一步的调度循环中决定了哪些请求进入 running 队列、哪些被抢占、哪些因显存不足而等待，并最终产出一份 SchedulerOutput——它描述了本步该算什么：哪些请求、各算多少 token、用哪些 KV block。但这份清单只是逻辑意图，GPU 需要的是物理张量。本章追踪 SchedulerOutput 如何被 Executor 分发到 Worker，再由 GPUModelRunner 翻译成 input_ids、positions、slot_mapping 和 block table 等 GPU 可执行的输入，最终通过 forward_context 把跨层共享的批描述注入模型每一层，完成从调度决策到前向传播的跨越。
+# 5.1 Executor: Delivering Scheduling Results to Every Card
 
+## Intuitive Model
 
-## Intuitive Architectural Model
+`Executor`is the "herald" between EngineCore and GPU Workers. Without it, EngineCore would have to know by itself how many cards are in the cluster, which process each card is in, and how to`SchedulerOutput`Serializing the past—scheduling logic would become entangled with the distributed topology.`Executor`Extract this responsibility: EngineCore only needs to call`execute_model(scheduler_output)`, and the rest—"whom to send to, how to send, how many results to collect"—is decided by the Executor.
 
-`Executor` 是 EngineCore 与 GPU Worker 之间的「传令官」。若没有它，EngineCore 就得自己知道集群里有几张卡、每张卡在哪个进程、如何把 `SchedulerOutput` 序列化过去——调度逻辑会和分布式拓扑纠缠在一起。`Executor` 把这个职责抽出来：EngineCore 只管调用 `execute_model(scheduler_output)`，剩下的「发给谁、怎么发、收几个结果」由 Executor 决定。
+## Class hierarchy and fields
 
-## 类层次与字段
-
-`Executor` 是一个抽象基类，其类级字段直接编码了后端能力 [FACT:vllm/v1/executor/abstract.py:48-49](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L48-L49)：
+`Executor`is an abstract base class whose class-level fields directly encode backend capabilities[FACT:vllm/v1/executor/abstract.py:48-49]：
 
 ```python
 uses_ray: bool = False  # whether the executor uses Ray for orchestration.
 supports_pp: bool = False  # whether the executor supports PP
 ```
 
-这两个标志不是装饰性的——上层代码会读取它们来决定是否启用某些优化路径。`__init__` 中初始化了 `sleeping_tags`、`kv_output_aggregator`、`ec_output_aggregator` 三个状态字段 [FACT:vllm/v1/executor/abstract.py:119-120](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L119-L120)，分别用于睡眠模式标签追踪、KV 连接器输出聚合、编码器连接器输出聚合。
+These two flags are not decorative—upper-layer code reads them to decide whether to enable certain optimization paths.`__init__`In , the following are initialized:`sleeping_tags`、`kv_output_aggregator`、`ec_output_aggregator`three state fields[FACT:vllm/v1/executor/abstract.py:119-120], used respectively for sleep-mode tag tracking, KV connector output aggregation, and encoder connector output aggregation.
 
-## 后端选择：`get_class` 的分支路由
+## Backend selection:`get_class`branch routing in
 
-`get_class` 是一个静态工厂，根据 `distributed_executor_backend` 配置返回具体 Executor 类 [FACT:vllm/v1/executor/abstract.py:51-96](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L51-L96)。它的分支结构值得细看：
+`get_class`is a static factory that returns the concrete Executor class based on the`distributed_executor_backend`configuration[FACT:vllm/v1/executor/abstract.py:51-96]. Its branching structure is worth examining closely:
 
-- 若配置本身是一个 `type`，校验其是否为 `Executor` 子类后直接使用 [FACT:vllm/v1/executor/abstract.py:52-61](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L52-L61)；
-- `"ray"` 分支下还有二级分支：`VLLM_USE_RAY_V2_EXECUTOR_BACKEND` 为真时用 `RayExecutorV2`，否则用 `RayDistributedExecutor` [FACT:vllm/v1/executor/abstract.py:64-72](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L64-L72)；
-- `"mp"` 映射到 `MultiprocExecutor`，`"uni"` 映射到 `UniProcExecutor` [FACT:vllm/v1/executor/abstract.py:73-80](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L73-L80)；
-- 字符串形式的自定义后端通过 `resolve_obj_by_qualname` 动态解析 [FACT:vllm/v1/executor/abstract.py:85-90](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L85-L90)。
+- If the configuration itself is a`type`, validate whether it is a`Executor`subclass and then use it directly[FACT:vllm/v1/executor/abstract.py:52-61]；
+- `"ray"`Under the branch there are further secondary branches:`VLLM_USE_RAY_V2_EXECUTOR_BACKEND`when true, use`RayExecutorV2`, otherwise use`RayDistributedExecutor` [FACT:vllm/v1/executor/abstract.py:64-72]；
+- `"mp"`maps to`MultiprocExecutor`，`"uni"`maps to`UniProcExecutor` [FACT:vllm/v1/executor/abstract.py:73-80]；
+- Custom backends in string form are dynamically resolved through`resolve_obj_by_qualname`[FACT:vllm/v1/executor/abstract.py:85-90]。
 
 ```mermaid
 flowchart TD
@@ -49,11 +49,11 @@ flowchart TD
     check_str -->|否| err_unknown["raise ValueError"]
 ```
 
-## Step-by-Step：一次 `execute_model` 的调用流
+## Step-by-Step: the call flow of one`execute_model`
 
-代入场景：EngineCore 完成一步调度，拿到 `SchedulerOutput`，调用 `executor.execute_model(scheduler_output)`。
+Set the scenario: EngineCore completes one scheduling step and obtains`SchedulerOutput`, then calls`executor.execute_model(scheduler_output)`。
 
-`Executor.execute_model` 的实现极简 [FACT:vllm/v1/executor/abstract.py:237-238](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L237-L238)：
+`Executor.execute_model`The implementation is extremely minimal[FACT:vllm/v1/executor/abstract.py:237-238]：
 
 ```python
 def execute_model(
@@ -65,43 +65,44 @@ def execute_model(
     return output[0]
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 关键在 `collective_rpc`——它把方法名和参数广播到所有 Worker，收集每个 Worker 的返回值列表，然后 `output[0]` 只取第一个。为什么只取第一个？ 因为在张量并行下，所有 Worker 执行的是同一个逻辑前向，输出在语义上等价；采样结果由最后一个 PP stage 或 rank 0 决定，取 `output[0]` 避免了重复聚合。`collective_rpc` 的文档明确建议「只传控制消息，数据面通信另行建立」[FACT:vllm/v1/executor/abstract.py:220-221](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L220-L221)，这正是 `SchedulerOutput` 的定位——它是控制消息，真正的 token 数据通过 GPU 张量在 Worker 内部流转。
+> **[Design Inference & Architectural Trade-offs]**
+> The key lies in`collective_rpc`—it broadcasts the method name and arguments to all Workers, collects each Worker's list of return values, and then`output[0]`takes only the first one. Why only the first? Because under tensor parallelism, all Workers execute the same logical forward pass, and the outputs are semantically equivalent; the sampling result is determined by the last PP stage or rank 0, so taking`output[0]`avoids duplicate aggregation.`collective_rpc`The documentation for explicitly recommends "pass only control messages; establish data-plane communication separately"[FACT:vllm/v1/executor/abstract.py:220-221], and this is exactly`SchedulerOutput`'s role—it is a control message, while the actual token data flows inside the Workers through GPU tensors.
 
-`sample_tokens` 走同样的模式 [FACT:vllm/v1/executor/abstract.py:257-258](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L257-L258)，但返回类型不含 `None`——采样必然产出结果。这两个方法的分工对应了 vLLM v1 的「执行-采样分离」设计：`execute_model` 可能返回 `None`（表示前向已提交但采样延后），此时状态被暂存在 `ExecuteModelState` 中。
+`sample_tokens`follows the same pattern[FACT:vllm/v1/executor/abstract.py:257-258], but the return type does not include`None`—sampling necessarily produces a result. The division of labor between these two methods corresponds to vLLM v1's "execution-sampling separation" design:`execute_model`may return`None`(indicating that the forward pass has been submitted but sampling is deferred), in which case the state is temporarily stored in`ExecuteModelState`.
 
-## 设计思考
+## Design considerations
 
-`collective_rpc` 被声明为 `@abstractmethod` [FACT:vllm/v1/executor/abstract.py:186-192](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L186-L192)，意味着不同后端必须自己实现「如何把 RPC 发到 Worker」。`MultiprocExecutor` 用共享内存队列，`RayDistributedExecutor` 用 Ray actor 调用，`UniProcExecutor` 直接本地调用。这种抽象让上层代码完全不需要关心分布式细节。
+`collective_rpc`is declared as`@abstractmethod` [FACT:vllm/v1/executor/abstract.py:186-192], meaning different backends must implement "how to send the RPC to the Worker" themselves.`MultiprocExecutor`uses shared-memory queues,`RayDistributedExecutor`uses Ray actor calls, and`UniProcExecutor`directly calls locally. This abstraction means upper-layer code does not need to care about distributed details at all.
 
-一个容易忽略的细节：`supported_tasks` 被标记为 `@cached_property` [FACT:vllm/v1/executor/abstract.py:306-309](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/executor/abstract.py#L306-L309)，注释直言「避免不必要的 RPC 调用」。因为 `get_supported_tasks` 需要跨进程通信，而任务列表在模型生命周期内不变，缓存是正确且必要的优化。
+An easily overlooked detail:`supported_tasks`is marked as`@cached_property` [FACT:vllm/v1/executor/abstract.py:306-309], and the comment explicitly says "avoid unnecessary RPC calls." Because`get_supported_tasks`requires cross-process communication, while the task list does not change during the model lifecycle, caching is a correct and necessary optimization.
 
+# 5.2 GPUModelRunner: from SchedulerOutput to input tensors
 
-## Intuitive Architectural Model
+## Intuitive model
 
-`GPUModelRunner` 是「翻译官」：它把 `SchedulerOutput` 里的逻辑描述（请求 ID、token 数、块 ID）翻译成 GPU 能直接消费的物理张量。若没有它，模型层就得自己处理「第 3 个请求的第 7 个 token 在哪个 KV 槽位」这种问题——这是灾难性的关注点泄漏。
+`GPUModelRunner`is a "translator": it translates the logical description in`SchedulerOutput`(request ID, token count, block ID) into physical tensors that the GPU can directly consume. Without it, the model layer would have to handle questions like "which KV slot contains the 7th token of the 3rd request"—a disastrous leak of concerns.
 
-## 核心状态与内存布局
+## Core state and memory layout
 
-`GPUModelRunner` 继承自三个 Mixin [FACT:vllm/v1/worker/gpu_model_runner.py:479-480](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L479-L480)：`LoRAModelRunnerMixin`、`KVConnectorModelRunnerMixin`、`ECConnectorModelRunnerMixin`，分别提供 LoRA 适配、KV 连接器、编码器连接器能力。
+`GPUModelRunner`inherits from three Mixins[FACT:vllm/v1/worker/gpu_model_runner.py:479-480]：`LoRAModelRunnerMixin`、`KVConnectorModelRunnerMixin`、`ECConnectorModelRunnerMixin`, which respectively provide LoRA adaptation, KV connector, and encoder connector capabilities.
 
-`__init__` 中缓存了全部配置对象 [FACT:vllm/v1/worker/gpu_model_runner.py:488-498](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L488-L498)，并初始化了几个关键标志：
+`__init__`caches all configuration objects[FACT:vllm/v1/worker/gpu_model_runner.py:488-498], and initializes several key flags:
 
-- `check_ep_fault`：仅当数据并行 > 1 且是 MoE 模型时，查询 EP all2all 管理器是否支持容错 [FACT:vllm/v1/worker/gpu_model_runner.py:507-509](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L507-L509)；
-- `is_pooling_model`：由 `runner_type == "pooling"` 决定 [FACT:vllm/v1/worker/gpu_model_runner.py:515](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L515)；
-- `enable_prompt_embeds`：是否启用 prompt embedding 输入 [FACT:vllm/v1/worker/gpu_model_runner.py:516](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L516)。
+- `check_ep_fault`: only when data parallelism > 1 and the model is MoE, query whether the EP all2all manager supports fault tolerance[FACT:vllm/v1/worker/gpu_model_runner.py:507-509]；
+- `is_pooling_model`: determined by`runner_type == "pooling"`[FACT:vllm/v1/worker/gpu_model_runner.py:515]；
+- `enable_prompt_embeds`: whether prompt embedding input is enabled[FACT:vllm/v1/worker/gpu_model_runner.py:516]。
 
-`ExecuteModelState` 是一个 `NamedTuple`，承载 `execute_model()` 与 `sample_tokens()` 之间的临时状态 [FACT:vllm/v1/worker/gpu_model_runner.py:463-476](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L463-L476)。它的字段设计揭示了执行-采样分离的本质：`logits`、`hidden_states`、`sample_hidden_states` 是前向产物，`spec_decode_metadata`、`slot_mappings` 是采样阶段仍需的元数据。注释明确说这是「在 execute_model() 返回 None 后传递的临时缓存状态」[FACT:vllm/v1/worker/gpu_model_runner.py:464-464](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L464-L464)。
+`ExecuteModelState`is a`NamedTuple`, carrying the temporary state between`execute_model()`and`sample_tokens()`. Its field design reveals the essence of execution-sampling separation:[FACT:vllm/v1/worker/gpu_model_runner.py:463-476]is the forward-pass product,`logits`、`hidden_states`、`sample_hidden_states`is the metadata still needed during the sampling stage. The comment explicitly says this is "temporary cached state passed after execute_model() returns None"`spec_decode_metadata`、`slot_mappings`How to synchronize cached state[FACT:vllm/v1/worker/gpu_model_runner.py:464-464]。
 
-## Step-by-Step：`_update_states` 如何同步缓存状态
+## Step-by-Step：`_update_states`Set the scenario: the scheduler decides that this step processes request A (new request), B (continuation of the previous decode step), and C (resumed after preemption), while request D has already completed.
 
-代入场景：调度器决定本步处理请求 A（新请求）、B（上一步的 decode 继续）、C（被抢占后恢复），同时请求 D 已完成。
+Step 1: clean up completed requests.
 
-**第一步：清理已完成请求。** 遍历 `finished_req_ids`，从 `self.requests` 字典弹出状态，从 `input_batch` 移除 [FACT:vllm/v1/worker/gpu_model_runner.py:1202-1217](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1202-L1217)。注意注释指出的边界情况：`finished_req_ids` 和 `scheduled_req_ids` 可能重叠——当请求被中止后又以相同 ID 重新提交时，它们被视为两个不同请求 [FACT:vllm/v1/worker/gpu_model_runner.py:1211-1215](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1211-L1215)。
+**iterates over**, pops the state from the`finished_req_ids`dictionary, and removes`self.requests`from`input_batch`. Note the edge case pointed out by the comment:[FACT:vllm/v1/worker/gpu_model_runner.py:1202-1217]and`finished_req_ids`may overlap—when a request is aborted and then resubmitted with the same ID, they are treated as two different requests`scheduled_req_ids`Step 2: zero out newly allocated KV blocks.[FACT:vllm/v1/worker/gpu_model_runner.py:1211-1215]。
 
-**第二步：清零新分配的 KV 块。** 若 `new_block_ids_to_zero` 非空，调用 `_zero_block_ids` 清零显存，防止陈旧 NaN 污染注意力或 SSM 计算 [FACT:vllm/v1/worker/gpu_model_runner.py:1219-1222](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1219-L1222)。这是 PagedAttention 块复用的安全前提。
+**If**is non-empty, call`new_block_ids_to_zero`to zero the GPU memory, preventing stale NaNs from contaminating attention or SSM computation`_zero_block_ids`. This is the safety prerequisite for PagedAttention block reuse.[FACT:vllm/v1/worker/gpu_model_runner.py:1219-1222]Step 3: compute the set of unscheduled requests.
 
-**第三步：计算未调度请求集合。** 这是最容易出错的一步 [FACT:vllm/v1/worker/gpu_model_runner.py:1238-1247](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1238-L1247)：
+**This is the most error-prone step**Copy[FACT:vllm/v1/worker/gpu_model_runner.py:1238-1247]：
 
 ```python
 scheduled_req_ids = scheduler_output.num_scheduled_tokens.keys()
@@ -110,21 +111,21 @@ resumed_req_ids = scheduler_output.scheduled_cached_reqs.resumed_req_ids
 unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)
 ```
 
-注释解释了为什么是 `scheduled_req_ids - resumed_req_ids` 而非直接 `scheduled_req_ids`：通常 `cached_req_ids` 和 `resumed_req_ids` 不相交，但在 `reset_prefix_cache` 触发的强制抢占场景下，恢复的请求需要先从持久批中清除再重新加入 [FACT:vllm/v1/worker/gpu_model_runner.py:1241-1246](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1241-L1246)。
+rather than directly`scheduled_req_ids - resumed_req_ids`: usually`scheduled_req_ids`and`cached_req_ids`are disjoint, but in forced preemption scenarios triggered by`resumed_req_ids`, resumed requests need to be removed from the persistent batch first and then re-added`reset_prefix_cache`Step 4: handle new requests.[FACT:vllm/v1/worker/gpu_model_runner.py:1241-1246]。
 
-**第四步：处理新请求。** 对每个 `scheduled_new_reqs`，构造 `CachedRequestState` [FACT:vllm/v1/worker/gpu_model_runner.py:1295-1308](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1295-L1308)。若采样类型是 `RANDOM_SEED`，创建带种子的 `torch.Generator` [FACT:vllm/v1/worker/gpu_model_runner.py:1277-1284](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1277-L1284)。若模型使用 M-RoPE，调用 `_init_mrope_positions` 预计算位置 [FACT:vllm/v1/worker/gpu_model_runner.py:1319-1321](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1319-L1321)。
+**For each**, construct`scheduled_new_reqs`. If the sampling type is`CachedRequestState` [FACT:vllm/v1/worker/gpu_model_runner.py:1295-1308], create a seeded`RANDOM_SEED`. If the model uses M-RoPE, call`torch.Generator` [FACT:vllm/v1/worker/gpu_model_runner.py:1277-1284]to precompute positions`_init_mrope_positions`Step 5: update running requests.[FACT:vllm/v1/worker/gpu_model_runner.py:1319-1321]。
 
-**第五步：更新运行中请求。** 对每个 `scheduled_cached_reqs`，更新 `num_computed_tokens` [FACT:vllm/v1/worker/gpu_model_runner.py:1402](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1402)，处理块 ID 追加或替换 [FACT:vllm/v1/worker/gpu_model_runner.py:1437-1448](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1437-L1448)。若请求不在持久批中（`req_index is None`），加入 `reqs_to_add` [FACT:vllm/v1/worker/gpu_model_runner.py:1450-1465](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1450-L1465)。
+**For each**, update`scheduled_cached_reqs`, handling block ID appends or replacements`num_computed_tokens` [FACT:vllm/v1/worker/gpu_model_runner.py:1402]. If the request is not in the persistent batch ([FACT:vllm/v1/worker/gpu_model_runner.py:1437-1448]), add it to`req_index is None`Step 6: compaction and reordering.`reqs_to_add` [FACT:vllm/v1/worker/gpu_model_runner.py:1450-1465]。
 
-**第六步：压缩与重排。** `condense()` 填补移除请求留下的空洞 [FACT:vllm/v1/worker/gpu_model_runner.py:1511-1512](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1511-L1512)，`_may_reorder_batch` 让注意力后端按需重排 [FACT:vllm/v1/worker/gpu_model_runner.py:1513-1514](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1513-L1514)，`refresh_metadata()` 刷新批元数据 [FACT:vllm/v1/worker/gpu_model_runner.py:1515-1516](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1515-L1516)。
+**第六步：压缩与重排。** `condense()`Fill the holes left by removal requests[FACT:vllm/v1/worker/gpu_model_runner.py:1511-1512]，`_may_reorder_batch`Let the attention backend rearrange on demand[FACT:vllm/v1/worker/gpu_model_runner.py:1513-1514]，`refresh_metadata()`Refresh batch metadata[FACT:vllm/v1/worker/gpu_model_runner.py:1515-1516]。
 
-## 输入张量准备：`_prepare_input_ids` 的异步快路径
+## Input tensor preparation:`_prepare_input_ids`asynchronous fast path
 
-`_prepare_input_ids` 处理一个微妙问题：异步调度下，上一步的采样 token 还在 GPU 上，本步的 `input_ids` 需要把它们填进去 [FACT:vllm/v1/worker/gpu_model_runner.py:1767-1772](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1767-L1772)。
+`_prepare_input_ids`handles a subtle issue: under asynchronous scheduling, the sampled token from the previous step is still on the GPU, and this step's`input_ids`needs to fill them in[FACT:vllm/v1/worker/gpu_model_runner.py:1767-1772]。
 
-正常路径（`prev_sampled_token_ids is None`）直接拷贝 CPU 张量到 GPU [FACT:vllm/v1/worker/gpu_model_runner.py:1788-1794](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1788-L1794)。异步路径则遍历请求，计算每个请求最后一个 token 在扁平化 `input_ids` 中的索引 [FACT:vllm/v1/worker/gpu_model_runner.py:1809-1836](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1809-L1836)。注释给出了具体例子：`cu_num_tokens = [2, 5, 8]`、`draft_tokens = [1, 2, 2]` 时，`sample_flattened_indices = [0, 2, 5]`，`spec_flattened_indices = [1, 3, 4, 6, 7]` [FACT:vllm/v1/worker/gpu_model_runner.py:1820-1822](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1820-L1822)。
+Normal path (`prev_sampled_token_ids is None`) directly copies CPU tensors to GPU[FACT:vllm/v1/worker/gpu_model_runner.py:1788-1794]. The asynchronous path iterates over requests, computing the index of each request's last token in the flattened`input_ids`.[FACT:vllm/v1/worker/gpu_model_runner.py:1809-1836]The comment gives a concrete example:`cu_num_tokens = [2, 5, 8]`、`draft_tokens = [1, 2, 2]`when`sample_flattened_indices = [0, 2, 5]`，`spec_flattened_indices = [1, 3, 4, 6, 7]` [FACT:vllm/v1/worker/gpu_model_runner.py:1820-1822]。
 
-有一个关键优化 [FACT:vllm/v1/worker/gpu_model_runner.py:1859-1868](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1859-L1868)：
+there is a key optimization[FACT:vllm/v1/worker/gpu_model_runner.py:1859-1868]：
 
 ```python
 if common_indices_match and max_flattened_index == (num_common_tokens - 1):
@@ -135,41 +136,42 @@ if common_indices_match and max_flattened_index == (num_common_tokens - 1):
     return
 ```
 
-当批未变且无重排时，索引是 `0..N-1` 的同一排列，可直接用单次切片拷贝，避免 scatter 开销。这是持久批优化的直接体现。
+When the batch is unchanged and there is no rearrangement, the indices are`0..N-1`the same permutation, so a single slice copy can be used directly, avoiding scatter overhead. This is a direct manifestation of the persistent batch optimization.
 
-## `slot_mapping` 与 block table
+## `slot_mapping`and block table
 
-`_get_slot_mappings` 返回两种格式 [FACT:vllm/v1/worker/gpu_model_runner.py:4078-4078](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4078-L4078)：按 KV cache group 索引的 `dict[int, torch.Tensor]` 供注意力元数据使用，按层名索引的 `dict[str, torch.Tensor]` 供 `ForwardContext` 使用。对 encoder-only 的 KV cache group，slot mapping 是全零张量 [FACT:vllm/v1/worker/gpu_model_runner.py:4096-4115](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4096-L4115)；否则从 `block_table.slot_mapping.gpu` 切片 [FACT:vllm/v1/worker/gpu_model_runner.py:4107-4109](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4107-L4109)。未使用的尾部填充 `-1`，注释说明这是 `reshape_and_cache` 在全 CUDA graph 模式下的需要 [FACT:vllm/v1/worker/gpu_model_runner.py:4118-4122](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4118-L4122)。
+`_get_slot_mappings`returns two formats[FACT:vllm/v1/worker/gpu_model_runner.py:4078-4078]: indexed by KV cache group`dict[int, torch.Tensor]`for attention metadata use, and indexed by layer name`dict[str, torch.Tensor]`for`ForwardContext`use. For encoder-only KV cache groups, slot mapping is an all-zero tensor[FACT:vllm/v1/worker/gpu_model_runner.py:4096-4115]; otherwise slice from`block_table.slot_mapping.gpu`.[FACT:vllm/v1/worker/gpu_model_runner.py:4107-4109]Unused tail padding`-1`, the comment explains this is`reshape_and_cache`required in full CUDA graph mode[FACT:vllm/v1/worker/gpu_model_runner.py:4118-4122]。
 
-`_get_block_table` 对每个 KV cache group 获取设备张量 [FACT:vllm/v1/worker/gpu_model_runner.py:2319-2335](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L2319-L2335)，并用 `NULL_BLOCK_ID` 填充 CUDAGraph padding 行——块 0 被保留作 padding [FACT:vllm/v1/worker/gpu_model_runner.py:2332-2334](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L2332-L2334)。
+`_get_block_table`obtains device tensors for each KV cache group[FACT:vllm/v1/worker/gpu_model_runner.py:2319-2335], and uses`NULL_BLOCK_ID`to fill CUDAGraph padding rows—block 0 is reserved for padding[FACT:vllm/v1/worker/gpu_model_runner.py:2332-2334]。
 
+# 5.3 forward_context: batch description shared across layers
 
-## Intuitive Architectural Model
+## Intuitive model
 
-`forward_context` 是贴在教室前方的「统一通知板」：每个模型层抬头就能看到本场考试的座位安排（attention metadata）和规则（slot mapping），不必各自去问。若没有它，每个注意力层都得从参数里接收这些信息——而模型层的 `forward` 签名是固定的，无法为每层单独传参。
+`forward_context`is a "unified notice board" posted at the front of the classroom: every model layer can look up and see the seating arrangement (attention metadata) and rules (slot mapping) for this exam, without having to ask individually. Without it, every attention layer would have to receive this information from parameters—and the model layer's`forward`signature is fixed, so parameters cannot be passed separately for each layer.
 
-## 数据结构
+## Data structure
 
-`ForwardContext` 是一个 `@dataclass` [FACT:vllm/forward_context.py:141-202](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L141-L202)，核心字段：
+`ForwardContext`is a`@dataclass` [FACT:vllm/forward_context.py:141-202], core fields:
 
-- `no_compile_layers`：从 `static_forward_context` 拷贝，标记不参与编译的层 [FACT:vllm/forward_context.py:132-137](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L132-L137)；
-- `attn_metadata`：层名到注意力元数据的映射，DBO 模式下是长度为 2 的列表（每个 microbatch 一个）[FACT:vllm/forward_context.py:144-152](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L144-L152)；
-- `slot_mapping`：层名到 slot mapping 张量的映射 [FACT:vllm/forward_context.py:145](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L145)；
-- `cudagraph_runtime_mode`：运行时 CUDA graph 模式，默认 `NONE` [FACT:vllm/forward_context.py:155-157](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L155-L157)；
-- `batch_descriptor`：批描述符，用于 CUDA graph 分发 [FACT:vllm/forward_context.py:158](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L158)；
-- `is_padding`：token 轴上的布尔掩码，`True` 表示 padding 行 [FACT:vllm/forward_context.py:162-165](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L162-L165)。
+- `no_compile_layers`: copied from`static_forward_context`, marks layers that do not participate in compilation[FACT:vllm/forward_context.py:132-137]；
+- `attn_metadata`: mapping from layer name to attention metadata; in DBO mode it is a list of length 2 (one per microbatch)[FACT:vllm/forward_context.py:144-152]；
+- `slot_mapping`: mapping from layer name to slot mapping tensor[FACT:vllm/forward_context.py:145]；
+- `cudagraph_runtime_mode`: runtime CUDA graph mode, default`NONE` [FACT:vllm/forward_context.py:155-157]；
+- `batch_descriptor`: batch descriptor, used for CUDA graph dispatch[FACT:vllm/forward_context.py:158]；
+- `is_padding`: boolean mask on the token axis,`True`indicates padding rows[FACT:vllm/forward_context.py:162-165]。
 
-`BatchDescriptor` 是另一个 `@dataclass(frozen=True)` [FACT:vllm/forward_context.py:30-57](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L30-L57)，字段设计遵循「最小化描述项」原则：`num_tokens`、`num_reqs`（PIECEWISE 模式下可为 None）、`uniform`（所有请求 token 数相同）、`has_lora`、`num_active_loras`。注释解释了 `num_active_loras` 的存在原因：当 `cudagraph_specialize_lora_count` 启用时，每个 LoRA 数量值捕获独立 CUDA graph，因为 `fused_moe_lora` 等内核的 grid size 依赖此值 [FACT:vllm/forward_context.py:60-64](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L60-L64)。
+`BatchDescriptor`is another`@dataclass(frozen=True)` [FACT:vllm/forward_context.py:30-57], and the field design follows the "minimize description items" principle:`num_tokens`、`num_reqs`(can be None in PIECEWISE mode),`uniform`(all requests have the same number of tokens),`has_lora`、`num_active_loras`. The comment explains`num_active_loras`the reason for its existence: when`cudagraph_specialize_lora_count`is enabled, each LoRA count value captures an independent CUDA graph, because the grid size of kernels such as`fused_moe_lora`depends on this value[FACT:vllm/forward_context.py:60-64]。
 
-## 全局单例与上下文管理
+## Global singleton and context management
 
-`_forward_context` 是一个模块级全局变量 [FACT:vllm/forward_context.py:199-201](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L199-L201)，通过 `override_forward_context` 上下文管理器在进入时保存旧值、退出时恢复 [FACT:vllm/forward_context.py:263-274](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L263-L274)。`set_forward_context` 是更高层的封装 [FACT:vllm/forward_context.py:277-394](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L277-L394)，它额外处理 DP 元数据构造、batch descriptor 自动创建、平台特定 kwargs 注入。
+`_forward_context`is a module-level global variable[FACT:vllm/forward_context.py:199-201], through`override_forward_context`the context manager saves the old value on entry and restores it on exit[FACT:vllm/forward_context.py:263-274]。`set_forward_context`is a higher-level wrapper[FACT:vllm/forward_context.py:277-394], which additionally handles DP metadata construction, automatic batch descriptor creation, and platform-specific kwargs injection.
 
-## Step-by-Step：从 `execute_model` 到模型前向
+## Step-by-Step: from`execute_model`to model forward
 
-代入场景：`GPUModelRunner.execute_model` 已准备好所有输入张量，即将调用模型。
+Scenario:`GPUModelRunner.execute_model`all input tensors are ready, and the model is about to be called.
 
-在 `execute_model` 中，`set_forward_context` 被调用 [FACT:vllm/v1/worker/gpu_model_runner.py:4408-4420](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4408-L4420)：
+In`execute_model`,`set_forward_context`is called[FACT:vllm/v1/worker/gpu_model_runner.py:4408-4420]：
 
 ```python
 with (
@@ -190,9 +192,9 @@ with (
     model_output = self._model_forward(...)
 ```
 
-`set_forward_context` 内部先构造 `DPMetadata`（若启用 DP 或序列并行 MoE）[FACT:vllm/forward_context.py:299-328](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L299-L328)，再调用 `create_forward_context` 构造 `ForwardContext` 实例 [FACT:vllm/forward_context.py:347-358](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L347-L358)，最后通过 `override_forward_context` 设置全局变量 [FACT:vllm/forward_context.py:361-362](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L361-L362)。
+`set_forward_context`internally first constructs`DPMetadata`(if DP or sequence-parallel MoE is enabled)[FACT:vllm/forward_context.py:299-328], then calls`create_forward_context`to construct`ForwardContext`instance[FACT:vllm/forward_context.py:347-358], and finally sets the global variable through`override_forward_context`[FACT:vllm/forward_context.py:361-362]。
 
-模型层通过 `get_forward_context()` 读取 [FACT:vllm/forward_context.py:208-214](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L208-L214)。若未设置，断言失败并提示使用 `set_forward_context`。
+Model layers read`get_forward_context()`through[FACT:vllm/forward_context.py:208-214]. If not set, the assertion fails and prompts to use`set_forward_context`。
 
 ```mermaid
 sequenceDiagram
@@ -221,38 +223,41 @@ sequenceDiagram
     EX-->>EC: output[0]
 ```
 
-## 设计思考
+## Design considerations
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么用全局变量而非显式传参？ 因为模型层的 `forward` 签名由 HuggingFace 约定固定，无法为每层注入额外参数。全局变量 + 上下文管理器是唯一能在不修改模型代码的前提下实现跨层注入的方案。代价是隐式依赖——`get_forward_context()` 的调用者必须确保自己在 `set_forward_context` 的作用域内。
+> **[Design Inference & Architectural Trade-offs]**
+> Why use a global variable instead of explicit parameter passing? Because the model layer's`forward`signature is fixed by the HuggingFace convention, and additional parameters cannot be injected for each layer. A global variable + context manager is the only solution that can achieve cross-layer injection without modifying model code. The cost is implicit dependency—`get_forward_context()`the caller must ensure it is within the scope of`set_forward_context`.
 
-`is_padding` 字段的设计值得注意 [FACT:vllm/forward_context.py:162-165](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L162-L165)：注释说「消费者可用它跳过 padding token 的工作」。这是 CUDA graph 场景下的优化——padding 行参与了图捕获但不应产生实际计算。
+`is_padding`The design of the[FACT:vllm/forward_context.py:162-165]field is noteworthy: the comment says "consumers can use it to skip work on padding tokens." This is an optimization in the CUDA graph scenario—padding rows participate in graph capture but should not produce actual computation.
 
-`all_moe_layers` 与 `moe_layer_index` 是一对巧妙的 workaround [FACT:vllm/forward_context.py:170-195](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L170-L195)。注释详细解释了问题：`vllm.moe_forward` 自定义算子会把层名字符串硬编码进图，导致 torch.compile 冷启动时间过长。解决方案是把层名列表存在 `ForwardContext` 中，自定义算子按顺序弹出字符串并递增计数器。注释也坦承这依赖「自定义算子按顺序执行且 torch.compile 不会重排」的假设 [FACT:vllm/forward_context.py:182-184](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L182-L184)。
+`all_moe_layers`and`moe_layer_index`are a clever pair of workarounds[FACT:vllm/forward_context.py:170-195]. The comment explains the problem in detail:`vllm.moe_forward`custom operators hardcode the layer name string into the graph, causing torch.compile cold start time to be too long. The solution is to store the layer name list in`ForwardContext`, and the custom operator pops strings in order and increments a counter. The comment also admits that this relies on the assumption that "custom operators execute in order and torch.compile will not reorder"[FACT:vllm/forward_context.py:182-184]。
 
+# Design considerations and production pitfalls
 
-**异步调度的状态一致性。** `_update_states` 在异步投机解码下采用「乐观假设」策略：假设上一步所有 draft token 都被接受，先扩展 `output_token_ids`，然后注册一个延迟修正函数 [FACT:vllm/v1/worker/gpu_model_runner.py:1376-1384](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1376-L1384)。修正函数在模型前向启动后调用 [FACT:vllm/v1/worker/gpu_model_runner.py:1509-1510](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1509-L1510)，从 GPU 读取实际接受数并回退 `num_computed_tokens` [FACT:vllm/v1/worker/gpu_model_runner.py:1547-1558](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1547-L1558)。这个设计的精妙之处在于：修正发生在「批已启动」之后，不阻塞前向，保持了异步流水线的连续性。
+**State consistency under asynchronous scheduling.** `_update_states`Under asynchronous speculative decoding,`output_token_ids`adopts an "optimistic assumption" strategy: assume all draft tokens from the previous step are accepted, first expand[FACT:vllm/v1/worker/gpu_model_runner.py:1376-1384], then register a deferred correction function[FACT:vllm/v1/worker/gpu_model_runner.py:1509-1510]. The correction function is called after the model forward starts`num_computed_tokens` [FACT:vllm/v1/worker/gpu_model_runner.py:1547-1558], reads the actual accepted count from the GPU, and rolls back
 
-**`_may_reorder_batch` 的触发条件。** 该方法首先检查 `kv_cache_groups` 是否为空 [FACT:vllm/v1/worker/gpu_model_runner.py:1131-1132](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1131-L1132)。注释解释了为什么不能简单检查 `is_attention_free`：Mamba 模型也是 attention-free 的，但它用 KV cache 保存内部状态 [FACT:vllm/v1/worker/gpu_model_runner.py:1116-1139](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1116-L1139)。只有真正没有 KV cache group 的模型才跳过重排。
+**`_may_reorder_batch`. The brilliance of this design is that the correction happens after "the batch has started," without blocking the forward pass, preserving the continuity of the asynchronous pipeline.**Trigger condition for`kv_cache_groups`. This method first checks[FACT:vllm/v1/worker/gpu_model_runner.py:1131-1132]whether`is_attention_free`The Mamba model is also attention-free, but it uses a KV cache to store internal state[FACT:vllm/v1/worker/gpu_model_runner.py:1116-1139]. Only models that truly have no KV cache group skip the reordering.
 
-**`_prepare_input_ids` 的索引计算陷阱。** 当批中既有上一步的 decode 请求又有新请求时，`num_common_tokens < total_without_spec`，需要先拷贝 CPU 张量再 scatter [FACT:vllm/v1/worker/gpu_model_runner.py:1849-1854](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1849-L1854)。若 `num_common_tokens == 0`，说明没有任何请求与上一步重叠，直接返回 [FACT:vllm/v1/worker/gpu_model_runner.py:1855-1858](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1855-L1858)。这两个分支的区分至关重要——漏掉任何一个都会导致 `input_ids` 部分未初始化。
+**`_prepare_input_ids`indexing calculation pitfalls.**When the batch contains both decode requests from the previous step and new requests,`num_common_tokens < total_without_spec`, you need to first copy the CPU tensor before scattering[FACT:vllm/v1/worker/gpu_model_runner.py:1849-1854]. If`num_common_tokens == 0`, it means no request overlaps with the previous step, so return directly[FACT:vllm/v1/worker/gpu_model_runner.py:1855-1858]. Distinguishing these two branches is critical—missing either one will cause`input_ids`some parts to remain uninitialized.
 
-**`AsyncGPUModelRunnerOutput` 的流同步。** 输出拷贝在独立 CUDA stream 上进行 [FACT:vllm/v1/worker/gpu_model_runner.py:308-328](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L308-L328)，使用 `blocking=True` 的 Event 避免忙轮询 CUDA 驱动锁 [FACT:vllm/v1/worker/gpu_model_runner.py:296-298](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L296-L298)。`get_output()` 中先 synchronize 再释放设备张量引用 [FACT:vllm/v1/worker/gpu_model_runner.py:336-340](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L336-L340)，顺序不能颠倒——否则张量可能在拷贝完成前被回收。
+**`AsyncGPUModelRunnerOutput`stream synchronization.**The output copy is performed on a separate CUDA stream[FACT:vllm/v1/worker/gpu_model_runner.py:308-328], using`blocking=True`'s Event to avoid busy-polling the CUDA driver lock[FACT:vllm/v1/worker/gpu_model_runner.py:296-298]。`get_output()`, first synchronize then release the device tensor reference[FACT:vllm/v1/worker/gpu_model_runner.py:336-340], the order cannot be reversed—otherwise the tensor may be reclaimed before the copy completes.
 
+# Chapter Summary
 
-本章追踪了 `SchedulerOutput` 从 EngineCore 到 GPU 前向的完整路径。`Executor` 通过 `collective_rpc` 把调度结果广播到所有 Worker，`GPUModelRunner` 的 `_update_states` 同步缓存状态、`_prepare_inputs` 构造输入张量、`_get_slot_mappings` 生成 KV 槽位映射，最后 `set_forward_context` 把批描述注入全局上下文供模型各层消费。异步调度路径通过乐观假设 + 延迟修正保持了流水线连续性，而 `ForwardContext` 的全局单例设计解决了模型层签名固定与跨层元数据注入之间的矛盾。
+This chapter traced`SchedulerOutput`'s complete path from EngineCore to GPU forward pass.`Executor`Through`collective_rpc`, the scheduling results are broadcast to all Workers,`GPUModelRunner`'s`_update_states`synchronizes cache state,`_prepare_inputs`constructs input tensors,`_get_slot_mappings`generates KV slot mappings, and finally`set_forward_context`injects the batch description into the global context for consumption by each model layer. The asynchronous scheduling path maintains pipeline continuity through optimistic assumptions + deferred correction, while`ForwardContext`'s global singleton design resolves the contradiction between fixed model-layer signatures and cross-layer metadata injection.
 
+# Chapter Review Questions
 
-Q1: `_update_states` 中 `unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)` 这个表达式，如果把 `resumed_req_ids` 从减法中去掉，变成 `cached_req_ids - scheduled_req_ids`，在什么场景下会导致状态不一致？
+Q1: `_update_states`In`unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)`the expression`resumed_req_ids`, if`cached_req_ids - scheduled_req_ids`is removed from the subtraction, becoming
 
-**参考解析**：注释明确指出 [FACT:vllm/v1/worker/gpu_model_runner.py:1241-1246](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1241-L1246)，`cached_req_ids` 和 `resumed_req_ids` 通常不相交，但在 `reset_prefix_cache` 触发的强制抢占场景下，一个请求可能同时出现在 `cached_req_ids` 和 `resumed_req_ids` 中。此时 `scheduled_req_ids - resumed_req_ids` 会把这个请求从「已调度」集合中排除，使其落入 `unscheduled_req_ids`，从而先从持久批中清除，再通过正常的 resumed 路径重新加入。如果去掉 `resumed_req_ids`，该请求会被认为「已调度」而保留在批中，但它的块 ID 已被替换（`req_state.block_ids = new_block_ids` [FACT:vllm/v1/worker/gpu_model_runner.py:1448](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1448)），导致 block table 中的旧行与新块 ID 不匹配，注意力计算会读取错误的 KV 位置。
+**, in what scenario would this cause state inconsistency?**Reference Analysis[FACT:vllm/v1/worker/gpu_model_runner.py:1241-1246]，`cached_req_ids`: The comment explicitly states that`resumed_req_ids`and`reset_prefix_cache`are usually disjoint, but in forced preemption scenarios triggered by`cached_req_ids`, a request may appear in both`resumed_req_ids`and`scheduled_req_ids - resumed_req_ids`. In this case,`unscheduled_req_ids`will exclude this request from the "scheduled" set, causing it to fall into`resumed_req_ids`, thereby first being removed from the persistent batch, then re-added through the normal resumed path. If`req_state.block_ids = new_block_ids` [FACT:vllm/v1/worker/gpu_model_runner.py:1448]is removed, the request would be considered "scheduled" and retained in the batch, but its block ID has already been replaced (
 
-Q2: `_prepare_input_ids` 的快速路径 [FACT:vllm/v1/worker/gpu_model_runner.py:1859-1868](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1859-L1868) 用 `common_indices_match and max_flattened_index == (num_common_tokens - 1)` 作为条件。如果批中请求顺序发生了变化（例如注意力后端重排了批），但 `common_indices_match` 仍为 True，会发生什么？
+Q2: `_prepare_input_ids`), causing the old row in the block table to mismatch the new block ID, and the attention computation would read the wrong KV positions.[FACT:vllm/v1/worker/gpu_model_runner.py:1859-1868]'s fast path`common_indices_match and max_flattened_index == (num_common_tokens - 1)`uses`common_indices_match`as the condition. If the request order in the batch changes (e.g., the attention backend reorders the batch), but
 
-**参考解析**：`common_indices_match` 在循环中通过 `prev_index == flattened_index` 累积 [FACT:vllm/v1/worker/gpu_model_runner.py:1835](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L1835)。`prev_index` 来自 `prev_positions`，映射当前批位置到上一步批位置；`flattened_index` 是当前批中该请求最后一个 token 的扁平索引。如果批被重排，`prev_index` 和 `flattened_index` 的对应关系会改变，`common_indices_match` 会变为 False，快速路径不会触发。但如果重排恰好使得 `prev_index == flattened_index` 对所有请求成立（例如交换了两个 token 数相同的请求），快速路径会错误地用 `prev_sampled_token_ids[:num_common_tokens, 0]` 直接切片拷贝——这会把请求 A 的采样 token 填到请求 B 的位置。`max_flattened_index == num_common_tokens - 1` 这个附加条件正是为了防止这种退化情况：它要求扁平索引恰好是 `0..N-1` 的排列，排除了任何非平凡重排。
+**is still True, what happens?**：`common_indices_match`Reference Analysis`prev_index == flattened_index`In the loop, through[FACT:vllm/v1/worker/gpu_model_runner.py:1835]。`prev_index`accumulates`prev_positions`from`flattened_index`, mapping the current batch position to the previous step's batch position;`prev_index`is the flat index of the last token of that request in the current batch. If the batch is reordered,`flattened_index`and`common_indices_match`'s correspondence changes,`prev_index == flattened_index`will become False, and the fast path will not trigger. But if the reordering happens to make`prev_sampled_token_ids[:num_common_tokens, 0]`hold for all requests (e.g., swapping two requests with the same token count), the fast path will incorrectly use`max_flattened_index == num_common_tokens - 1`for direct slice copying—this would fill request A's sampled token into request B's position.`0..N-1`This additional condition is precisely to prevent this degenerate case: it requires the flat indices to be exactly a permutation of
 
-Q3: `ForwardContext` 使用模块级全局变量 `_forward_context` 而非线程局部变量。在 `execute_model` 与 `sample_tokens` 分离的异步调度下，如果 `sample_tokens` 在前向完成前被调用，`get_forward_context()` 会返回什么？这会导致什么问题？
+Q3: `ForwardContext`, excluding any non-trivial reordering.`_forward_context`uses a module-level global variable`execute_model`rather than a thread-local variable. Under asynchronous scheduling where`sample_tokens`and`sample_tokens`are separated, if`get_forward_context()`is called before the forward pass completes,
 
-**参考解析**：`set_forward_context` 是一个上下文管理器 [FACT:vllm/forward_context.py:278-288](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L278-L288)，在 `with` 块退出时通过 `override_forward_context` 的 `finally` 恢复旧值 [FACT:vllm/forward_context.py:263-274](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L263-L274)。在 `execute_model` 中，`set_forward_context` 的 `with` 块只包裹 `_model_forward` 调用 [FACT:vllm/v1/worker/gpu_model_runner.py:4408-4433](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L4408-L4433)，前向返回后上下文即被恢复。如果 `sample_tokens` 在前向完成后调用，`get_forward_context()` 会断言失败 [FACT:vllm/forward_context.py:208-214](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/forward_context.py#L208-L214)，因为 `_forward_context` 已被重置为 `None`（或外层值）。这正是 `ExecuteModelState` 存在的原因 [FACT:vllm/v1/worker/gpu_model_runner.py:463-476](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/worker/gpu_model_runner.py#L463-L476)：采样所需的状态（`logits`、`hidden_states`、`slot_mappings`）被显式保存在 NamedTuple 中，而非依赖 `ForwardContext` 的隐式传递。如果误以为 `ForwardContext` 在 `sample_tokens` 中仍可用，会触发断言错误或读取到错误的元数据。
+**what will be returned? What problem would this cause?**：`set_forward_context`Reference Analysis[FACT:vllm/forward_context.py:278-288]is a context manager`with`, which on exit of the`override_forward_context`block restores the old value through`finally`'s[FACT:vllm/forward_context.py:263-274]. In`execute_model`,`set_forward_context`'s`with`block only wraps the`_model_forward`call[FACT:vllm/v1/worker/gpu_model_runner.py:4408-4433], and the context is restored after the forward pass returns. If`sample_tokens`is called after the forward pass completes,`get_forward_context()`will fail an assertion[FACT:vllm/forward_context.py:208-214], because`_forward_context`has already been reset to`None`(or the outer value). This is exactly why`ExecuteModelState`exists[FACT:vllm/v1/worker/gpu_model_runner.py:463-476]: the state needed for sampling (`logits`、`hidden_states`、`slot_mappings`) is explicitly stored in a NamedTuple, rather than relying on`ForwardContext`'s implicit passing. If one mistakenly assumes that`ForwardContext`is still available in`sample_tokens`, it would trigger an assertion error or read incorrect metadata.
 
-至此，我们走完了从 SchedulerOutput 到 GPU 前向传播的完整路径：Executor 分发、Worker 执行、GPUModelRunner 将逻辑清单翻译为物理张量，并通过 forward_context 将批描述注入每一层。然而，模型前向传播中最耗时的部分——注意力计算——尚未展开。下一章将深入注意力后端，看 attn_metadata 中的 block table 和 slot mapping 如何被 PagedAttention 内核消费，以及 FlashAttention、FlashInfer、Triton 等不同后端如何通过统一接口被选择和调度。
+At this point, we have completed the full path from SchedulerOutput to GPU forward propagation: Executor dispatch, Worker execution, GPUModelRunner translating the logical manifest into physical tensors, and injecting the batch description into each layer through forward_context. However, the most time-consuming part of model forward propagation—the attention computation—has not yet been unfolded. The next chapter will dive into the attention backend, examining how the block table and slot mapping in attn_metadata are consumed by the PagedAttention kernel, and how different backends such as FlashAttention, FlashInfer, and Triton are selected and scheduled through a unified interface.

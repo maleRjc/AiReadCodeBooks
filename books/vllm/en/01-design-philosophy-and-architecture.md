@@ -1,34 +1,34 @@
-# Chapter 01: vLLM Design Philosophy & High-Throughput Inference Architecture
+# Chapter 1: vLLM's Design Philosophy and Overall Architecture Overview
 
+Suppose you have an A100 and want to use LLaMA-7B to provide online inference services. The most naive approach is: a request comes in, run model.generate() once, return the result. This approach will immediately collapse once concurrency picks up—not because GPU compute is insufficient, but because of two things: First, memory is eaten up by fragmentation. Autoregressive generation requires caching the Key/Value tensors of each layer (KV Cache). If each request pre-allocates an entire contiguous block of GPU memory according to max_model_len, a 4096-token request would occupy tens of MB, while the actually generated sequence might only be 200 tokens. Worse still, as requests of different lengths enter and exit alternately, contiguous memory blocks get chopped into pieces, and ultimately even though the total amount is sufficient, no contiguous space large enough can be found—this is the classic GPU memory fragmentation problem. Second, batching efficiency is low. Traditional static batching requires all requests in a batch to start and finish at the same time. But the output length of generation tasks is inherently unpredictable: one request might stop after 10 tokens, while another needs to generate 2000. After a short request finishes, the batch slot it occupied can only wait idly for the long request to complete, and GPU utilization plummets. vLLM's two design cornerstones are precisely aimed at these two pain points: PagedAttention uses a paging mechanism to eliminate memory fragmentation, and Continuous Batching uses iteration-level scheduling to eliminate batch idling. This chapter does not dive into the implementation details of these two mechanisms (those are the topics of Chapters 2 and 4), but first establishes a global map: what vLLM v1's process architecture looks like, how responsibilities are divided across layers, and which components a request must pass through from entering the system to emitting tokens. Only after understanding this map can the source code analysis in each subsequent chapter have a foothold.
 
-假设你手头有一张 A100，想用 LLaMA-7B 对外提供在线推理服务。最朴素的做法是：来一个请求，跑一次 model.generate()，返回结果。这个方案在并发量上来后会立刻崩溃——不是因为 GPU 算力不够，而是因为两件事：第一，显存被碎片吃掉。自回归生成需要缓存每一层的 Key/Value 张量（KV Cache）。如果每个请求都按 max_model_len 预分配一整块连续显存，一个 4096 token 的请求就要占掉几十 MB，而实际生成的序列可能只有 200 token。更糟的是，不同长度的请求交替进出，连续显存块被切得七零八落，最终明明总量够用，却找不到一块足够大的连续空间——这就是经典的显存碎片问题。第二，批处理效率低下。传统静态批处理要求一个 batch 里的所有请求同时开始、同时结束。但生成任务的输出长度天然不可预测：一个请求可能 10 个 token 就停了，另一个要生成 2000 个。短请求结束后，它占的 batch 槽位只能空等长请求跑完，GPU 利用率断崖式下跌。vLLM 的两个设计基石正是针对这两个痛点：PagedAttention 用分页机制消除显存碎片，Continuous Batching 用迭代级调度消除批处理空转。本章不深入这两个机制的实现细节（那是第 2、4 章的主题），而是先建立一张全局地图：vLLM v1 的进程架构长什么样、各层职责如何划分、一次请求从进入系统到吐出 token 要穿过哪些组件。理解了这张地图，后续每一章的源码解读才有落脚点。
+# Process Architecture: Why vLLM Is Not a Single-Process Program
 
+## Intuitive Model
 
-## Intuitive Architectural Model
+Think of vLLM as a restaurant. The front desk (API Server) is responsible for receiving guests and recording orders; the kitchen core (EngineCore) decides which dish to cook first and which stove to use; each stove (GPU Worker) is exclusively operated by one chef. If one person both receives guests and cooks, things will inevitably become chaotic during peak hours—this is why vLLM splits these roles into independent processes.
 
-把 vLLM 想象成一家餐厅。前台（API Server）负责接待客人、记录点单；后厨核心（EngineCore）决定先做哪道菜、用哪个灶台；每个灶台（GPU Worker）由一位厨师独占操作。如果让一个人既接待又炒菜，高峰期必然手忙脚乱——这就是为什么 vLLM 要把这些角色拆成独立进程。
+> **[Design Inference & Architectural Trade-offs]**
+> The core motivation for this multi-process split is**separation of concerns**: HTTP parsing, tokenization, and multimodal data loading are CPU-intensive and potentially blocking operations, while model forward passes are GPU-intensive. If placed in the same process, Python's GIL would cause the two to drag each other down. After splitting into independent processes, the API Server can continuously receive new requests, EngineCore can continuously schedule, and GPU Workers can continuously compute, with the three decoupled through ZMQ message queues.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种多进程拆分的核心动机是**关注点分离**：HTTP 解析、tokenization、多模态数据加载是 CPU 密集型且可能阻塞的操作，而模型前向是 GPU 密集型。如果放在同一进程，Python 的 GIL 会让两者互相拖累。拆成独立进程后，API Server 可以持续接收新请求，EngineCore 可以持续调度，GPU Worker 可以持续计算，三者通过 ZMQ 消息队列解耦。
+## Process Topology and Quantity Relationships
 
-## 进程拓扑与数量关系
+vLLM v1's process architecture can be summarized with a formula. For`N`GPUs, tensor parallelism degree`TP`, pipeline parallelism degree`PP`, data parallelism degree`DP`, number of API Servers`A`deployment:
 
-vLLM v1 的进程架构可以用一个公式概括。对于 `N` 张 GPU、张量并行度 `TP`、流水线并行度 `PP`、数据并行度 `DP`、API Server 数量 `A` 的部署：
-
-| 进程类型 | 数量 | 职责 |
+| Process Type | Quantity | Responsibility |
 | --- | --- | --- |
-| API Server | `A`（默认等于 `DP`） | HTTP 请求处理、输入预处理、结果流式返回 |
-| EngineCore | `DP`（默认 1） | 调度、KV Cache 管理、协调 GPU Worker |
-| GPU Worker | `N`（= `DP × PP × TP`） | 加载权重、执行前向、管理显存 |
-| DP Coordinator | `DP > 1` 时为 1，否则 0 | DP 秩间负载均衡与 MoE 波次协调 |
+| API Server | `A`(default equal to`DP`） | HTTP request handling, input preprocessing, streaming return of results |
+| EngineCore | `DP`(default 1) | Scheduling, KV Cache management, coordinating GPU Workers |
+| GPU Worker | `N`（= `DP × PP × TP`） | Loading weights, executing forward passes, managing GPU memory |
+| DP Coordinator | `DP > 1`When  is 1, otherwise 0 | Inter-DP-rank load balancing and MoE wave coordination |
 
-[FACT:docs/design/arch_overview.md:113-113](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L113-L113) 给出了这张表的权威定义。一个典型的单机 4 卡部署（`vllm serve -tp=4`）会产生 1 个 API Server + 1 个 EngineCore + 4 个 GPU Worker = 6 个进程 [FACT:docs/design/arch_overview.md:115-115](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L115-L115)。而 8 卡 TP=2/DP=4 的部署则膨胀到 4 + 4 + 8 + 1 = 17 个进程 [FACT:docs/design/arch_overview.md:123-123](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L123-L123)。
+[FACT:docs/design/arch_overview.md:113-113]provides the authoritative definition of this table. A typical single-machine 4-GPU deployment (`vllm serve -tp=4`) produces 1 API Server + 1 EngineCore + 4 GPU Workers = 6 processes[FACT:docs/design/arch_overview.md:115-115]. An 8-GPU TP=2/DP=4 deployment, however, balloons to 4 + 4 + 8 + 1 = 17 processes[FACT:docs/design/arch_overview.md:123-123]。
 
-这里有一个容易被忽视的细节：**API Server 的数量默认跟随 DP 大小**。当 `--data-parallel-size 4` 时，会自动启动 4 个 API Server，每个都通过 ZMQ 以多对多拓扑连接到所有 EngineCore [FACT:docs/design/arch_overview.md:73-73](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L73-L73)。这意味着任何一个 API Server 都能把请求路由到任何一个 EngineCore，避免了单点瓶颈。
+There is a detail here that is easy to overlook:**The number of API Servers follows the DP size by default**. When`--data-parallel-size 4`, 4 API Servers are automatically started, each connecting to all EngineCores via ZMQ in a many-to-many topology[FACT:docs/design/arch_overview.md:73-73]. This means any API Server can route requests to any EngineCore, avoiding a single point of bottleneck.
 
-## 数据流向
+## Data flow
 
-下面这张图展示了一次请求在进程间的完整流转路径。注意每个节点标注的都是真实的类名和数据结构：
+The diagram below shows the complete flow path of a request across processes. Note that each node is labeled with real class names and data structures:
 
 ```mermaid
 flowchart LR
@@ -40,37 +40,38 @@ flowchart LR
     api -->|"流式 SSE 响应"| client
 ```
 
-这张图的关键在于：**API Server 和 EngineCore 之间是异步消息传递**，而不是函数调用。请求被序列化为 `EngineCoreRequest` 结构体（一个 `msgspec.Struct`，见 [FACT:vllm/v1/engine/__init__.py:109-113](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L109-L113)），通过 ZMQ 的 `ADD` 消息类型发送 [FACT:vllm/v1/engine/__init__.py:287-299](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L287-L299)。EngineCore 处理完后，把结果打包成 `EngineCoreOutputs` 返回 [FACT:vllm/v1/engine/__init__.py:256-260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L256-L260)。
+The key point of this diagram is:**Communication between API Server and EngineCore is asynchronous message passing**, not function calls. Requests are serialized into the`EngineCoreRequest`structure (a`msgspec.Struct`, see[FACT:vllm/v1/engine/__init__.py:109-113]), sent via ZMQ's`ADD`message type[FACT:vllm/v1/engine/__init__.py:287-299]. After EngineCore finishes processing, it packages the result into`EngineCoreOutputs`and returns it[FACT:vllm/v1/engine/__init__.py:256-260]。
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 选择 ZMQ 而非 gRPC 或共享内存，是因为 ZMQ 在进程间通信场景下延迟极低（微秒级），且天然支持多对多拓扑和消息队列语义。对于推理服务这种对首 token 延迟敏感的场景，通信开销必须尽可能小。
+> **[Design Inference & Architectural Trade-offs]**
+> ZMQ was chosen over gRPC or shared memory because ZMQ has extremely low latency (microsecond level) in inter-process communication scenarios, and naturally supports many-to-many topologies and message queue semantics. For inference services, which are sensitive to first-token latency, communication overhead must be as small as possible.
 
-## 设计思考：为什么 EngineCore 是独立进程而非线程
+## Design thinking: Why EngineCore is a separate process rather than a thread
 
-一个自然的问题是：既然 EngineCore 和 API Server 都在同一台机器上，为什么不放在同一进程里用线程通信？
+A natural question is: since EngineCore and API Server are on the same machine, why not put them in the same process and communicate with threads?
 
-答案藏在 EngineCore 的工作模式里。EngineCore 运行的是一个**忙循环**（busy loop），持续不断地调度请求、分发工作给 GPU Worker [FACT:docs/design/arch_overview.md:73-73](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L73-L73)。这个循环不能被打断——一旦被 HTTP 解析或 tokenization 阻塞，整个推理流水线就会出现气泡。独立进程保证了 EngineCore 的 CPU 时间片不会被前端逻辑抢占。
+The answer lies in EngineCore's working mode. EngineCore runs a**busy loop**(busy loop), continuously scheduling requests and dispatching work to GPU Workers[FACT:docs/design/arch_overview.md:73-73]. This loop cannot be interrupted—once blocked by HTTP parsing or tokenization, bubbles will appear in the entire inference pipeline. A separate process ensures that EngineCore's CPU time slice will not be preempted by frontend logic.
 
-此外，独立进程还带来了**故障隔离**：如果 API Server 因为某个畸形请求崩溃，EngineCore 和 GPU Worker 不受影响，可以继续服务其他 API Server 转发过来的请求。
+In addition, a separate process also brings**fault isolation**: if the API Server crashes due to a malformed request, EngineCore and GPU Workers are unaffected and can continue serving requests forwarded by other API Servers.
 
+# Layered mental model: Responsibility boundaries from entrypoint to GPU
 
-## Intuitive Architectural Model
+## Intuitive model
 
-如果说进程架构是「谁在哪里干活」，那么分层模型就是「每层负责什么决策」。vLLM 的代码组织遵循一条清晰的分层原则：**上层决定做什么，下层决定怎么做**。入口层决定接收哪些请求，引擎核心层决定先处理谁，执行器层决定用哪种并行策略，Worker 层决定如何在具体硬件上跑出结果。
+If the process architecture is "who does the work and where," then the layered model is "what decisions each layer is responsible for." vLLM's code organization follows a clear layering principle:**Upper layers decide what to do, lower layers decide how to do it**. The entrypoint layer decides which requests to accept, the engine core layer decides who to process first, the executor layer decides which parallel strategy to use, and the Worker layer decides how to produce results on specific hardware.
 
-## 四层结构
+## Four-layer structure
 
-**入口层（Entrypoints）** 提供两种交互方式：离线推理的 `LLM` 类和在线服务的 `vllm serve` 命令 [FACT:docs/design/arch_overview.md:16-16](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L16-L16)[FACT:docs/design/arch_overview.md:56-56](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L56-L56)。这一层的核心职责是输入预处理——tokenization、多模态数据加载、采样参数解析——以及输出的反 tokenization 和流式返回。它不关心调度策略，也不碰 GPU。
+**Entrypoints**provides two interaction methods: the`LLM`class for offline inference and the`vllm serve`command for online serving[FACT:docs/design/arch_overview.md:16-16][FACT:docs/design/arch_overview.md:56-56]. The core responsibility of this layer is input preprocessing—tokenization, multimodal data loading, sampling parameter parsing—as well as output detokenization and streaming return. It does not care about scheduling strategy, nor does it touch the GPU.
 
-**引擎核心层（EngineCore）** 是整个系统的大脑。它持有 Scheduler（决定每个 decode step 处理哪些请求）和 KV Cache Manager（管理分页显存），通过 Executor 抽象与 GPU Worker 通信 [FACT:docs/design/arch_overview.md:79-85](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L79-L85)。这一层的关键设计是**调度与执行分离**：Scheduler 只产出「这一步要跑哪些 token」的决策（`SchedulerOutput`），具体怎么在 GPU 上跑是 Worker 的事。
+**EngineCore**is the brain of the entire system. It holds the Scheduler (which decides which requests to process at each decode step) and the KV Cache Manager (which manages paged GPU memory), and communicates with GPU Workers through the Executor abstraction[FACT:docs/design/arch_overview.md:79-85]. The key design of this layer is**separation of scheduling and execution**: the Scheduler only produces decisions about "which tokens to run in this step" (`SchedulerOutput`), while how exactly to run them on the GPU is the Worker's job.
 
-**执行器层（Executor）** 是 EngineCore 和 Worker 之间的桥梁。它封装了分布式执行策略——单进程用 `UniProcExecutor`，多进程用 `MultiprocExecutor`，Ray 集群用 `RayDistributedExecutor`。Executor 的抽象接口让 EngineCore 不需要知道底层是单卡还是 8 卡 TP。
+**Executor**is the bridge between EngineCore and Workers. It encapsulates distributed execution strategies—single-process uses`UniProcExecutor`, multi-process uses`MultiprocExecutor`, Ray cluster uses`RayDistributedExecutor`. The Executor's abstract interface means EngineCore does not need to know whether the underlying setup is a single GPU or 8-GPU TP.
 
-**Worker 层** 每个 GPU 一个 Worker 进程，内部持有 ModelRunner 和实际的 `torch.nn.Module` 模型对象 [FACT:docs/design/arch_overview.md:171-191](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L171-L191)。ModelRunner 负责准备输入张量、捕获 CUDA Graph、执行前向计算。这一层是唯一直接操作 GPU 显存和 CUDA 流的地方。
+**Worker layer**One Worker process per GPU, internally holding a ModelRunner and the actual`torch.nn.Module`model object[FACT:docs/design/arch_overview.md:171-191]. ModelRunner is responsible for preparing input tensors, capturing CUDA Graphs, and executing forward computation. This layer is the only place that directly operates GPU memory and CUDA streams.
 
-## 配置对象：贯穿所有层的全局状态
+## Configuration object: Global state spanning all layers
 
-四层之间靠什么传递信息？答案是 `VllmConfig`——一个包含所有配置的巨型 dataclass [FACT:vllm/config/vllm.py:357-357](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L357-L357)。
+What is used to pass information between the four layers? The answer is`VllmConfig`—a giant dataclass containing all configuration[FACT:vllm/config/vllm.py:357-357]。
 
 ```python
 @config(config=ConfigDict(arbitrary_types_allowed=True))
@@ -83,16 +84,16 @@ class VllmConfig:
     # ... 还有 20+ 个子配置
 ```
 
-[FACT:vllm/config/vllm.py:363-371](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L363-L371) 展示了核心字段。这个设计选择背后的逻辑值得展开。
+[FACT:vllm/config/vllm.py:363-371]shows the core fields. The logic behind this design choice is worth elaborating on.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 文档中明确解释了为什么用一个大配置对象而非分散的参数传递：**可扩展性**。假设要加一个只影响 ModelRunner 的新特性，只需要在 `VllmConfig` 里加一个字段，ModelRunner 直接读取即可，不需要修改 Engine、Worker、Model 的构造函数签名 [FACT:docs/design/arch_overview.md:203-203](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/docs/design/arch_overview.md#L203-L203)。在一个快速演进的推理框架里，这种「加字段不改接口」的能力极大降低了开发摩擦。
+> **[Design Inference & Architectural Trade-offs]**
+> The documentation explicitly explains why a single large configuration object is used instead of scattered parameter passing:**Scalability**. Suppose you want to add a new feature that only affects ModelRunner; you only need to add a field in`VllmConfig`, and ModelRunner can read it directly, without modifying the constructor signatures of Engine, Worker, or Model[FACT:docs/design/arch_overview.md:203-203]. In a rapidly evolving inference framework, this ability to "add fields without changing interfaces" greatly reduces development friction.
 
-代价是 `VllmConfig` 变得极其庞大——从 [FACT:vllm/config/vllm.py:356-3509](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L356-L3509) 可以看出，这个类跨越了超过 3000 行代码，包含数十个字段和验证方法。`__post_init__` 方法 [FACT:vllm/config/vllm.py:1405-2317](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1405-L2317) 更是长达 900 多行，承担了所有跨配置项的交叉验证和默认值推导。
+The cost is that`VllmConfig`becomes extremely large—from[FACT:vllm/config/vllm.py:356-3509]it can be seen that this class spans more than 3000 lines of code and contains dozens of fields and validation methods.`__post_init__`The method[FACT:vllm/config/vllm.py:1405-2317]is even more than 900 lines long, handling all cross-configuration validation and default value derivation.
 
-## 配置的哈希与缓存
+## Configuration hashing and caching
 
-`VllmConfig` 还有一个容易被忽视但非常重要的能力：`compute_hash()` [FACT:vllm/config/vllm.py:464-580](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L464-L580)。它为所有影响计算图结构的配置项生成一个短哈希。
+`VllmConfig`There is also an easily overlooked but very important capability:`compute_hash()` [FACT:vllm/config/vllm.py:464-580]. It generates a short hash for all configuration items that affect the computation graph structure.
 
 ```python
 def compute_hash(self, include_version: bool = True) -> str:
@@ -108,19 +109,20 @@ def compute_hash(self, include_version: bool = True) -> str:
     return hash_str
 ```
 
-[FACT:vllm/config/vllm.py:479-580](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L479-L580) 展示了完整的哈希计算流程。注意注释中的警告：「Whenever a new field is added to this config, ensure that it is included in the factors list if it affects the computation graph」[FACT:vllm/config/vllm.py:465-467](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L465-L467)。
+[FACT:vllm/config/vllm.py:479-580]shows the complete hash computation flow. Note the warning in the comments: "Whenever a new field is added to this config, ensure that it is included in the factors list if it affects the computation graph"[FACT:vllm/config/vllm.py:465-467]。
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个哈希的用途是 **torch.compile 缓存键**。vLLM 用 `torch.compile` 编译模型前向图，编译结果会缓存到磁盘。下次启动时，如果配置哈希相同，就可以直接复用编译缓存，跳过耗时的编译过程。如果某个影响计算图的配置项没被纳入哈希，就会导致缓存命中错误——用了旧配置编译的图来跑新配置，结果静默错误。这就是为什么注释里反复强调「影响计算图的字段必须加入哈希」。
+> **[Design Inference & Architectural Trade-offs]**
+> The purpose of this hash is**torch.compile cache key**. vLLM uses`torch.compile`to compile the model forward graph, and the compiled result is cached to disk. On the next startup, if the configuration hash is the same, the compilation cache can be reused directly, skipping the time-consuming compilation process. If a configuration item that affects the computation graph is not included in the hash, it will cause a cache hit error—using a graph compiled with the old configuration to run the new configuration, resulting in silent errors. This is why the comments repeatedly emphasize that "fields affecting the computation graph must be included in the hash."
 
+# Request lifecycle walkthrough: from HTTP to token
 
-## 场景设定
+## Scenario setup
 
-假设客户端向 `vllm serve` 启动的服务发送一个 OpenAI 兼容的 `/v1/completions` 请求，prompt 是 "The capital of France is"，要求生成 16 个 token。我们沿着源码追踪这个请求的完整旅程。
+Suppose a client sends an OpenAI-compatible`vllm serve`request to the service started by`/v1/completions`, with the prompt "The capital of France is", requesting the generation of 16 tokens. We trace the complete journey of this request through the source code.
 
-## Step 1：API Server 接收并预处理
+## Step 1: API Server receives and preprocesses
 
-API Server 进程收到 HTTP 请求后，进行 tokenization 和采样参数解析，然后构造 `EngineCoreRequest`：
+After the API Server process receives the HTTP request, it performs tokenization and sampling parameter parsing, then constructs`EngineCoreRequest`：
 
 ```python
 class EngineCoreRequest(
@@ -142,24 +144,24 @@ class EngineCoreRequest(
     # ... 更多字段
 ```
 
-[FACT:vllm/v1/engine/__init__.py:109-124](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L109-L124) 定义了请求的核心结构。注意 `msgspec.Struct` 配合 `array_like=True` 和 `omit_defaults=True` 的组合 [FACT:vllm/v1/engine/__init__.py:109-113](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L109-L113)——这是为了**序列化性能**。`array_like` 让 msgspec 用位置数组而非字典来编码，`omit_defaults` 跳过默认值字段，两者结合大幅减小了 ZMQ 消息的体积。
+[FACT:vllm/v1/engine/__init__.py:109-124]defines the core structure of the request. Note`msgspec.Struct`together with`array_like=True`and`omit_defaults=True`the combination[FACT:vllm/v1/engine/__init__.py:109-113]—this is for**serialization performance**。`array_like`to let msgspec encode using positional arrays instead of dictionaries,`omit_defaults`skipping default value fields; the combination of the two greatly reduces the size of ZMQ messages.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> `gc=False` 则告诉 msgspec 不要为这个结构体生成 GC 跟踪代码 [FACT:vllm/v1/engine/__init__.py:109-113](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L109-L113)。 对于高频创建/销毁的消息对象，关闭 GC 跟踪可以减少 Python 垃圾回收器的压力，这在每秒处理数千请求的场景下是必要的优化。
+> **[Design Inference & Architectural Trade-offs]**
+> `gc=False`tells msgspec not to generate GC tracking code for this struct[FACT:vllm/v1/engine/__init__.py:109-113]. For message objects created/destroyed at high frequency, disabling GC tracking can reduce pressure on the Python garbage collector, which is a necessary optimization in scenarios handling thousands of requests per second.
 
-## Step 2：EngineCore 调度
+## Step 2: EngineCore scheduling
 
-EngineCore 收到请求后，Scheduler 将其放入等待队列。在每个调度步中，Scheduler 决定是否将这个请求纳入当前批次。如果纳入，KV Cache Manager 会为它分配物理 block（PagedAttention 的核心操作，详见第 2 章）。
+After EngineCore receives the request, the Scheduler places it in the waiting queue. In each scheduling step, the Scheduler decides whether to include this request in the current batch. If included, the KV Cache Manager allocates physical blocks for it (the core operation of PagedAttention, see Chapter 2 for details).
 
-调度结果被封装为 `SchedulerOutput`，通过 Executor 发送给 GPU Worker。
+The scheduling result is encapsulated as`SchedulerOutput`and sent to the GPU Worker through the Executor.
 
-## Step 3：GPU Worker 执行前向
+## Step 3: GPU Worker executes the forward pass
 
-Worker 的 ModelRunner 接收 `SchedulerOutput`，准备输入张量（包括 block table、slot mapping 等 attention metadata），执行模型前向，采样出下一个 token。
+The Worker's ModelRunner receives`SchedulerOutput`, prepares input tensors (including attention metadata such as block table and slot mapping), executes the model forward pass, and samples the next token.
 
-## Step 4：结果回传
+## Step 4: Result returned
 
-Worker 产出的 token 被封装为 `EngineCoreOutput`：
+The token produced by the Worker is encapsulated as`EngineCoreOutput`：
 
 ```python
 class EngineCoreOutput(
@@ -176,17 +178,17 @@ class EngineCoreOutput(
     # ...
 ```
 
-[FACT:vllm/v1/engine/__init__.py:199-217](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L199-L217) 定义了输出结构。`finish_reason` 是一个 `IntEnum`，取值包括 `STOP`、`LENGTH`、`ABORT`、`ERROR`、`REPETITION` [FACT:vllm/v1/engine/__init__.py:68-69](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L68-L69)。注释解释了为什么用 `Int` 而非 `Str`：「Int rather than Str for more compact serialization」[FACT:vllm/v1/engine/__init__.py:56-57](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L56-L57)——又是一个序列化体积优化。
+[FACT:vllm/v1/engine/__init__.py:199-217]defines the output structure.`finish_reason`is a`IntEnum`, with values including`STOP`、`LENGTH`、`ABORT`、`ERROR`、`REPETITION` [FACT:vllm/v1/engine/__init__.py:68-69]. The comments explain why`Int`is used instead of`Str`：「Int rather than Str for more compact serialization」[FACT:vllm/v1/engine/__init__.py:56-57]—another serialization size optimization.
 
-多个 `EngineCoreOutput` 被打包进 `EngineCoreOutputs`，通过 ZMQ 返回给 API Server [FACT:vllm/v1/engine/__init__.py:256-260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L256-L260)。
+Multiple`EngineCoreOutput`are packed into`EngineCoreOutputs`and returned to the API Server via ZMQ[FACT:vllm/v1/engine/__init__.py:256-260]。
 
-## Step 5：API Server 流式返回
+## Step 5: API Server streams the response
 
-API Server 收到 `EngineCoreOutputs` 后，对每个 `EngineCoreOutput` 进行反 tokenization，然后通过 SSE（Server-Sent Events）流式推送给客户端。
+After the API Server receives`EngineCoreOutputs`, it detokenizes each`EngineCoreOutput`and then streams it to the client via SSE (Server-Sent Events).
 
-## 完整时序
+## Complete sequence
 
-下面这张时序图展示了跨进程的完整交互，标注了每一步的真实函数名和数据结构：
+The sequence diagram below shows the complete cross-process interaction, annotating the real function names and data structures at each step:
 
 ```mermaid
 sequenceDiagram
@@ -212,79 +214,82 @@ sequenceDiagram
     Note over Sched: finish_reason != None 时请求退出
 ```
 
-这张图的关键信息：**每个 decode step 都会产生一次 `EngineCoreOutputs` 回传**，而不是等整个序列生成完才返回。这正是 Continuous Batching 的体现——已完成序列立即退出，新请求立即加入，输出流式返回给客户端。
+Key information in this diagram:**Each decode step produces one`EngineCoreOutputs`return**, rather than waiting until the entire sequence is generated before returning. This is exactly the embodiment of Continuous Batching—completed sequences exit immediately, new requests join immediately, and output is streamed back to the client.
 
+# Design considerations and production pitfalls
 
-## 配置验证的「后置初始化」模式
+## The "post-initialization" pattern of configuration validation
 
-`VllmConfig.__post_init__` 是整个配置系统的核心。它不是一个简单的字段赋值，而是一个**多阶段验证流水线**：
+`VllmConfig.__post_init__`is the core of the entire configuration system. It is not a simple field assignment, but a**multi-stage validation pipeline**：
 
-1. 首先解析多模态编码器模式 [FACT:vllm/config/vllm.py:1416-1416](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1416-L1416)
+1. First, parse the multimodal encoder mode[FACT:vllm/config/vllm.py:1416-1416]
 
-2. 然后调用 `try_verify_and_update_config()`，让模型特定的配置钩子有机会修改配置 [FACT:vllm/config/vllm.py:1434-1434](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1434-L1434)
+2. Then call`try_verify_and_update_config()`, giving model-specific configuration hooks a chance to modify the configuration[FACT:vllm/config/vllm.py:1434-1434]
 
-3. 接着验证并行配置、量化配置、LoRA 配置之间的一致性 [FACT:vllm/config/vllm.py:1442-1444](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1442-L1444)
+3. Next, validate the consistency among parallel configuration, quantization configuration, and LoRA configuration[FACT:vllm/config/vllm.py:1442-1444]
 
-4. 最后处理异步调度、CUDA Graph、KV Transfer 等运行时特性的兼容性检查 [FACT:vllm/config/vllm.py:1544-1635](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1544-L1635)
+4. Finally, handle compatibility checks for runtime features such as asynchronous scheduling, CUDA Graph, and KV Transfer[FACT:vllm/config/vllm.py:1544-1635]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种「后置初始化」模式解决了一个根本矛盾：**配置项之间存在依赖关系，但用户可能以任意顺序设置它们**。例如，`async_scheduling` 是否启用取决于 speculative_config 的方法类型、executor 后端是否支持、是否使用了 pipeline parallelism 等多个条件 [FACT:vllm/config/vllm.py:1544-1575](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1544-L1575)。如果把这些逻辑放在字段的 `__set__` 里，会形成复杂的循环依赖。统一放在 `__post_init__` 里按顺序处理，逻辑清晰且易于调试。
+> **[Design Inference & Architectural Trade-offs]**
+> This "post-initialization" pattern resolves a fundamental contradiction:**configuration items have dependencies on each other, but users may set them in any order**. For example,`async_scheduling`whether to enable it depends on multiple conditions such as the method type of speculative_config, whether the executor backend supports it, and whether pipeline parallelism is used[FACT:vllm/config/vllm.py:1544-1575]. If this logic were placed in the field's`__set__`, it would create complex circular dependencies. Handling it uniformly in`__post_init__`in order makes the logic clear and easy to debug.
 
-## 踩坑点：KV Connector 与 expandable_segments 的冲突
+## Pitfall: The conflict between KV Connector and expandable_segments
 
-[FACT:vllm/config/vllm.py:1219-1260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1219-L1260) 中的 `_verify_kv_transfer_compat` 揭示了一个非常隐蔽的生产陷阱。
+[FACT:vllm/config/vllm.py:1219-1260]in`_verify_kv_transfer_compat`reveals a very subtle production trap.
 
-当使用 KV Connector（如 NIXL、Mooncake）做 PD 分离部署时，这些 connector 会通过 `ibv_reg_mr` 等机制**固定（pin）KV cache 的物理内存页**。但如果同时设置了 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`，PyTorch 的 CUDA VMM 分配器可能在运行时把同一个虚拟地址重映射到不同的物理页 [FACT:vllm/config/vllm.py:1227-1233](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1227-L1233)。
+When using KV Connector (such as NIXL, Mooncake) for PD-disaggregated deployment, these connectors will, through mechanisms such as`ibv_reg_mr`,**pin the physical memory pages of the KV cache**. But if`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`is also set, PyTorch's CUDA VMM allocator may remap the same virtual address to different physical pages at runtime[FACT:vllm/config/vllm.py:1227-1233]。
 
-后果是什么？Connector 注册的 RDMA 内存区域指向了已经失效的物理页。第一次跨节点 KV 传输就会报 `IBV_WC_REM_ACCESS_ERR` 或 `NIXL_ERR_REMOTE_DISCONNECT` [FACT:vllm/config/vllm.py:1232-1233](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1232-L1233)。
+What is the consequence? The RDMA memory region registered by the Connector points to physical pages that are no longer valid. The first cross-node KV transfer will report`IBV_WC_REM_ACCESS_ERR`or`NIXL_ERR_REMOTE_DISCONNECT` [FACT:vllm/config/vllm.py:1232-1233]。
 
-vLLM 的应对策略是**保守拒绝**：只要检测到 `expandable_segments:True` 且配置了任何 KV connector，就直接抛异常 [FACT:vllm/config/vllm.py:1249-1260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1249-L1260)。唯一的豁免是启用了 `enable_cumem_allocator`——因为 CuMem 分配器会在自己的内存池周围关闭 `expandable_segments` [FACT:vllm/config/vllm.py:1238-1241](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1238-L1241)。
+vLLM's response strategy is**conservative rejection**: as long as`expandable_segments:True`is detected and any KV connector is configured, it directly throws an exception[FACT:vllm/config/vllm.py:1249-1260]. The only exemption is when`enable_cumem_allocator`is enabled — because the CuMem allocator will disable`expandable_segments` [FACT:vllm/config/vllm.py:1238-1241]。
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个案例的教训是：**RDMA 内存注册和虚拟内存重映射在语义上是不兼容的**。任何涉及 GPU 显存 pin 的功能（KV 传输、NCCL 注册缓冲区等）都必须确保底层物理页不会被分配器悄悄搬走。排查这类问题时，如果看到 RDMA 传输在第一次跨节点通信时失败，第一反应应该是检查 `PYTORCH_CUDA_ALLOC_CONF`。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design Inference and Architectural Trade-offs]**The lesson from this case is:**RDMA memory registration and virtual memory remapping are semantically incompatible`PYTORCH_CUDA_ALLOC_CONF`。
 
-## 踩坑点：异步调度的自动降级链
+## . Any feature involving GPU memory pinning (KV transfer, NCCL registered buffers, etc.) must ensure that the underlying physical pages will not be silently moved by the allocator. When troubleshooting such issues, if you see RDMA transfer fail on the first cross-node communication, the first reaction should be to check
 
-`__post_init__` 中关于 `async_scheduling` 的处理逻辑 [FACT:vllm/config/vllm.py:1544-1635](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1544-L1635) 展示了一个精心设计的**自动降级链**。
+`__post_init__`Pitfall: The automatic degradation chain of asynchronous scheduling`async_scheduling`in[FACT:vllm/config/vllm.py:1544-1635]regarding the handling logic of**demonstrates a carefully designed**。
 
-当用户没有显式设置 `async_scheduling`（值为 `None`）时，vLLM 会尝试自动启用它，但需要依次检查一系列不兼容条件：
+automatic degradation chain`async_scheduling`When the user has not explicitly set`None`(value is
 
-- 如果是 pooling 模型，禁用 [FACT:vllm/config/vllm.py:1578-1587](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1578-L1587)
-- 如果 speculative 方法不在支持列表中，禁用 [FACT:vllm/config/vllm.py:1588-1601](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1588-L1601)
-- 如果 `disable_padded_drafter_batch=True`，禁用 [FACT:vllm/config/vllm.py:1602-1610](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1602-L1610)
-- 如果 executor 后端不支持，禁用 [FACT:vllm/config/vllm.py:1611-1617](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1611-L1617)
-- 如果是 ROCm DeepEP 高吞吐 DBO，禁用 [FACT:vllm/config/vllm.py:1618-1624](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1618-L1624)
-- 如果是 PP > 1 且使用 V1 Model Runner，禁用 [FACT:vllm/config/vllm.py:1625-1633](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1625-L1633)
+- ), vLLM will try to enable it automatically, but it needs to check a series of incompatible conditions in sequence:[FACT:vllm/config/vllm.py:1578-1587]
+- If it is a pooling model, disable[FACT:vllm/config/vllm.py:1588-1601]
+- If the speculative method is not in the supported list, disable`disable_padded_drafter_batch=True`If[FACT:vllm/config/vllm.py:1602-1610]
+- , disable[FACT:vllm/config/vllm.py:1611-1617]
+- If the executor backend does not support it, disable[FACT:vllm/config/vllm.py:1618-1624]
+- If it is ROCm DeepEP high-throughput DBO, disable[FACT:vllm/config/vllm.py:1625-1633]
 
-只有所有检查都通过，才最终启用 [FACT:vllm/config/vllm.py:1639-1640](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1639-L1640)。
+If PP > 1 and the V1 Model Runner is used, disable[FACT:vllm/config/vllm.py:1639-1640]。
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个降级链的设计哲学是：**默认开启最优配置，遇到不兼容时静默降级并记录警告**。这比要求用户手动配置每个兼容性开关要友好得多。但代价是——当性能不如预期时，用户需要翻日志才能发现异步调度被自动关闭了。生产环境中如果发现吞吐量异常，建议检查启动日志中是否有 "Async scheduling will be disabled" 的警告。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design Inference and Architectural Trade-offs]**The design philosophy of this degradation chain is:**enable the optimal configuration by default, and silently degrade with a warning when incompatibilities are encountered
 
+# . This is much friendlier than requiring users to manually configure every compatibility switch. But the cost is that when performance is lower than expected, users need to dig through logs to discover that asynchronous scheduling was automatically disabled. In production, if abnormal throughput is observed, it is recommended to check whether there is an "Async scheduling will be disabled" warning in the startup logs.
 
-本章建立了 vLLM v1 的全局心智模型，核心要点：
+Chapter Summary
 
-1. **vLLM 解决的两个根本问题**：显存碎片（PagedAttention 分页管理）和批处理空转（Continuous Batching 迭代级调度）。
+1. **This chapter establishes the global mental model of vLLM v1. The core points are:**The two fundamental problems vLLM solves
 
-2. **多进程架构**：API Server（入口）→ EngineCore（调度）→ GPU Worker（执行）三层进程，通过 ZMQ 异步通信。进程数量遵循 `A + DP + N` 公式。
+2. **: memory fragmentation (PagedAttention paged management) and batch idling (Continuous Batching iteration-level scheduling).**Multi-process architecture`A + DP + N`: API Server (entry) → EngineCore (scheduling) → GPU Worker (execution), a three-layer process architecture communicating asynchronously through ZMQ. The number of processes follows the
 
-3. **四层分层模型**：入口层负责预处理，引擎核心层负责调度决策，执行器层负责分布式策略，Worker 层负责 GPU 计算。
+3. **formula.**Four-layer hierarchical model
 
-4. **VllmConfig 是贯穿所有层的全局状态**，通过 `compute_hash()` 支持编译缓存，通过 `__post_init__` 实现跨配置项的验证与默认值推导。
+4. **: the entry layer handles preprocessing, the engine core layer handles scheduling decisions, the executor layer handles distributed strategy, and the Worker layer handles GPU computation.**VllmConfig is the global state that runs through all layers`compute_hash()`, supports compilation caching through`__post_init__`, and implements cross-configuration validation and default value inference through
 
-5. **End-to-End Request Lifecycle**：HTTP → tokenize → `EngineCoreRequest` → Scheduler → Worker forward → `EngineCoreOutput` → SSE 流式返回。
+5. **Request lifecycle**：HTTP → tokenize → `EngineCoreRequest` → Scheduler → Worker forward → `EngineCoreOutput`→ SSE streaming return.
 
+# Chapter Reflection and Self-Test
 
-Q1: 如果将 `EngineCoreRequest` 的 `msgspec.Struct` 参数从 `array_like=True, omit_defaults=True` 改为默认值（即 `array_like=False, omit_defaults=False`），在什么场景下会导致性能问题？请结合 [FACT:vllm/v1/engine/__init__.py:109-113](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L109-L113) 和 [FACT:vllm/v1/engine/__init__.py:256-260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L256-L260) 分析。
+Q1: If the`EngineCoreRequest`of`msgspec.Struct`is changed from`array_like=True, omit_defaults=True`to the default value (that is,`array_like=False, omit_defaults=False`), in what scenarios will it cause performance problems? Please analyze in combination with[FACT:vllm/v1/engine/__init__.py:109-113]and[FACT:vllm/v1/engine/__init__.py:256-260].
 
-**参考解析**：`array_like=True` 让 msgspec 用位置数组而非字典编码结构体，`omit_defaults=True` 跳过值为默认值的字段。在默认配置下，每个 `EngineCoreRequest` 会被编码为包含所有字段名的字典结构，体积可能膨胀 2-3 倍。在高并发场景下（每秒数千请求），API Server 和 EngineCore 之间的 ZMQ 消息量会显著增加，导致序列化/反序列化 CPU 开销上升和网络带宽浪费。`EngineCoreOutputs` 同样使用了这两个参数 [FACT:vllm/v1/engine/__init__.py:256-260](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/v1/engine/__init__.py#L256-L260)，而它每个 decode step 都会产生，影响更大。此外 `gc=False` 关闭 GC 跟踪，对于高频短生命周期对象能减轻 Python GC 压力。
+**Reference Analysis**：`array_like=True`makes msgspec encode structs using positional arrays instead of dictionaries,`omit_defaults=True`skips fields whose values are defaults. Under the default configuration, each`EngineCoreRequest`would be encoded as a dictionary structure containing all field names, potentially inflating the size by 2-3 times. In high-concurrency scenarios (thousands of requests per second), the volume of ZMQ messages between the API Server and EngineCore increases significantly, leading to higher CPU overhead for serialization/deserialization and wasted network bandwidth.`EngineCoreOutputs`also uses these two parameters[FACT:vllm/v1/engine/__init__.py:256-260], and it is generated at every decode step, having a greater impact. Additionally,`gc=False`disables GC tracking, which can reduce Python GC pressure for high-frequency short-lived objects.
 
-Q2: 在 `VllmConfig.__post_init__` 中，`async_scheduling` 的自动启用逻辑（[FACT:vllm/config/vllm.py:1576-1635](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1576-L1635)）采用了「依次检查不兼容条件，全部通过才启用」的策略。如果新增一个与异步调度不兼容的特性，但开发者忘记在这个检查链中添加对应的分支，会导致什么问题？请从系统行为角度分析。
+Q2: In`VllmConfig.__post_init__`,`async_scheduling`'s auto-enable logic ([FACT:vllm/config/vllm.py:1576-1635]) adopts the strategy of "checking incompatible conditions one by one, and only enabling if all pass." If a new feature incompatible with async scheduling is added, but the developer forgets to add the corresponding branch in this check chain, what problems will arise? Please analyze from the perspective of system behavior.
 
-**参考解析**：如果忘记添加检查分支，异步调度会被错误地启用。异步调度的核心假设是「当前 step 的调度决策不依赖上一步的输出」，它允许 EngineCore 在上一步 GPU 计算尚未完成时就调度下一步。如果新特性违反了这一假设（例如某个需要读取上一步 logits 的后处理逻辑），异步调度会导致数据竞争或结果错误。更隐蔽的是，这类 bug 可能只在特定并发时序下触发，难以复现。这正是为什么 [FACT:vllm/config/vllm.py:1549-1552](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L1549-L1552) 中显式启用路径采用「hard fail」策略——用户主动开启时直接报错而非静默降级，迫使开发者面对兼容性问题。
+**Reference analysis**: If the check branch is forgotten, async scheduling will be incorrectly enabled. The core assumption of async scheduling is that "the scheduling decision of the current step does not depend on the output of the previous step," which allows EngineCore to schedule the next step before the previous step's GPU computation has completed. If the new feature violates this assumption (for example, some post-processing logic that needs to read the previous step's logits), async scheduling will cause data races or incorrect results. More insidiously, such bugs may only be triggered under specific concurrency timings and are difficult to reproduce. This is exactly why[FACT:vllm/config/vllm.py:1549-1552]'s explicit enable path adopts a "hard fail" strategy—when the user actively enables it, it directly errors out rather than silently degrading, forcing developers to confront compatibility issues.
 
-Q3: `VllmConfig.compute_hash()` 的注释警告「影响计算图的字段必须加入 factors 列表」（[FACT:vllm/config/vllm.py:465-467](https://github.com/vllm-project/vllm/blob/7ba3df63cbe2e3e7aca19074bed2958311f46400/vllm/config/vllm.py#L465-L467)）。假设某个新字段 `attention_sink_tokens` 会影响 attention 计算逻辑但被遗漏在哈希中，在生产环境中会触发什么类型的故障？为什么这类故障特别危险？
+Q3: `VllmConfig.compute_hash()`'s comment warns that "fields affecting the computation graph must be added to the factors list" ([FACT:vllm/config/vllm.py:465-467]). Suppose a new field`attention_sink_tokens`affects attention computation logic but is omitted from the hash. What type of failure will this trigger in a production environment? Why is this type of failure particularly dangerous?
 
-**参考解析**：`compute_hash()` 的输出被用作 torch.compile 编译缓存的键。如果 `attention_sink_tokens` 影响计算图结构但未纳入哈希，那么当用户从 `attention_sink_tokens=0` 改为 `attention_sink_tokens=4` 时，哈希值不变，vLLM 会复用之前编译的图（不含 sink token 逻辑）。结果是模型静默地产生错误输出——不报错、不崩溃，只是结果不对。这类故障特别危险的原因在于：(1) 它不会触发任何异常或日志警告；(2) 输出仍然是「看起来合理」的文本，只是质量下降或行为异常；(3) 排查时需要对比编译缓存命中情况和实际配置差异，定位成本极高。这就是为什么注释中反复强调新字段必须评估是否影响计算图。
+**Reference analysis**：`compute_hash()`'s output is used as the key for the torch.compile compilation cache. If`attention_sink_tokens`affects the computation graph structure but is not included in the hash, then when the user changes from`attention_sink_tokens=0`to`attention_sink_tokens=4`, the hash value remains unchanged, and vLLM will reuse the previously compiled graph (without sink token logic). The result is that the model silently produces incorrect output—no error, no crash, just wrong results. This type of failure is particularly dangerous because: (1) it does not trigger any exception or log warning; (2) the output is still "plausible-looking" text, just with degraded quality or abnormal behavior; (3) troubleshooting requires comparing compilation cache hits with actual configuration differences, making localization extremely costly. This is why the comments repeatedly emphasize that new fields must be evaluated for whether they affect the computation graph.
 
-本章从一次朴素推理请求的崩溃现场出发，揭示了 vLLM 必须解决的两个根本矛盾：显存碎片与批处理空转，并给出了 PagedAttention 与 Continuous Batching 这两把钥匙。我们随后鸟瞰了 vLLM v1 的整体架构，理清了进程模型、组件分层以及请求的完整生命周期。有了这张全局地图，下一章将深入 vLLM 最核心的数据结构——Request、Sequence 和 KV Cache 的 block 管理机制，揭示 PagedAttention 如何在代码层面实现「逻辑连续、物理离散」的显存映射。
+This chapter starts from the crash site of a naive inference request, revealing two fundamental contradictions that vLLM must solve: memory fragmentation and batch idling, and provides the two keys: PagedAttention and Continuous Batching. We then take a bird's-eye view of the overall architecture of vLLM v1, clarifying the process model, component layering, and the complete lifecycle of a request. With this global map in hand, the next chapter will dive into vLLM's most core data structures—Request, Sequence, and the block management mechanism of KV Cache—revealing how PagedAttention implements "logically contiguous, physically discrete" memory mapping at the code level.

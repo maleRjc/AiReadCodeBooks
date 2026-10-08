@@ -1,18 +1,18 @@
-# Chapter 12: Tooling & Playground: Engineering Support in sfc-playground & template-explorer
+# Chapter 12: Minimal Debugging Sandbox: vite-debug and the Local Development Loop
 
+In the previous chapter, we completed the measurement loop of the size budget: size-report.js answers "how much bigger," usage-size.js answers "where it's bigger," and the workflow layer handles gatekeeping decisions. But this mechanism has an implicit prerequisite—the build artifacts themselves are reproducible. When you find that a certain package's size has abnormally inflated, or that some runtime behavior does not match expectations, you need a minimal environment that can quickly load local source code and immediately see the effect after modification. packages-private/vite-debug is that environment. It has only four files and less than 40 lines of code in total, yet it constitutes the daily practice entry point for "minimal reproduction on real source code" in the Vue core repository. This chapter will break down the construction logic of this sandbox file by file and explain why it is placed under packages-private rather than the packages directory.
 
-上一章我们完成了体积预算的度量闭环：size-report.js 回答「大了多少」，usage-size.js 回答「大在哪里」，工作流层负责门禁判定。但这套机制有一个隐含前提——构建产物本身是可复现的。当你发现某个包体积异常膨胀，或者某个运行时行为与预期不符时，你需要一个能快速加载本地源码、修改后立即看到效果的最小环境。packages-private/vite-debug 就是这个环境。它只有四个文件、总计不到 40 行代码，却构成了 Vue core 仓库中「在真实源码上做最小复现」的日常实践入口。本章将逐文件拆解这个沙盒的构造逻辑，并解释它为什么被放在 packages-private 而非 packages 目录下。
+# 1. The skeleton of the sandbox:`main.ts`and`App.vue`minimal mounting chain
 
+## Intuitive model
 
-## Intuitive Architectural Model
+If the entire Vue runtime is compared to an engine, then`vite-debug`is a "bare-metal test bench"—no shell, no dashboard, only the minimal wiring to make the engine run. Its value lies not in functional completeness, but in**eliminating all interfering variables**: when you suspect that a bug is in the reactivity system or inside the renderer, you do not want the complexity of the debugging environment itself to become a source of noise.
 
-如果把整个 Vue 运行时比作一台发动机，那么 `vite-debug` 就是一台「裸机测试台」——没有外壳、没有仪表盘，只有最少的接线让发动机转起来。它的价值不在于功能完整，而在于**排除一切干扰变量**：当你怀疑某个 bug 出在响应式系统或渲染器内部时，你不会希望调试环境本身的复杂度成为噪音源。
+## Data structures and file layout
 
-## 数据结构与文件布局
+First look at`main.ts`the entire contents of:
 
-先看 `main.ts` 的全部内容：
-
-[FACT:packages-private/vite-debug/main.ts:4-4](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/main.ts#L4-L4)
+[FACT:packages-private/vite-debug/main.ts:4-4]
 
 ```ts
 import { createApp } from 'vue'
@@ -23,20 +23,20 @@ const app = createApp(App)
 app.mount('#app')
 ```
 
-这六行代码是 Vue 应用启动的标准范式，但每一行在调试场景下都有精确的工程含义：
+These six lines of code are the standard paradigm for starting a Vue application, but each line has a precise engineering meaning in the debugging scenario:
 
-- **L1** 的 `import { createApp } from 'vue'` 中，`'vue'` 这个模块标识符最终解析到什么，完全由 `vite.config.ts` 和 `package.json` 的依赖声明决定。这是整个沙盒最关键的一环——我们稍后会看到它如何被指向本地源码。
-- **L2** 的 `import App from './App.vue'` 触发了 `@vitejs/plugin-vue` 的 SFC 编译管线：Vite 在 dev server 启动时注册了这个插件，当浏览器请求 `App.vue` 时，插件将其拆解为 `<script>`、`<template>`、`<style>` 三个虚拟模块分别编译。
-- **L4** 的 `createApp(App)` 创建应用实例，此时 Vue 内部会初始化 `app._context`、`app._instance` 等核心字段，但尚未触发任何渲染。
-- **L6** 的 `app.mount('#app')` 是真正的启动开关：它会查找 DOM 中 id 为 `app` 的容器元素，创建根组件实例，触发首次渲染。
+- **L1**In`import { createApp } from 'vue'`of`'vue'`, what this module identifier ultimately resolves to is entirely determined by the dependency declarations in`vite.config.ts`and`package.json`. This is the most critical part of the entire sandbox—we will see later how it is pointed to local source code.
+- **L2**In`import App from './App.vue'`of`@vitejs/plugin-vue`triggers the SFC compilation pipeline of`App.vue`: Vite registers this plugin when the dev server starts. When the browser requests`<script>`、`<template>`、`<style>`, the plugin splits it into
+- **L4**three virtual modules and compiles them separately.`createApp(App)`In`app._context`、`app._instance`of
+- **L6**creates the application instance. At this point, Vue internally initializes core fields such as`app.mount('#app')`, but no rendering has been triggered yet.`app`In
 
-注意这里没有 `index.html` 的引用——Vite 的约定是项目根目录下的 `index.html` 作为入口 HTML，其中包含 `<div id="app"></div>` 和 `<script type="module" src="/main.ts"></script>`。这个文件虽然不在本章的 keyFiles 中，但它是 `app.mount('#app')` 能成功的前提。
+of`index.html`is the real startup switch: it looks for the container element with id`index.html`in the DOM, creates the root component instance, and triggers the first render.`<div id="app"></div>`Note that there is no reference to`<script type="module" src="/main.ts"></script>`here—Vite's convention is that`app.mount('#app')`in the project root directory serves as the entry HTML, which contains
 
-## 场景驱动的 Walkthrough：一次点击的完整链路
+## and
 
-现在看 `App.vue`，它是这个沙盒的「实验载体」：
+. Although this file is not in this chapter's keyFiles, it is the prerequisite for`App.vue`to succeed.
 
-[FACT:packages-private/vite-debug/App.vue:4-8](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/App.vue#L4-L8)
+[FACT:packages-private/vite-debug/App.vue:4-8]
 
 ```vue
 
@@ -52,25 +52,25 @@ button {
 
 ```
 
-代入一个具象场景：**当用户在浏览器中点击按钮时，发生了什么？**
+Now look at**, which is the "experimental carrier" of this sandbox:**
 
-**第一步：SFC 编译期（dev server 启动时）**
+**Copy**
 
-`@vitejs/plugin-vue` 将 `App.vue` 编译为三个部分：
+`@vitejs/plugin-vue`Put it into a concrete scenario:`App.vue`When the user clicks the button in the browser, what happens?
 
-- `<script setup>` 块被编译为组件的 `setup()` 函数，`ref(0)` 调用返回一个 `RefImpl` 对象，其 `.value` 初始为 `0`。
-- `<template>` 块被编译为渲染函数，`{{ count }}` 被转换为 `_toDisplayString(count.value)`，`@click="count++"` 被转换为 `onClick: $event => (count.value++)`。
-- `<style>` 块被编译为 CSS 模块，通过 `<style>` 标签注入 DOM。
+- `<script setup>`Step 1: SFC compilation phase (when the dev server starts)`setup()`compiles`ref(0)`into three parts:`RefImpl`The block is compiled into the component's`.value`function,`0`。
+- `<template>`The call returns a`{{ count }}`object whose`_toDisplayString(count.value)`，`@click="count++"`is initially`onClick: $event => (count.value++)`。
+- `<style>`The block is compiled into a render function,`<style>`is converted to
 
-**第二步：首次渲染（`app.mount` 调用时）**
+**is converted to`app.mount`The block is compiled into a CSS module and injected into the DOM through**
 
-`createApp(App)` 返回的 app 实例在 `mount('#app')` 时，会创建根组件的 `ComponentInternalInstance`，执行 `setup()` 得到 `count` 的 RefImpl，然后调用渲染函数生成 VNode 树。渲染函数中读取 `count.value` 会触发 `track` 收集依赖——当前活跃的渲染副作用（`ReactiveEffect`）被记录到 `count` 的 `dep` 中。
+`createApp(App)`tags.`mount('#app')`, it creates the root component's`ComponentInternalInstance`, executes`setup()`to get`count`'s RefImpl, then calls the render function to generate the VNode tree. Reading`count.value`in the render function triggers`track`to collect dependencies—the currently active render effect (`ReactiveEffect`) is recorded in`count`'s`dep`.
 
-**第三步：点击事件（用户交互时）**
+**Step 3: Click event (during user interaction)**
 
-浏览器触发 `click` 事件，Vue 的事件处理器执行 `count.value++`。这是一个 setter 操作，触发 `trigger`：遍历 `count.dep` 中收集的副作用，调度重新渲染。由于是同步更新且不在批量队列中，渲染副作用被立即执行，重新调用渲染函数，生成新的 VNode，与旧 VNode 进行 diff，发现文本内容从 `0` 变为 `1`，更新真实 DOM 的 `textContent`。
+The browser triggers the`click`event, and Vue's event handler executes`count.value++`. This is a setter operation that triggers`trigger`: it iterates over the effects collected in`count.dep`and schedules a re-render. Since it is a synchronous update and not in a batch queue, the render effect is executed immediately, re-invoking the render function to generate a new VNode, which is diffed against the old VNode; it detects that the text content changed from`0`to`1`, and updates the real DOM's`textContent`。
 
-整个链路可以用下面的数据流图表示：
+The entire chain can be represented by the following data flow diagram:
 
 ```mermaid
 flowchart LR
@@ -89,25 +89,26 @@ flowchart LR
     track -.->|"dep 记录 ReactiveEffect"| trigger
 ```
 
-这张图的关键在于：**编译期产物和运行时行为之间的耦合点只有两个**——`ref(0)` 返回的 RefImpl 对象，以及渲染函数中对 `count.value` 的读写。这意味着如果你想调试响应式系统的某个分支（比如 `trigger` 中的调度逻辑），你只需要在这个 `App.vue` 中构造对应的读写模式即可。
+The key to this diagram is:**There are only two coupling points between compile-time artifacts and runtime behavior**——`ref(0)`the RefImpl object returned by , and the read/write of`count.value`in the render function. This means that if you want to debug a certain branch of the reactivity system (for example,`trigger`the scheduling logic in ), you only need to construct the corresponding read/write pattern in this`App.vue`.
 
-## 设计思考：为什么是 `ref` 而不是 `reactive`？
+## Design consideration: why`ref`instead of`reactive`？
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 选择 `ref(0)` 而非 `reactive({ count: 0 })` 作为默认示例，隐含了一个调试优先的考量：`ref` 的 `.value` 访问路径更短，在调试器中展开 `RefImpl` 对象时能直接看到 `_value`、`dep`、`__v_isRef` 等内部字段，而 `reactive` 返回的 Proxy 对象在控制台中展开会触发 getter，可能干扰对原始状态的观察。对于「最小复现」场景，减少一层 Proxy 间接层意味着更少的变量。
+> **[Design Inference & Architectural Trade-offs]**
+> Choosing`ref(0)`rather than`reactive({ count: 0 })`as the default example implies a debugging-first consideration:`ref`'s`.value`access path is shorter, and when expanding the`RefImpl`object in the debugger, you can directly see internal fields such as`_value`、`dep`、`__v_isRef`, whereas expanding the Proxy object returned by`reactive`in the console triggers the getter, which may interfere with observing the original state. For the "minimal reproduction" scenario, reducing one layer of Proxy indirection means fewer variables.
 
 ---
 
+# 2. Alias resolution:`vite.config.ts`and`package.json`how to point`'vue'`to local source code
 
-## Intuitive Architectural Model
+## Intuitive model
 
-`vite.config.ts` 只有六行，但它是整个沙盒的「路由中枢」——决定了 `import { createApp } from 'vue'` 中的 `'vue'` 最终加载的是 npm 上的发布版本，还是仓库中正在开发的源码。如果没有正确的别名配置，你在 `App.vue` 中修改的代码可能根本没有触发你正在调试的那份 Vue 源码，调试就变成了「对着错误的靶子开枪」。
+`vite.config.ts`has only six lines, but it is the "routing hub" of the entire sandbox—it determines whether the`import { createApp } from 'vue'`in`'vue'`ultimately loads the published version on npm or the source code under development in the repository. Without the correct alias configuration, the code you modify in`App.vue`may not trigger the Vue source code you are debugging at all, and debugging becomes "shooting at the wrong target."
 
-## 数据结构与解析链路
+## Data structures and resolution chain
 
-先看 `vite.config.ts`：
+First look at`vite.config.ts`：
 
-[FACT:packages-private/vite-debug/vite.config.ts:4-6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/vite.config.ts#L4-L6)
+[FACT:packages-private/vite-debug/vite.config.ts:4-6]
 
 ```ts
 import { defineConfig } from 'vite'
@@ -118,9 +119,9 @@ export default defineConfig({
 })
 ```
 
-这里**没有显式的 `resolve.alias` 配置**。那么 `'vue'` 是如何被解析到本地源码的？答案在 `package.json` 中：
+Here**there is no explicit`resolve.alias`configuration**. So how is`'vue'`resolved to the local source code? The answer is in`package.json`:
 
-[FACT:packages-private/vite-debug/package.json:1-15](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L1-L15)
+[FACT:packages-private/vite-debug/package.json:1-15]
 
 ```json
 {
@@ -140,16 +141,16 @@ export default defineConfig({
 }
 ```
 
-关键在 **L13**：`"vue": "workspace:*"`。这是 pnpm workspace 协议的声明，表示 `vite-debug` 依赖的是 monorepo 中名为 `vue` 的本地包，而非 npm registry 上的版本。pnpm 会在 `node_modules/vue` 创建符号链接，指向 `packages/vue`（Vue 的主包目录）。
+The key is**L13**：`"vue": "workspace:*"`. This is the declaration of the pnpm workspace protocol, indicating that`vite-debug`depends on the local package named`vue`in the monorepo, rather than the version on the npm registry. pnpm will create a symlink in`node_modules/vue`, pointing to`packages/vue`(Vue's main package directory).
 
-但这还不够——`packages/vue` 的 `package.json` 中 `main`/`module`/`exports` 字段通常指向**构建产物**（如 `dist/vue.runtime.esm-bundler.js`），而不是 `src/` 下的源码。如果你修改了 `packages/runtime-core/src/renderer.ts`，但没有重新构建，Vite 加载的仍然是旧的 `dist` 文件。
+But this is not enough—`packages/vue`'s`package.json`in`main`/`module`/`exports`the**field usually points to**build artifacts`dist/vue.runtime.esm-bundler.js`(such as`src/`), rather than the source code under`packages/runtime-core/src/renderer.ts`. If you modify`dist`but do not rebuild, Vite will still load the old
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这就是为什么 Vue core 仓库的 `packages/vue/package.json` 中通常会配置 `"development"` 条件导出或类似的源码入口映射——在 dev 模式下，Vite 的 `resolve.conditions` 会优先匹配 `development` 条件，从而加载 `src/index.ts` 而非 `dist`。这个机制使得 `vite-debug` 无需显式配置 alias，就能在修改源码后通过 HMR 立即看到效果。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]`packages/vue/package.json`This is why Vue core repository's`"development"`usually configures`resolve.conditions`conditional exports or similar source entry mappings—in dev mode, Vite's`development`will preferentially match the`src/index.ts`condition, thereby loading`dist`instead of`vite-debug`. This mechanism allows
 
-## 场景驱动的 Walkthrough：一次 `import 'vue'` 的解析过程
+## to see the effect immediately through HMR after modifying the source code without explicitly configuring an alias.`import 'vue'`Scenario-driven Walkthrough: a resolution process of
 
-代入场景：**当 Vite dev server 收到浏览器对 `main.ts` 的请求，遇到 `import { createApp } from 'vue'` 时，解析链路是怎样的？**
+Put yourself in the scenario:**When the Vite dev server receives the browser's request for`main.ts`and encounters`import { createApp } from 'vue'`, what is the resolution chain?**
 
 ```mermaid
 flowchart TD
@@ -166,122 +167,125 @@ flowchart TD
     rebuild --> verify
 ```
 
-这个流程图揭示了一个关键分支：**如果 `development` 条件没有正确配置，修改源码后浏览器不会热更新**，你会陷入「改了代码但行为没变」的困惑。排查方法是在浏览器 DevTools 的 Network 面板中查看 `vue` 模块的实际加载路径——如果看到 `dist/` 路径，说明源码入口映射未生效。
+This flowchart reveals a key branch:**If the`development`condition is not configured correctly, the browser will not hot-update after modifying the source code**, and you will fall into the confusion of "I changed the code but the behavior did not change." The troubleshooting method is to check the actual loading path of the`vue`module in the Network panel of the browser DevTools—if you see the`dist/`path, it means the source entry mapping is not in effect.
 
-## 设计思考：为什么不在 `vite.config.ts` 中显式写 alias？
+## Design consideration: why not explicitly write an alias in`vite.config.ts`?
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 一个自然的疑问是：为什么不直接在 `vite.config.ts` 中写 `resolve: { alias: { vue: '../../packages/vue/src/index.ts' } }`？这样做虽然直观，但有两个问题：
+> **[Design Inference & Architectural Trade-offs]**
+> A natural question is: why not directly write`vite.config.ts`in`resolve: { alias: { vue: '../../packages/vue/src/index.ts' } }`? Although this is intuitive, it has two problems:
 
-1. **破坏子路径导入**：Vue 的公开 API 包含 `vue/server-renderer`、`vue/compiler-sfc` 等子路径。如果只 alias 了 `'vue'` 本身，子路径导入仍然会走 `dist`，导致部分模块来自源码、部分来自产物，行为不一致。
+1. **Breaking subpath imports**: Vue's public API includes subpaths such as`vue/server-renderer`、`vue/compiler-sfc`. If only`'vue'`itself is aliased, subpath imports will still go through`dist`, causing some modules to come from source code and some from build artifacts, resulting in inconsistent behavior.
 
-2. **绕过条件导出机制**：Vue 的 `package.json` 中 `exports` 字段已经定义了完整的条件导出映射（`development`/`production`/`browser`/`node` 等），alias 会覆盖这套机制，使得调试环境与真实用户环境的解析行为产生偏差。
+2. **Bypassing the conditional exports mechanism**: Vue's`package.json`in`exports`the`development`/`production`/`browser`/`node`field already defines a complete conditional export mapping (
 
-因此，`vite-debug` 选择「信任 workspace 协议 + 条件导出」的组合，让解析链路尽可能接近真实使用场景。这也解释了为什么 `package.json` 中 `"vue": "workspace:*"` 是必需的——它是触发 pnpm 符号链接、进而让 Vite 能通过 `node_modules/vue` 找到 `packages/vue` 的前提。
+, etc.), and alias will override this mechanism, causing the resolution behavior in the debugging environment to deviate from the real user environment.`vite-debug`Therefore,`package.json`chooses the combination of "trusting the workspace protocol + conditional exports" to make the resolution chain as close as possible to the real usage scenario. This also explains why`"vue": "workspace:*"`in`node_modules/vue`is necessary—it is the prerequisite for triggering the pnpm symlink and enabling Vite to find`packages/vue`through
 
-## 生产踩坑：`catalog:` 协议与版本漂移
+## .`catalog:`Production pitfalls:
 
-注意 `package.json` 中 **L11-L12** 使用了 `"catalog:"` 协议：
+protocol and version drift`package.json`Note that**L11-L12**in`"catalog:"`uses the
 
 ```json
 "@vitejs/plugin-vue": "catalog:",
 "vite": "catalog:",
 ```
 
-这是 pnpm 的 catalog 特性，表示版本号由 `pnpm-workspace.yaml` 中的 `catalog` 字段统一管理。它的作用是**避免 monorepo 中多个包引用同一依赖时出现版本漂移**。
+Copy`pnpm-workspace.yaml`This is pnpm's catalog feature, indicating that the version number is uniformly managed by the`catalog`field in**. Its purpose is to**。
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 在调试场景下，这带来一个隐蔽的陷阱：如果你在 `vite-debug` 中遇到一个疑似 Vite 或 plugin-vue 的 bug，想临时升级版本验证，直接修改 `package.json` 中的 `catalog:` 是无效的——你需要修改 `pnpm-workspace.yaml` 中的 catalog 定义，这会影响所有使用该 catalog 的包。正确的做法是临时改为显式版本号（如 `"vite": "5.0.0"`），验证完毕后再改回 `catalog:`。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]`vite-debug`When encountering a suspected bug in Vite or plugin-vue and wanting to temporarily upgrade the version to verify, directly modifying`package.json`the`catalog:`in is ineffective—you need to modify`pnpm-workspace.yaml`the catalog definition in, which affects all packages using that catalog. The correct approach is to temporarily change it to an explicit version number (e.g.,`"vite": "5.0.0"`), and after verification, change it back to`catalog:`。
 
 ---
 
+# III.`packages-private`Isolation design: Why the debug sandbox is not published externally
 
-## Intuitive Architectural Model
+## Intuitive model
 
-`packages-private` 目录就像公司的「内部试验室」——里面的样品不对外销售，只用于测试和演示。它与 `packages` 目录物理隔离，避免调试代码被误发布到 npm。
+`packages-private`The directory is like the company's "internal laboratory"—the samples inside are not sold externally, only used for testing and demonstration. It is physically isolated from the`packages`directory to prevent debug code from being accidentally published to npm.
 
-## 隔离机制的三层保障
+## Three layers of isolation guarantees
 
-**第一层：目录隔离**
+**First layer: Directory isolation**
 
-`packages-private/vite-debug` 不在 `packages/` 下，而 `pnpm-workspace.yaml` 通常会将 `packages/*` 和 `packages-private/*` 都声明为 workspace 成员，但发布脚本（如 `scripts/release.js`）只会遍历 `packages/` 下的包。
+`packages-private/vite-debug`is not under`packages/`, while`pnpm-workspace.yaml`typically declares both`packages/*`and`packages-private/*`as workspace members, but the publish script (e.g.,`scripts/release.js`) only traverses packages under`packages/`.
 
-**第二层：`private: true`**
+**Second layer:`private: true`**
 
-[FACT:packages-private/vite-debug/package.json:3](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L3)
+[FACT:packages-private/vite-debug/package.json:3]
 
 ```json
 "private": true,
 ```
 
-这一行是 npm/pnpm 的硬性约束：标记为 `private` 的包**永远无法被 `npm publish` 发布**，即使手动执行也会被拒绝。这是防止误发布的最后一道防线。
+This line is a hard constraint of npm/pnpm: packages marked as`private`can**never be published by`npm publish`**, even manual execution will be rejected. This is the last line of defense against accidental publishing.
 
-**第三层：无 `version` 字段**
+**Third layer: No`version`field**
 
-注意 `package.json` 中没有 `version` 字段。npm 规范要求可发布的包必须有 `version`，缺少该字段的包在 `npm publish` 时会报错。这是「双重保险」——即使 `private` 被误删，缺少 `version` 仍会阻止发布。
+Note that`package.json`does not have the`version`field. The npm specification requires that publishable packages must have`version`, and packages missing this field will error during`npm publish`. This is "double insurance"—even if`private`is accidentally deleted, the missing`version`will still prevent publishing.
 
-## 设计思考：调试沙盒与 Playground 的分工
+## Design thinking: The division of labor between the debug sandbox and Playground
 
-Vue core 仓库中已经有一个功能完整的 `SFC Playground`（第 7 章讨论过），为什么还需要 `vite-debug`？
+The Vue core repository already has a fully functional`SFC Playground`(discussed in Chapter 7), so why is`vite-debug`？
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 两者的定位截然不同：
+> **[Design Inference & Architectural Trade-offs]**
+> Their positioning is completely different:
 
-| 维度 | SFC Playground | vite-debug |
+| Dimension | SFC Playground | vite-debug |
 | --- | --- | --- |
-| 运行环境 | 浏览器内（编译也在浏览器） | Node.js + 浏览器 |
-| 源码加载 | 通过 CDN 或预构建产物 | 直接加载本地源码 |
-| 调试能力 | 受限于浏览器沙盒 | 可用 Node.js 调试器、断点 |
-| 修改源码 | 不支持 | 支持 HMR |
-| 适用场景 | 验证编译输出、分享复现 | 调试运行时内部行为 |
+| Runtime environment | In-browser (compilation also in browser) | Node.js + browser |
+| Source loading | Via CDN or prebuilt artifacts | Directly loads local source code |
+| Debugging capability | Limited by browser sandbox | Can use Node.js debugger, breakpoints |
+| Modify source code | Not supported | Supports HMR |
+| Applicable scenarios | Verify compilation output, share reproductions | Debug runtime internal behavior |
 
-`vite-debug` 的核心价值在于**它运行在真实的 Node.js 环境中**，你可以用 `node --inspect` 附加调试器，在 `packages/reactivity/src/effect.ts` 中打断点，观察 `ReactiveEffect` 的创建和调度过程。这是 Playground 无法提供的。
+`vite-debug`The core value of**is that it runs in a real Node.js environment**, you can use`node --inspect`to attach a debugger, set breakpoints in`packages/reactivity/src/effect.ts`, and observe`ReactiveEffect`the creation and scheduling process. This is something Playground cannot provide.
 
-## 生产踩坑：HMR 边界与状态丢失
+## Production pitfalls: HMR boundaries and state loss
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 使用 `vite-debug` 调试时，一个常见的困惑是：修改 `App.vue` 中的 `count` 初始值后，浏览器中的计数没有重置。这是因为 Vite 的 HMR 对 `<script setup>` 块的处理是**保留组件状态、只替换渲染函数**。如果你需要完全重置状态，需要手动刷新页面，或者在 `App.vue` 中添加 `import.meta.hot?.invalidate()` 强制整页刷新。
+> **[Design Inference & Architectural Trade-offs]**
+> When using`vite-debug`for debugging, a common confusion is: after modifying`App.vue`the initial value of`count`in, the count in the browser is not reset. This is because Vite's HMR handling of`<script setup>`blocks is to**preserve component state and only replace the render function**. If you need to fully reset state, you need to manually refresh the page, or add`App.vue`in`import.meta.hot?.invalidate()`to force a full page refresh.
 
-另一个陷阱是：当你修改 `packages/runtime-core/src/` 下的源码时，HMR 的传播链路可能不会自动触发——因为 `vite-debug` 的 HMR 边界定义在 `App.vue` 层面，而 `packages/` 下的源码变更需要通过 Vite 的模块图传播。如果发现修改源码后浏览器无反应，检查 Vite 终端输出是否有 `hmr update` 日志；如果没有，可能需要重启 dev server。
-
----
-
-
-`packages-private/vite-debug` 用四个文件、不到 40 行代码，构建了一个完整的调试闭环：
-
-1. **`main.ts`** 提供最小挂载链路：`createApp(App).mount('#app')`，排除一切非必要初始化逻辑。
-
-2. **`App.vue`** 作为实验载体：`ref` + 模板插值 + 事件处理，覆盖响应式系统的主路径。
-
-3. **`vite.config.ts` + `package.json`** 通过 `workspace:*` 协议和条件导出，将 `'vue'` 解析到本地源码，实现「改源码即生效」。
-
-4. **`packages-private` + `private: true` + 无 `version`** 三层隔离，确保调试代码不会被误发布。
-
-这个沙盒的工程哲学是：**调试环境本身的复杂度应该趋近于零，把所有的复杂度留给被调试的源码**。当你在 `packages/reactivity` 中遇到一个难以复现的 bug 时，`vite-debug` 提供了一个可以随意修改、立即验证的实验台。
-
-
-Q1: 如果将 `package.json` 中的 `"vue": "workspace:*"` 改为 `"vue": "^3.4.0"`，在 `vite-debug` 中修改 `packages/reactivity/src/ref.ts` 后，浏览器中的行为会发生什么变化？为什么？
-
-**参考解析**：改为 `"^3.4.0"` 后，pnpm 会从 npm registry 下载 Vue 3.4.x 的发布版本，而非链接到本地 `packages/vue` [FACT:packages-private/vite-debug/package.json:13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L13)。此时 `import { createApp } from 'vue'` 解析到的是 `node_modules/.pnpm/vue@3.4.x/node_modules/vue/dist/vue.runtime.esm-bundler.js`，即预构建产物。修改 `packages/reactivity/src/ref.ts` 不会触发任何 HMR，因为 Vite 的模块图中根本不包含这个文件。浏览器中运行的仍然是 npm 版本的 `ref` 实现。这个实验反向验证了 `workspace:*` 是源码级调试的必要条件。
-
-Q2: `App.vue` 中 `<style>` 块没有加 `scoped`，如果在这个沙盒中同时挂载两个组件实例，样式会发生什么？这与 `vite-debug` 的调试目标有何关系？
-
-**参考解析**：没有 `scoped` 时，`button { color: red }` 是全局样式 [FACT:packages-private/vite-debug/App.vue:4-8](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/App.vue#L4-L8)，会作用于页面中所有 `<button>` 元素。如果挂载两个组件实例，两个实例的按钮都会变红。这与调试目标的关系在于：`vite-debug` 的定位是「最小复现」，而非「样式隔离验证」。省略 `scoped` 减少了编译期注入 `data-v-xxx` 属性的变量，使得调试器中的 DOM 结构更干净。如果你需要调试 `scoped` 样式的编译逻辑，应该显式添加 `scoped` 并观察 `@vitejs/plugin-vue` 生成的属性注入代码。
-
-Q3: 假设你在 `packages/runtime-core/src/renderer.ts` 的 `patch` 函数中加了一行 `console.log`，但浏览器控制台没有输出。请列出至少三种可能的原因，并说明如何逐一排查。
-
-**参考解析**：
-
-原因一：**源码入口未生效**。`'vue'` 解析到了 `dist` 产物而非 `src`。排查：在 DevTools Network 面板查看 `vue` 模块的加载路径，如果是 `dist/` 开头，说明条件导出未命中 `development` 条件 [FACT:packages-private/vite-debug/package.json:13](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/packages-private/vite-debug/package.json#L13)。
-
-原因二：**HMR 未传播**。Vite 的模块图没有将 `packages/runtime-core/src/renderer.ts` 的变更传播到 `vite-debug`。排查：查看 Vite 终端是否有 `hmr update` 日志；如果没有，重启 dev server。
-
-原因三：**`patch` 函数未被调用**。如果当前页面没有触发任何 DOM 更新（比如没有点击按钮），`patch` 可能只在首次挂载时执行一次，而首次挂载发生在你添加 `console.log` 之前。排查：刷新页面，或在 `App.vue` 中添加一个触发更新的操作。
-
-原因四（补充）：**构建缓存**。Vite 的依赖预构建缓存（`node_modules/.vite`）可能仍然使用旧版本。排查：删除 `node_modules/.vite` 后重启。
+Another trap is: when you modify source code under`packages/runtime-core/src/`, the HMR propagation chain may not automatically trigger—because`vite-debug`the HMR boundary is defined at the`App.vue`level, while source changes under`packages/`need to propagate through Vite's module graph. If you find that the browser does not respond after modifying source code, check whether the Vite terminal output has`hmr update`logs; if not, you may need to restart the dev server.
 
 ---
 
-体积预算告诉你「问题存在」，`vite-debug` 让你「亲手复现问题」。但当你试图把这个沙盒模式推广到整个 monorepo 时，会遇到一系列边界条件：workspace 协议在 CI 环境下的解析差异、`catalog:` 版本锁定的升级困境、`packages-private` 与 `packages` 之间的依赖方向约束……下一章将进入架构权衡与避坑指南，系统梳理 monorepo 工程化在真实项目中暴露的边界条件。
+# Chapter summary
 
-至此，我们完成了从体积度量到最小复现的工程闭环：vite-debug 用极简的四个文件，把「在真实源码上快速验证」变成了日常可用的实践。但当你真正开始复刻这套体系时，会发现更多隐藏的权衡——为什么 packages-private 必须与 packages 物理隔离？为什么枚举内联必须在 Rollup 之前完成？下一章将汇总前十二章暴露的关键决策点与生产踩坑记录，为你提供一份完整的避坑清单与决策依据。
+`packages-private/vite-debug`uses four files and less than 40 lines of code to build a complete debugging loop:
+
+1. **`main.ts`**provides the minimal mounting chain:`createApp(App).mount('#app')`, excluding all unnecessary initialization logic.
+
+2. **`App.vue`**serves as the experimental carrier:`ref`+ template interpolation + event handling, covering the main path of the reactivity system.
+
+3. **`vite.config.ts` + `package.json`**Through the`workspace:*`protocol and conditional exports,`'vue'`is resolved to local source code, achieving "source changes take effect immediately."
+
+4. **`packages-private` + `private: true`+ no`version`**three-layer isolation ensures that debug code will not be accidentally published.
+
+The engineering philosophy of this sandbox is:**the complexity of the debugging environment itself should approach zero, leaving all complexity to the source code being debugged**. When you encounter a hard-to-reproduce bug in`packages/reactivity`,`vite-debug`provides an experimental bench that can be modified freely and verified immediately.
+
+# Chapter review and self-test
+
+Q1: If you change`package.json`the`"vue": "workspace:*"`in to`"vue": "^3.4.0"`, after modifying`vite-debug`in`packages/reactivity/src/ref.ts`, what will happen to the behavior in the browser? Why?
+
+**Reference analysis**: After changing to`"^3.4.0"`, pnpm will download the published version of Vue 3.4.x from the npm registry instead of linking to the local`packages/vue` [FACT:packages-private/vite-debug/package.json:13]. At this point,`import { createApp } from 'vue'`resolves to`node_modules/.pnpm/vue@3.4.x/node_modules/vue/dist/vue.runtime.esm-bundler.js`, i.e., the prebuilt artifact. Modifying`packages/reactivity/src/ref.ts`will not trigger any HMR, because Vite's module graph does not include this file at all. What runs in the browser is still the npm version of the`ref`implementation. This experiment inversely verifies that`workspace:*`is a necessary condition for source-level debugging.
+
+Q2: `App.vue`The`<style>`block in does not add`scoped`. If two component instances are mounted simultaneously in this sandbox, what will happen to the styles? What does this have to do with`vite-debug`the debugging goal?
+
+**Reference analysis**: Without`scoped`,`button { color: red }`is global style[FACT:packages-private/vite-debug/App.vue:4-8], and will affect all`<button>`elements in the page. If two component instances are mounted, the buttons of both instances will turn red. The relationship with the debugging goal is:`vite-debug`is positioned as "minimal reproduction," not "style isolation verification." Omitting`scoped`reduces the variables injected at compile time for the`data-v-xxx`attribute, making the DOM structure in the debugger cleaner. If you need to debug`scoped`the compilation logic of styles, you should explicitly add`scoped`and observe`@vitejs/plugin-vue`the generated attribute injection code.
+
+Q3: Suppose you add a line`packages/runtime-core/src/renderer.ts`in the`patch`function of`console.log`, but there is no output in the browser console. Please list at least three possible reasons and explain how to troubleshoot them one by one.
+
+**Reference analysis**：
+
+Reason one:**The source entry did not take effect**。`'vue'`resolved to the`dist`artifact rather than`src`. Troubleshooting: In the DevTools Network panel, check the loading path of the`vue`module. If it starts with`dist/`, it means the conditional export did not match`development`condition[FACT:packages-private/vite-debug/package.json:13]。
+
+Cause 2:**HMR not propagated**. Vite's module graph did not propagate changes from`packages/runtime-core/src/renderer.ts`to`vite-debug`. Troubleshooting: Check whether the Vite terminal has`hmr update`logs; if not, restart the dev server.
+
+Cause 3:**`patch`function not called**. If the current page does not trigger any DOM update (for example, no button is clicked),`patch`may only execute once on first mount, and the first mount happened before you added`console.log`. Troubleshooting: Refresh the page, or add an operation in`App.vue`that triggers an update.
+
+Cause 4 (supplementary):**Build cache**. Vite's dependency pre-bundling cache (`node_modules/.vite`) may still use the old version. Troubleshooting: Delete`node_modules/.vite`and restart.
+
+---
+
+The size budget tells you "the problem exists,"`vite-debug`and lets you "reproduce the problem yourself." But when you try to generalize this sandbox mode to the entire monorepo, you will encounter a series of boundary conditions: differences in resolving the workspace protocol in CI environments,`catalog:`the upgrade dilemma of version locking,`packages-private`and the dependency direction constraints between`packages`and
+
+... The next chapter will move into architectural trade-offs and a pitfall-avoidance guide, systematically sorting out the boundary conditions exposed by monorepo engineering in real projects.

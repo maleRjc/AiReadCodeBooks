@@ -431,13 +431,57 @@
   function updateLangLinks(chId) {
     if (!chId) return;
     const targetHash = '#' + chId.replace(/^#/, '');
-    document.querySelectorAll('.lang-dropdown-item[data-base]').forEach(item => {
-      const base = item.getAttribute('data-base') || '';
-      item.setAttribute('href', base + targetHash);
+    const pathname = window.location.pathname;
+    const isEn = pathname.includes('/en/') || pathname.endsWith('/en') || (document.documentElement.getAttribute('lang') || '').startsWith('en');
+
+    document.querySelectorAll('.lang-dropdown-item').forEach(item => {
+      const lang = item.getAttribute('data-lang');
+      if (lang === 'zh') {
+        item.setAttribute('href', isEn ? ('../index.html' + targetHash) : targetHash);
+      } else if (lang === 'en') {
+        item.setAttribute('href', isEn ? targetHash : ('en/index.html' + targetHash));
+      }
     });
   }
 
-  // 5. Language Dropdown Toggle
+  // 5. Language Switching Engine
+  window.switchLanguage = function (targetLang, e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const currentHash = window.location.hash || '#ch-01';
+    const chId = currentHash.replace(/^#/, '');
+    const pathname = window.location.pathname;
+    const isEn = /\/en(\/index\.html|\/)?$/.test(pathname) || (document.documentElement.getAttribute('lang') || '').startsWith('en');
+
+    if ((targetLang === 'en' && isEn) || (targetLang === 'zh' && !isEn)) {
+      const dd = document.getElementById('lang-dropdown');
+      if (dd) {
+        dd.classList.remove('open');
+        const btn = dd.querySelector('.lang-dropdown-btn');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      }
+      return;
+    }
+
+    let targetUrl = '';
+    if (targetLang === 'zh') {
+      targetUrl = pathname.replace(/\/en(\/index\.html|\/)?$/, '/index.html') + '#' + chId;
+    } else {
+      if (pathname.endsWith('/index.html')) {
+        targetUrl = pathname.replace(/\/index\.html$/, '/en/index.html') + '#' + chId;
+      } else if (pathname.endsWith('/')) {
+        targetUrl = pathname + 'en/index.html#' + chId;
+      } else {
+        targetUrl = pathname + '/en/index.html#' + chId;
+      }
+    }
+
+    window.location.href = targetUrl;
+  };
+
+  // 6. Language Dropdown Toggle
   window.toggleLangMenu = function (e) {
     if (e) {
       e.preventDefault();

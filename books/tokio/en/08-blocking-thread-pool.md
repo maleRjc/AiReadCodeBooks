@@ -1,52 +1,53 @@
-# Chapter 08: Blocking Thread Pool: spawn_blocking & Worker Thread Isolation
+# Chapter 8: Blocking and Bridging: spawn_blocking Thread Pool and the Boundaries of block_on
 
+In the previous chapter we saw that the key reason async Mutex and channels can wait without occupying a thread is that they store the Waker in the wait queue, and once the condition is satisfied the waker reschedules the task. But all of this presupposes that the task can voluntarily yield the thread when Pending. Once code calls std::fs::read, libsqlite3, or a pure CPU compression loop, it will monopolize the worker thread until it returns, during which all other tasks on that thread starve. Tokio's solution is to outsource such work to a separate blocking thread pool, and use block_on to drive Futures in non-async contexts. This chapter dissects these two boundaries.
 
-上一章我们看到，异步 Mutex 和通道之所以能在等待时不占用线程，关键在于把 Waker 存进等待队列，等条件满足后再由唤醒者重新调度任务。但这一切的前提是任务能在 Pending 时主动让出线程。一旦代码调用 std::fs::read、libsqlite3 或纯 CPU 压缩循环，它就会霸占 worker 线程直到返回，期间该线程上的其他任务全部饿死。Tokio 的解法是把这类工作外包给独立的阻塞线程池，并用 block_on 在非异步上下文里驱动 Future。本章拆解这两条边界。
+# 8.1 Memory Layout of the Blocking Thread Pool: Inner and the Dual-Implementation Queue
 
+**Intuitive Model**：`spawn_blocking`The thread pool is like a restaurant's "outsourced helper pool." The front-of-house waiters (worker threads) only handle taking orders and delivering dishes; when they encounter a dish that needs slow stewing, they write a work order and toss it into the kitchen's pass-through window (queue), and the helpers (blocking threads) take orders from the window. Without this pool, the waiters would have to cook themselves, and the whole restaurant would grind to a halt.
 
-**Intuitive Architectural Model**：`spawn_blocking` 线程池就像餐厅的「外包帮工池」。前台服务员（worker 线程）只负责点单和传菜，遇到需要慢炖的菜就写一张工单丢进后厨的传菜窗口（队列），帮工（阻塞线程）从窗口取单。若没有这个池子，服务员就得亲自下厨，整个餐厅停摆。
+**Core Structures**. The entire pool is held by`BlockingPool`which stores only two things: a cloneable`Spawner`(submission entry) and a`shutdown_rx`(shutdown signal receiver)[FACT:tokio/src/runtime/blocking/pool.rs:20-23]。`Spawner`internally is`Arc<Inner>`, all submitters share the same state[FACT:tokio/src/runtime/blocking/pool.rs:26-28]。
 
-**核心结构**。整个池子由 `BlockingPool` 持有，它只存两样东西：一个可克隆的 `Spawner`（投递入口）和一个 `shutdown_rx`（关闭信号接收端）[FACT:tokio/src/runtime/blocking/pool.rs:20-23](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L20-L23)。`Spawner` 内部是 `Arc<Inner>`，所有投递者共享同一份状态 [FACT:tokio/src/runtime/blocking/pool.rs:26-28](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L26-L28)。
+`Inner`is the entire state of the pool, and its fields are worth examining one by one[FACT:tokio/src/runtime/blocking/pool.rs:77-104]：
 
-`Inner` 是池子的全部状态，字段值得逐个看 [FACT:tokio/src/runtime/blocking/pool.rs:77-104](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L77-L104)：
+- `inner_impl: InnerImpl`: the implementation of queue + notification + lock topology, which is an enum with`Locked`and`Sharded`two variants[FACT:tokio/src/runtime/blocking/pool.rs:107-110]. This is the most critical abstraction in this chapter—it unifies the two topologies of "single-lock queue" and "sharded queue" under one interface.
+- `thread_cap: usize`: the upper limit on the number of threads, i.e.`max_blocking_threads`。
+- `scheduler_threads: usize`: the number of scheduler worker threads, used to subtract in metrics so that`num_blocking_threads`only counts blocking threads[FACT:tokio/src/runtime/blocking/pool.rs:455-460]。
+- `keep_alive: Duration`: the idle thread survival duration, default`KEEP_ALIVE = 10s` [FACT:tokio/src/runtime/blocking/pool.rs:231]。
+- `metrics: SpawnerMetrics`: three atomic counters—`num_threads`、`num_idle_threads`、`queue_depth` [FACT:tokio/src/runtime/blocking/pool.rs:31-35]。
 
-- `inner_impl: InnerImpl`：队列 + 通知 + 锁拓扑的实现，是一个枚举，有 `Locked` 和 `Sharded` 两个变体 [FACT:tokio/src/runtime/blocking/pool.rs:107-110](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L107-L110)。这是本章最关键的抽象——它把「单锁队列」和「分片队列」两种拓扑统一在一个接口下。
-- `thread_cap: usize`：线程数上限，即 `max_blocking_threads`。
-- `scheduler_threads: usize`：调度器 worker 线程数，用于在指标里扣除，使 `num_blocking_threads` 只统计阻塞线程 [FACT:tokio/src/runtime/blocking/pool.rs:455-460](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L455-L460)。
-- `keep_alive: Duration`：空闲线程存活时长，默认 `KEEP_ALIVE = 10s` [FACT:tokio/src/runtime/blocking/pool.rs:231](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L231)。
-- `metrics: SpawnerMetrics`：三个原子计数器——`num_threads`、`num_idle_threads`、`queue_depth` [FACT:tokio/src/runtime/blocking/pool.rs:31-35](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L31-L35)。
+> **[Design Inference & Architectural Trade-offs]**
+> **Why use atomic counters instead of fields inside the lock?** `num_idle_threads`is read on the hot path of`spawn_task`(to determine whether idle threads need to be woken); if it were hidden inside`Mutex`, every submission would have to acquire the lock first and then read. By making it`MetricAtomicUsize`, the submission path can do a quick check first without holding the queue lock. The cost is that there is no atomicity guarantee between these counts and the queue state, so the code uses the`num_notify`counter to compensate—see below.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **为什么用原子计数器而不是锁内字段？**  `num_idle_threads` 在 `spawn_task` 的热路径上被读取（判断是否需要唤醒空闲线程），如果它藏在 `Mutex` 里，每次投递都要先拿锁再读。把它做成 `MetricAtomicUsize` 后，投递路径可以在不持有队列锁的情况下先做一次快速判断。代价是这些计数与队列状态之间没有原子性保证，因此代码里用 `num_notify` 计数器来补偿——见下文。
+**Thread Management State**。`ThreadManagementState`is extracted separately for reuse by both queue implementations[FACT:tokio/src/runtime/blocking/pool.rs:135-150]：
 
-**线程管理状态**。`ThreadManagementState` 被单独抽出来，供两种队列实现复用 [FACT:tokio/src/runtime/blocking/pool.rs:135-150](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L135-L150)：
+- `shutdown: bool`: shutdown flag.
+- `shutdown_tx: Option<shutdown::Sender>`: each worker thread holds a clone, and after all are dropped`shutdown_rx`receives the notification.
+- `last_exiting_thread: Option<JoinHandle<()>>`: the handle of the last thread that exited due to timeout.
+- `worker_threads: HashMap<usize, JoinHandle<()>>`: the handles of all surviving workers.
+- `worker_thread_index: usize`: a monotonically increasing thread ID allocator.
 
-- `shutdown: bool`：关闭标志。
-- `shutdown_tx: Option<shutdown::Sender>`：每个 worker 线程持有一份克隆，全部 drop 后 `shutdown_rx` 收到通知。
-- `last_exiting_thread: Option<JoinHandle<()>>`：上一个超时退出的线程句柄。
-- `worker_threads: HashMap<usize, JoinHandle<()>>`：所有存活 worker 的句柄。
-- `worker_thread_index: usize`：单调递增的线程 ID 分配器。
+`last_exiting_thread`The design motivation of  is clearly stated in the comments: a thread that exits due to timeout will join the previous thread that exited due to timeout, avoiding Valgrind false positives[FACT:tokio/src/runtime/blocking/pool.rs:135-150]。`worker_timed_out`is exactly the implementation of this chained join—it removes its own handle and swaps out the old`last_exiting_thread`to return to the caller for joining[FACT:tokio/src/runtime/blocking/pool.rs:172-178]。
 
-`last_exiting_thread` 的设计动机在注释里写得很清楚：超时退出的线程会 join 上一个超时退出的线程，避免 Valgrind 误报 [FACT:tokio/src/runtime/blocking/pool.rs:135-150](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L135-L150)。`worker_timed_out` 正是这个链式 join 的实现——它移除自己的句柄，把旧的 `last_exiting_thread` 换出来返回给调用者去 join [FACT:tokio/src/runtime/blocking/pool.rs:172-178](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L172-L178)。
+**Task Wrapping**. What is stored in the queue is`Task`, which wraps a`UnownedTask<BlockingSchedule>`and a`Mandatory`flag[FACT:tokio/src/runtime/blocking/pool.rs:187-191]。`Mandatory`determines whether the task is discarded or forcibly executed on shutdown:`shutdown_or_run_if_mandatory`calls`NonMandatory`when`shutdown()`, and calls`Mandatory`when`run()` [FACT:tokio/src/runtime/blocking/pool.rs:223-228]. This is the difference between`spawn_blocking`(non-forced) and`spawn_mandatory_blocking`(forced, used by fs)[FACT:tokio/src/runtime/blocking/pool.rs:233-265]。
 
-**任务封装**。队列里存的是 `Task`，它包了一个 `UnownedTask<BlockingSchedule>` 和一个 `Mandatory` 标志 [FACT:tokio/src/runtime/blocking/pool.rs:187-191](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L187-L191)。`Mandatory` 决定关闭时这个任务是被丢弃还是强制执行：`shutdown_or_run_if_mandatory` 在 `NonMandatory` 时调 `shutdown()`，在 `Mandatory` 时调 `run()` [FACT:tokio/src/runtime/blocking/pool.rs:223-228](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L223-L228)。这就是 `spawn_blocking`（非强制）与 `spawn_mandatory_blocking`（强制，供 fs 使用）的区别 [FACT:tokio/src/runtime/blocking/pool.rs:233-265](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L233-L265)。
+**Memory Layout of the Single-Lock Implementation**。`LockedImpl`is the most primitive topology: one`Mutex<LockedInner>`plus one`Condvar` [FACT:tokio/src/runtime/blocking/pool.rs:113-116]。`LockedInner`contains`VecDeque<Task>`、`num_notify: u32`and`thread_mgmt_state` [FACT:tokio/src/runtime/blocking/pool.rs:118-124]. Note that`num_notify`and`thread_mgmt_state`are under the same lock, while`num_idle_threads`is an atomic outside the lock—this hybrid layout of "part of the state inside the lock, part outside" is precisely the source of all the concurrency subtleties that follow.
 
-**单锁实现的内存布局**。`LockedImpl` 是最原始的拓扑：一个 `Mutex<LockedInner>` 加一个 `Condvar` [FACT:tokio/src/runtime/blocking/pool.rs:113-116](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L113-L116)。`LockedInner` 里是 `VecDeque<Task>`、`num_notify: u32` 和 `thread_mgmt_state` [FACT:tokio/src/runtime/blocking/pool.rs:118-124](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L118-L124)。注意 `num_notify` 与 `thread_mgmt_state` 在同一个锁下，而 `num_idle_threads` 是锁外的原子量——这种「部分状态在锁内、部分在锁外」的混合布局，正是后面所有并发微妙性的根源。
+# 8.2 Submission Path: From spawn_blocking to Thread Wakeup
 
+**Scenario**: an async task calls`tokio::task::spawn_blocking(move || heavy_compute(data))`, what happens at this moment?
 
-**场景**：异步任务里调用 `tokio::task::spawn_blocking(move || heavy_compute(data))`，此刻发生了什么？
+**Step 1: Boxing Decision and Task Construction**。`Spawner::spawn_blocking`first measures the closure size`fn_size`, then based on`AutoBox::<F>::SHOULD_BOX`decides whether to`Box`the closure[FACT:tokio/src/runtime/blocking/pool.rs:359-389]. This is Tokio's general "auto-box large Futures" strategy: box when the closure is too large, to avoid bloating the task struct.
 
-**第一步：装箱决策与任务构造**。`Spawner::spawn_blocking` 先测量闭包大小 `fn_size`，然后根据 `AutoBox::<F>::SHOULD_BOX` 决定是否把闭包 `Box` 起来 [FACT:tokio/src/runtime/blocking/pool.rs:359-389](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L359-L389)。这是 Tokio 通用的「大 Future 自动装箱」策略：闭包过大时装箱，避免任务结构体膨胀。
+Entering`spawn_blocking_inner`, first allocate a task ID, then use`blocking_task`to wrap the closure into a Future, and finally use`task::unowned`to construct`UnownedTask`and`JoinHandle` [FACT:tokio/src/runtime/blocking/pool.rs:440-449]. Note that what is returned here is the`(JoinHandle<R>, Result<(), SpawnError>)`tuple—the handle and the submission result are returned separately.
 
-进入 `spawn_blocking_inner`，先分配任务 ID，再用 `blocking_task` 把闭包包成一个 Future，最后用 `task::unowned` 构造出 `UnownedTask` 和 `JoinHandle` [FACT:tokio/src/runtime/blocking/pool.rs:440-449](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L440-L449)。注意这里返回的是 `(JoinHandle<R>, Result<(), SpawnError>)` 二元组——句柄和投递结果分开返回。
+**Step 2: Three Ways to Handle the Submission Result**. Back in`spawn_blocking`, match on`spawn_result`[FACT:tokio/src/runtime/blocking/pool.rs:381-388]：
 
-**第二步：投递结果的三种处理**。回到 `spawn_blocking`，对 `spawn_result` 做匹配 [FACT:tokio/src/runtime/blocking/pool.rs:381-388](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L381-L388)：
+- `Ok(())`: normal, return the handle.
+- `Err(ShuttingDown)`：**does not panic**, still returns a handle. The comment explains this is for compatibility—the handle will never resolve, but the caller won't crash because the runtime is shutting down.
+- `Err(NoThreads(e))`: the OS cannot create a thread and no one in the pool takes over, so it panics directly.
 
-- `Ok(())`：正常，返回句柄。
-- `Err(ShuttingDown)`：**不 panic**，仍然返回句柄。注释说明这是兼容性考虑——句柄永远不会 resolve，但调用方不会因为运行时正在关闭而崩溃。
-- `Err(NoThreads(e))`：OS 无法创建线程且池中无人接手，直接 panic。
-
-**第三步：入队与唤醒决策**。`spawn_task` 把 `on_no_idle` 闭包传给 `InnerImpl::spawn_task`，由具体实现决定何时调用它 [FACT:tokio/src/runtime/blocking/pool.rs:462-506](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L462-L506)。看 `LockedImpl::spawn_task` 的临界区 [FACT:tokio/src/runtime/blocking/pool.rs:603-639](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L603-L639)：
+**Step 3: Enqueue and wakeup decision**。`spawn_task`passes the`on_no_idle`closure to`InnerImpl::spawn_task`, and the concrete implementation decides when to call it[FACT:tokio/src/runtime/blocking/pool.rs:462-506]. Look at`LockedImpl::spawn_task`'s critical section[FACT:tokio/src/runtime/blocking/pool.rs:603-639]：
 
 ```rust
 let mut locked = self.mutex.lock();
@@ -68,17 +69,17 @@ if metrics.num_idle_threads() == 0 {
 }
 ```
 
-这里有两个关键点。其一，关闭检查在入队之前，且即使任务是 `Mandatory` 也直接 `shutdown()`——注释解释：它在关闭开始之后才被调度，所以丢弃是合法的 [FACT:tokio/src/runtime/blocking/pool.rs:614-620](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L614-L620)。其二，唤醒决策依赖锁外的 `num_idle_threads`：若为 0，调 `on_no_idle` 尝试起新线程；否则递减空闲计数、递增 `num_notify`、`notify_one`。
+There are two key points here. First, the shutdown check happens before enqueueing, and even if the task is`Mandatory`it is directly`shutdown()`—the comment explains: it was only scheduled after shutdown began, so discarding it is legal[FACT:tokio/src/runtime/blocking/pool.rs:614-620]. Second, the wakeup decision depends on the out-of-lock`num_idle_threads`: if it is 0, call`on_no_idle`to try to start a new thread; otherwise decrement the idle count and increment`num_notify`、`notify_one`。
 
-**`num_notify` 为什么必须存在？** 因为 `Condvar` 可能产生虚假唤醒（spurious wakeup）。如果只用 `notify_one` 而不计数，一个虚假唤醒的线程会误以为有任务可取，结果发现队列为空又睡回去，而真正被唤醒的线程可能永远收不到通知。`num_notify` 把「合法唤醒」变成可计数的令牌：投递方 `+1`，被唤醒方在 `num_notify != 0` 时才认为唤醒合法并 `-1` [FACT:tokio/src/runtime/blocking/pool.rs:674-684](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L674-L684)。
+**`num_notify`Why must it exist?**Because`Condvar`may produce spurious wakeups. If only`notify_one`is used without counting, a spuriously woken thread will mistakenly think there is a task to take, find the queue empty, and go back to sleep, while the thread that was actually woken may never receive the notification.`num_notify`turns "legal wakeup" into a countable token: the submitter`+1`, and the woken side only considers the wakeup legal when`num_notify != 0`and`-1` [FACT:tokio/src/runtime/blocking/pool.rs:674-684]。
 
-**第四步：起新线程**。`on_no_idle` 闭包在持有队列锁的情况下执行 [FACT:tokio/src/runtime/blocking/pool.rs:462-506](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L462-L506)。它先检查 `num_threads == thread_cap`，达到上限就直接返回 `Ok(())`——任务留在队列里等现有线程处理，这就是背压。否则克隆 `shutdown_tx`，调 `spawn_thread` 创建线程，成功后递增 `num_threads`、递增 `worker_thread_index`、把句柄插入 `worker_threads`。
+**Step 4: Start a new thread**。`on_no_idle`The closure executes[FACT:tokio/src/runtime/blocking/pool.rs:462-506]while holding the queue lock. It first checks`num_threads == thread_cap`, and if the upper limit is reached it returns directly`Ok(())`—the task stays in the queue waiting for an existing thread to handle it, which is backpressure. Otherwise clone`shutdown_tx`, call`spawn_thread`to create a thread, and after success increment`num_threads`, increment`worker_thread_index`, and insert the handle into`worker_threads`。
 
-`spawn_thread` 用 `thread::Builder` 设置线程名和栈大小，然后 spawn 一个闭包：进入运行时上下文 `rt.enter()`，调用 `inner.run(id)`，最后 drop `shutdown_tx` [FACT:tokio/src/runtime/blocking/pool.rs:508-528](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L508-L528)。
+`spawn_thread`Use`thread::Builder`to set the thread name and stack size, then spawn a closure: enter the runtime context`rt.enter()`, call`inner.run(id)`, and finally drop`shutdown_tx` [FACT:tokio/src/runtime/blocking/pool.rs:508-528]。
 
-**OS 线程创建失败的容错**。`spawn_thread` 可能失败。代码对错误做了分类 [FACT:tokio/src/runtime/blocking/pool.rs:488-500](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L488-L500)：若是 `WouldBlock`（临时性错误，由 `is_temporary_os_thread_error` 判定 [FACT:tokio/src/runtime/blocking/pool.rs:750-752](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L750-L752)）且池中已有阻塞线程，则**静默忽略**——任务会被某个当前忙碌的线程最终取走。否则返回 `SpawnError::NoThreads`，最终导致 panic。
+**Fault tolerance for OS thread creation failure**。`spawn_thread`may fail. The code classifies the error[FACT:tokio/src/runtime/blocking/pool.rs:488-500]: if it is`WouldBlock`(a temporary error, determined by`is_temporary_os_thread_error`) and there is already a blocked thread in the pool, then[FACT:tokio/src/runtime/blocking/pool.rs:750-752]silently ignore**—the task will eventually be taken by some currently busy thread. Otherwise return**, which ultimately causes a panic.`SpawnError::NoThreads`Use a control-flow diagram to summarize the decision branches of the submission path:
 
-用一张控制流图总结投递路径的决策分支：
+Copy
 
 ```mermaid
 flowchart TD
@@ -112,32 +113,33 @@ flowchart TD
     err_nt --> panic_os["panic: OS can't spawn worker thread"]
 ```
 
+# Intuitive model
 
-**Intuitive Architectural Model**：每个阻塞线程就是一个「待命帮工」。有单时连续干活（BUSY），没单时打盹（IDLE），打盹超过 `keep_alive` 就下班（超时退出）。若没有超时回收，池子会永久保留峰值时创建的所有线程，浪费内存与内核调度开销。
+**: each blocking thread is a "standby helper." When there are orders, it works continuously (BUSY); when there are none, it naps (IDLE), and if it naps longer than**it goes off duty (timeout exit). Without timeout reclamation, the pool would permanently retain all threads created at peak times, wasting memory and kernel scheduling overhead.`keep_alive`Main loop structure
 
-**主循环结构**。`LockedImpl::run_worker` 是一个 `'main` 循环，内部交替处于 BUSY 和 IDLE 两个阶段 [FACT:tokio/src/runtime/blocking/pool.rs:642-735](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L642-L735)。注意：这里的 BUSY/IDLE 是循环内的**阶段**，不是显式枚举状态，所以下面用流程图而非状态图描述。
+**is a**。`LockedImpl::run_worker`loop, internally alternating between the two phases BUSY and IDLE`'main`. Note: BUSY/IDLE here are[FACT:tokio/src/runtime/blocking/pool.rs:642-735]phases**within the loop, not explicit enum states, so the following is described with a flowchart rather than a state diagram.**BUSY phase
 
-**BUSY 阶段**：内层 `while let Some(task) = locked.queue.pop_front()` 不断取任务 [FACT:tokio/src/runtime/blocking/pool.rs:655-661](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L655-L661)。取到后递减 `queue_depth`，**drop 锁**，执行 `task.run()`，再重新拿锁。drop 锁这一步至关重要——阻塞任务可能跑很久，绝不能持锁执行。
+**: the inner**continuously takes tasks`while let Some(task) = locked.queue.pop_front()`. After taking one, decrement[FACT:tokio/src/runtime/blocking/pool.rs:655-661]drop the lock`queue_depth`，**, execute**, then reacquire the lock. The step of dropping the lock is crucial—a blocking task may run for a long time, and it must never be executed while holding the lock.`task.run()`IDLE phase
 
-**IDLE 阶段**：队列空了，递增 `num_idle_threads`，设 `is_counted_idle = true`，然后进入等待循环 [FACT:tokio/src/runtime/blocking/pool.rs:663-696](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L663-L696)。核心是 `condvar.wait_timeout(locked, keep_alive)`，返回后检查三件事：
+**: the queue is empty, increment**, set`num_idle_threads`, then enter the wait loop`is_counted_idle = true`. The core is[FACT:tokio/src/runtime/blocking/pool.rs:663-696], and after it returns, check three things:`condvar.wait_timeout(locked, keep_alive)`: legal wakeup. Decrement
 
-1. `num_notify != 0`：合法唤醒。递减 `num_notify`，设 `is_counted_idle = false`（因为投递方已经递减过 `num_idle_threads` 了），break 回 BUSY [FACT:tokio/src/runtime/blocking/pool.rs:674-684](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L674-L684)。
+1. `num_notify != 0`, set`num_notify`(because the submitter has already decremented`is_counted_idle = false`), break back to BUSY`num_idle_threads`2. Not shut down and timed out: call[FACT:tokio/src/runtime/blocking/pool.rs:674-684]。
 
-2. 未关闭且超时：调 `worker_timed_out` 拿到上一个退出线程的句柄，`break 'main` 退出循环 [FACT:tokio/src/runtime/blocking/pool.rs:689-693](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L689-L693)。
+to get the handle of the previous exited thread,`worker_timed_out`exit the loop`break 'main`3. Otherwise it is a spurious wakeup, continue waiting.[FACT:tokio/src/runtime/blocking/pool.rs:689-693]。
 
-3. 否则是虚假唤醒，继续等待。
+Queue draining on shutdown
 
-**关闭时的队列排空**。若 `thread_mgmt_state.shutdown` 为真，进入排空逻辑 [FACT:tokio/src/runtime/blocking/pool.rs:698-710](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L698-L710)：逐个弹出任务，drop 锁，调 `task.shutdown_or_run_if_mandatory()`——非强制任务被丢弃，强制任务照常执行。然后 break 退出主循环。
+**. If**is true, enter the draining logic`thread_mgmt_state.shutdown`: pop tasks one by one, drop the lock, call[FACT:tokio/src/runtime/blocking/pool.rs:698-710]—non-forced tasks are discarded, forced tasks execute as usual. Then break out of the main loop.`task.shutdown_or_run_if_mandatory()`Exit cleanup
 
-**退出清理**。线程退出前递减 `num_threads` [FACT:tokio/src/runtime/blocking/pool.rs:714](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L714)。若 `is_counted_idle` 为真，还要递减 `num_idle_threads`，并用 `assert_ne!(prev_idle, 0)` 断言没有下溢 [FACT:tokio/src/runtime/blocking/pool.rs:716-726](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L716-L726)。这个断言是调试期的护栏：一旦 `num_idle_threads` 记账出错，这里会立刻 panic 而不是让错误静默传播。
+**. Before the thread exits, decrement**. If`num_threads` [FACT:tokio/src/runtime/blocking/pool.rs:714]is true, also decrement`is_counted_idle`, and use`num_idle_threads`to assert there is no underflow`assert_ne!(prev_idle, 0)`. This assertion is a debug-time guardrail: once[FACT:tokio/src/runtime/blocking/pool.rs:716-726]accounting goes wrong, it will panic immediately here instead of letting the error propagate silently.`num_idle_threads`Finally, if shutting down and
 
-最后，若正在关闭且 `num_threads == 0`（最后一个线程），`notify_one` 唤醒可能在等待的关闭发起者 [FACT:tokio/src/runtime/blocking/pool.rs:728-730](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L728-L730)。返回 `join_on_thread`，由 `Inner::run` 在退出前 join [FACT:tokio/src/runtime/blocking/pool.rs:755-771](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L755-L771)。
+(the last thread),`num_threads == 0`wakes up the shutdown initiator that may be waiting`notify_one`. Return[FACT:tokio/src/runtime/blocking/pool.rs:728-730], and`join_on_thread`joins before exiting`Inner::run`Shutdown handshake[FACT:tokio/src/runtime/blocking/pool.rs:755-771]。
 
-**关闭握手**。`BlockingPool::shutdown` 先调 `begin_shutdown` 拿到所有 worker 句柄 [FACT:tokio/src/runtime/blocking/pool.rs:310-312](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L310-L312)。`LockedImpl::begin_shutdown` 设置关闭标志、drop `shutdown_tx`、`notify_all` 唤醒所有等待线程 [FACT:tokio/src/runtime/blocking/pool.rs:740-745](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L740-L745)。然后 `shutdown_rx.wait(timeout)` 阻塞等待 [FACT:tokio/src/runtime/blocking/pool.rs:324](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L324)。
+**first calls**。`BlockingPool::shutdown`to get all worker handles`begin_shutdown`, sets the shutdown flag, drops[FACT:tokio/src/runtime/blocking/pool.rs:310-312]。`LockedImpl::begin_shutdown`, and wakes all waiting threads`shutdown_tx`、`notify_all`. Then[FACT:tokio/src/runtime/blocking/pool.rs:740-745]blocks waiting for`shutdown_rx.wait(timeout)`'s implementation is quite careful[FACT:tokio/src/runtime/blocking/pool.rs:324]。
 
-`shutdown::Receiver::wait` 的实现很讲究 [FACT:tokio/src/runtime/blocking/shutdown.rs:37-70](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L37-L70)：先处理 `timeout == 0` 的快速路径直接返回 false；再调 `try_enter_blocking_region()` 进入阻塞区域，若失败且当前正在 panic 则返回 false，否则 panic 并给出「不能在异步上下文中 drop runtime」的提示 [FACT:tokio/src/runtime/blocking/shutdown.rs:44-57](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L44-L57)。最后根据 timeout 调 `block_on_timeout` 或 `block_on` 驱动那个 oneshot。
+`shutdown::Receiver::wait`: first handle[FACT:tokio/src/runtime/blocking/shutdown.rs:37-70]'s fast path and return false directly; then call`timeout == 0`to enter the blocking region, and if it fails and the current thread is panicking, return false; otherwise panic with the hint "cannot drop runtime in async context"`try_enter_blocking_region()`. Finally, depending on timeout, call[FACT:tokio/src/runtime/blocking/shutdown.rs:44-57]or`block_on_timeout`to drive that oneshot.`block_on`The mechanism of
 
-`shutdown_tx` 的机制是：每个 worker 线程持有一份 `Arc<oneshot::Sender<()>>` 的克隆 [FACT:tokio/src/runtime/blocking/shutdown.rs:12-14](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L12-L14)。所有线程退出后，所有克隆被 drop，`Arc` 计数归零，`oneshot::Sender` 被 drop，`Receiver` 收到通知。这就是「所有 Sender drop 后 Receiver 被唤醒」的经典模式。
+`shutdown_tx`is: each worker thread holds a clone of`Arc<oneshot::Sender<()>>`. After all threads exit, all clones are dropped,[FACT:tokio/src/runtime/blocking/shutdown.rs:12-14]the count reaches zero,`Arc`is dropped,`oneshot::Sender`and`Receiver`receives the notification. This is the classic pattern of "Receiver is woken after all Senders are dropped."
 
 ```mermaid
 sequenceDiagram
@@ -162,10 +164,11 @@ sequenceDiagram
     Pool->>Worker: join 所有 worker 句柄
 ```
 
+# 8.4 block_on: driving a Future in a non-async context
 
-**Intuitive Architectural Model**：`block_on` 是运行时的「正门」。它把当前线程变成临时的执行器，反复 poll 传入的 Future 直到完成。若没有它，`main` 函数就无法启动任何异步代码。
+**Intuitive model**：`block_on`is the runtime's "front door." It turns the current thread into a temporary executor, repeatedly polling the passed-in Future until completion. Without it,`main`functions cannot start any asynchronous code.
 
-**入口与装箱**。`Runtime::block_on` 同样先测大小、按 `SHOULD_BOX` 决定是否 `Box::pin`，然后进 `block_on_inner` [FACT:tokio/src/runtime/runtime.rs:343-350](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L343-L350)。`block_on_inner` 里有两段条件编译的 trace 包装（taskdump 和 tracing），然后 `self.enter()` 进入运行时上下文，最后按调度器类型分派 [FACT:tokio/src/runtime/runtime.rs:353-383](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L353-L383)：
+**Entry and boxing**。`Runtime::block_on`likewise first measures the size, decides whether to`SHOULD_BOX`based on`Box::pin`, then enters`block_on_inner` [FACT:tokio/src/runtime/runtime.rs:343-350]。`block_on_inner`. Inside there are two conditionally compiled trace wrappers (taskdump and tracing), then`self.enter()`enters the runtime context, and finally dispatches by scheduler type[FACT:tokio/src/runtime/runtime.rs:353-383]：
 
 ```rust
 let _enter = self.enter();
@@ -176,43 +179,46 @@ match &self.scheduler {
 }
 ```
 
-两种调度器的 `block_on` 语义不同，文档里说得很清楚 [FACT:tokio/src/runtime/runtime.rs:302-320](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L302-L320)：
+The two schedulers'`block_on`The semantics are different, and the documentation states this very clearly.[FACT:tokio/src/runtime/runtime.rs:302-320]：
 
-- **多线程调度器**：Future 在 I/O 驱动和定时器上下文中运行，`block_on` 返回后已 spawn 的任务继续运行。
-- **当前线程调度器**：`block_on` 可以被多个线程并发调用，第一个调用者取得 I/O 和定时器驱动的所有权，其他线程「钩入」它。第一个 `block_on` 完成后，其他线程可以「偷走」驱动。`block_on` 返回后已 spawn 的任务被挂起，再次调用 `block_on` 会恢复它们。
+- **Multi-threaded scheduler**: the Future runs in the context of the I/O driver and timer,`block_on`and after returning, tasks that have already been spawned continue to run.
+- **Current-thread scheduler**：`block_on`can be called concurrently by multiple threads; the first caller takes ownership of the I/O and timer drivers, and other threads "hook into" it. After the first`block_on`completes, other threads can "steal" the driver.`block_on`After returning, tasks that have already been spawned are suspended, and calling`block_on`again will resume them.
 
-**关键限制：不能在异步上下文中调用**。文档明确 `block_on` 在异步执行上下文中调用会 panic [FACT:tokio/src/runtime/runtime.rs:321-324](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L321-L324)。原因很直接：`block_on` 会阻塞当前线程直到 Future 完成，若当前线程本身是某个 worker 线程，就会阻塞整个执行器——这正是 `spawn_blocking` 要解决的问题，所以两者互斥。
+**Key restriction: it cannot be called in an asynchronous context.**. The documentation explicitly states that`block_on`calling it in an asynchronous execution context will panic.[FACT:tokio/src/runtime/runtime.rs:321-324]. The reason is straightforward:`block_on`it blocks the current thread until the Future completes. If the current thread itself is a worker thread, it will block the entire executor—this is exactly`spawn_blocking`the problem that is meant to solve, so the two are mutually exclusive.
 
-**关闭路径**。`Runtime::drop` 按调度器类型分派 [FACT:tokio/src/runtime/runtime.rs:506-521](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L506-L521)：当前线程调度器需要先 `try_set_current` 进入上下文再 shutdown（保证任务在运行时上下文中被 drop）；多线程调度器直接 shutdown（worker 线程本身已在上下文中）。`shutdown_timeout` 先关调度器再关阻塞池 [FACT:tokio/src/runtime/runtime.rs:457-461](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L457-L461)，`shutdown_background` 等价于 `shutdown_timeout(Duration::from_nanos(0))` [FACT:tokio/src/runtime/runtime.rs:494-496](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/runtime.rs#L494-L496)。
+**Shutdown path**。`Runtime::drop`dispatches by scheduler type[FACT:tokio/src/runtime/runtime.rs:506-521]: the current-thread scheduler needs to first`try_set_current`enter the context and then shut down (ensuring tasks are dropped in the runtime context); the multi-threaded scheduler shuts down directly (the worker threads themselves are already in the context).`shutdown_timeout`Shut down the scheduler first, then shut down the blocking pool.[FACT:tokio/src/runtime/runtime.rs:457-461]，`shutdown_background`is equivalent to`shutdown_timeout(Duration::from_nanos(0))` [FACT:tokio/src/runtime/runtime.rs:494-496]。
 
+# Design considerations, error recovery, and production pitfalls
 
-**为什么 `spawn_blocking` 的 `ShuttingDown` 不 panic？** [FACT:tokio/src/runtime/blocking/pool.rs:383-384](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L383-L384) 注释说是兼容性考虑。`spawn_blocking` 返回 `JoinHandle` 而非 `Result`，若在关闭时 panic，会让「运行时正在关闭」这个可预期状态变成崩溃。返回一个永不 resolve 的句柄，调用方 `await` 时会一直挂起——但此时运行时已关闭，整个 `block_on` 也会退出，所以实际不会永久泄漏。
+**Why does`spawn_blocking`'s`ShuttingDown`not panic?** [FACT:tokio/src/runtime/blocking/pool.rs:383-384]The comment says it is for compatibility considerations.`spawn_blocking`returns`JoinHandle`rather than`Result`. If it panicked during shutdown, it would turn the predictable state of "the runtime is shutting down" into a crash. Returning a handle that never resolves means the caller`await`will hang forever—but at this point the runtime has already shut down, and the entire`block_on`will also exit, so in practice it will not leak permanently.
 
-**`max_blocking_threads` 的背压语义**。默认值很大（512），因为 `spawn_blocking` 常用于文件 I/O。但文档警告：跑 CPU 密集任务时要用信号量限制并发，否则会创建大量线程 [FACT:tokio/src/task/blocking.rs:94-100](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/blocking.rs#L94-L100)。达到上限后任务在队列里排队，形成背压——但注意这个背压只作用于阻塞池，不会反压到异步调度器。
+**`max_blocking_threads`'s backpressure semantics**. The default value is very large (512), because`spawn_blocking`is often used for file I/O. But the documentation warns: when running CPU-intensive tasks, use a semaphore to limit concurrency, otherwise a large number of threads will be created[FACT:tokio/src/task/blocking.rs:94-100]. Once the upper limit is reached, tasks queue in the queue, forming backpressure—but note that this backpressure only applies to the blocking pool and does not propagate back to the asynchronous scheduler.
 
-**`spawn_blocking` 不可取消**。文档明确：`abort` 对已开始运行的阻塞任务无效，任务会继续跑完 [FACT:tokio/src/task/blocking.rs:106-120](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/blocking.rs#L106-L120)。只有尚未开始的任务可能被 abort 阻止。关闭时运行时会等待所有已开始的阻塞任务，`shutdown_timeout` 超时后会泄漏这些线程。
+**`spawn_blocking`cannot be canceled**. The documentation explicitly states:`abort`has no effect on blocking tasks that have already started running; the tasks will continue to run to completion[FACT:tokio/src/task/blocking.rs:106-120]. Only tasks that have not yet started may be prevented by abort. During shutdown, the runtime waits for all blocking tasks that have already started, and`shutdown_timeout`after the timeout, these threads will be leaked.
 
-**`num_idle_threads` 的记账陷阱**。`is_counted_idle` 标志的存在说明这个计数很容易出错。投递方在唤醒时递减 `num_idle_threads`，被唤醒方看到 `num_notify != 0` 后设 `is_counted_idle = false`，避免重复递减 [FACT:tokio/src/runtime/blocking/pool.rs:679-682](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L679-L682)。若这条路径有 bug，`assert_ne!(prev_idle, 0)` 会在退出时 panic [FACT:tokio/src/runtime/blocking/pool.rs:722-725](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L722-L725)。生产环境若见到「`num_idle_threads` underflowed on thread exit」，说明池子的记账逻辑被破坏。
+**`num_idle_threads`'s accounting trap**。`is_counted_idle`The existence of the flag shows that this count is very easy to get wrong. The submitting side decrements`num_idle_threads`when waking up, and the awakened side, after seeing`num_notify != 0`, sets`is_counted_idle = false`, avoiding a duplicate decrement[FACT:tokio/src/runtime/blocking/pool.rs:679-682]. If there is a bug in this path,`assert_ne!(prev_idle, 0)`will panic on exit[FACT:tokio/src/runtime/blocking/pool.rs:722-725]. If you see "`num_idle_threads`underflowed on thread exit" in production, it means the pool's accounting logic has been broken.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **`last_exiting_thread` 链式 join 的代价**。超时退出的线程会 join 上一个超时退出的线程 [FACT:tokio/src/runtime/blocking/pool.rs:172-178](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L172-L178)。这形成一个 join 链：每个退出的线程都要等前一个真正结束。在高频创建/销毁阻塞线程的场景下，这条链可能变长，导致线程退出延迟累积。 这是为了避免 Valgrind 误报而做的权衡，正常生产环境影响有限，但在线程频繁超时的负载下值得关注。
+> **[Design Inference & Architectural Trade-offs]**
+> **`last_exiting_thread`The cost of chained join**. A thread exiting due to timeout will join the previous thread that exited due to timeout[FACT:tokio/src/runtime/blocking/pool.rs:172-178]. This forms a join chain: each exiting thread must wait for the previous one to truly finish. In scenarios with high-frequency creation/destruction of blocking threads, this chain may become long, causing thread exit latency to accumulate. This is a trade-off made to avoid Valgrind false positives. Its impact in normal production environments is limited, but it is worth paying attention to under loads where threads frequently time out.
 
-**`InnerImpl` 枚举抽象的意义**。注释说明 `Locked` 变体的行为与重构前完全一致，而 `Sharded` 变体为未来的并发队列预留了对称的槽位 [FACT:tokio/src/runtime/blocking/pool.rs:537-539](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L537-L539)。`spawn_task`、`run_worker`、`begin_shutdown` 三个方法都通过枚举分派 [FACT:tokio/src/runtime/blocking/pool.rs:548-582](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L548-L582)。这种「枚举分派 + 每变体自持临界区」的设计，使得新增队列拓扑时不需要改动调用方。
+**`InnerImpl`The meaning of enum abstraction**. The comment explains that the behavior of the`Locked`variant is exactly the same as before the refactor, while the`Sharded`variant reserves a symmetric slot for a future concurrent queue[FACT:tokio/src/runtime/blocking/pool.rs:537-539]。`spawn_task`、`run_worker`、`begin_shutdown`. All three methods dispatch through the enum[FACT:tokio/src/runtime/blocking/pool.rs:548-582]. This design of "enum dispatch + each variant owning its own critical section" means that adding a new queue topology does not require changing the caller.
 
+# Chapter summary
 
-本章拆解了 Tokio 容纳同步代码的两条边界。`spawn_blocking` 把闭包投递到独立的阻塞线程池：`Inner` 持有队列、线程上限、存活时长与原子指标；`LockedImpl` 用单锁 + `Condvar` 实现队列，`num_notify` 计数器补偿虚假唤醒；worker 在 BUSY/IDLE 间循环，空闲超时后链式 join 退出；`max_blocking_threads` 达到上限后任务排队形成背压。`block_on` 则在非异步上下文驱动 Future，多线程与当前线程调度器语义不同，且严禁在异步上下文中调用。关闭路径通过 `shutdown_tx` 的 `Arc` 计数归零触发 `oneshot`，实现「所有 worker 退出后唤醒关闭发起者」的握手。
+This chapter breaks down the two boundaries through which Tokio accommodates synchronous code.`spawn_blocking`delivers closures to an independent blocking thread pool:`Inner`it holds the queue, thread limit, keep-alive duration, and atomic metrics;`LockedImpl`it implements the queue with a single lock +`Condvar`,`num_notify`and the counter compensates for spurious wakeups; workers cycle between BUSY/IDLE, and after idle timeout they exit via chained join;`max_blocking_threads`once the upper limit is reached, tasks queue up to form backpressure.`block_on`drives Futures in a non-asynchronous context; the multi-threaded and current-thread schedulers have different semantics, and calling it in an asynchronous context is strictly forbidden. The shutdown path is triggered by`shutdown_tx`'s`Arc`count reaching zero, which triggers`oneshot`, implementing the handshake of "waking the shutdown initiator after all workers exit."
 
+# Chapter reflection and self-test
 
-Q1: 若把 `LockedImpl::spawn_task` 中 `if metrics.num_idle_threads() == 0` 的判断改成恒为真（即每次都调 `on_no_idle`），在高并发投递场景下会发生什么？为什么？
+Q1: If in`LockedImpl::spawn_task`the check for`if metrics.num_idle_threads() == 0`is changed to always true (that is, calling`on_no_idle`every time), what will happen in a high-concurrency submission scenario? Why?
 
-**参考解析**：`on_no_idle` 会检查 `num_threads == thread_cap`，未达上限就创建新线程 [FACT:tokio/src/runtime/blocking/pool.rs:471-487](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L471-L487)。若判断恒为真，即使有空闲线程也会尝试起新线程，导致线程数迅速冲到 `thread_cap`。更严重的是，空闲线程不会被 `notify_one` 唤醒（因为走了 `on_no_idle` 分支而非 `else` 分支的 `num_notify += 1; notify_one` [FACT:tokio/src/runtime/blocking/pool.rs:627-636](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L627-L636)），队列里的任务可能无人处理，直到某个新线程启动后才发现队列非空。这会造成「线程爆满但任务仍排队」的假死状态。原判断的意义正是：有空闲线程时优先唤醒它们，避免无谓的线程创建。
+**Reference analysis**：`on_no_idle`checks`num_threads == thread_cap`, and if the upper limit has not been reached, it creates a new thread[FACT:tokio/src/runtime/blocking/pool.rs:471-487]. If the check is always true, it will try to start a new thread even when there are idle threads, causing the thread count to rapidly hit`thread_cap`. More seriously, idle threads will not be woken by`notify_one`(because the`on_no_idle`branch is taken rather than the`else`branch's`num_notify += 1; notify_one` [FACT:tokio/src/runtime/blocking/pool.rs:627-636]), and tasks in the queue may go unprocessed until some new thread starts and discovers that the queue is non-empty. This creates a false-deadlock state of "threads maxed out but tasks still queued." The purpose of the original check is precisely this: when there are idle threads, wake them first and avoid unnecessary thread creation.
 
-Q2: `LockedImpl::run_worker` 在 BUSY 阶段执行 `task.run()` 前会 `drop(locked)` [FACT:tokio/src/runtime/blocking/pool.rs:657-658](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L657-L658)。如果去掉这个 `drop`，在什么场景下会触发死锁？
+Q2: `LockedImpl::run_worker`Before executing`task.run()`in the BUSY phase, it will`drop(locked)` [FACT:tokio/src/runtime/blocking/pool.rs:657-658]. If this`drop`is removed, in what scenario will deadlock be triggered?
 
-**参考解析**：`task.run()` 执行的是用户闭包，闭包内部完全可能再次调用 `spawn_blocking` 投递新任务。投递路径 `LockedImpl::spawn_task` 第一件事就是 `self.mutex.lock()` [FACT:tokio/src/runtime/blocking/pool.rs:612](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/pool.rs#L612)。若 worker 持锁执行闭包，闭包内的投递就会尝试获取同一把锁，而 `std::sync::Mutex` 不可重入，直接死锁。此外，持锁执行长任务会阻塞所有其他投递者和 worker 的取任务操作，即使不死锁也会让整个池子串行化。`drop(locked)` 是必须的。
+**Reference analysis**：`task.run()`executes the user closure, and the closure itself may very well call`spawn_blocking`again to submit a new task. The submission path`LockedImpl::spawn_task`'s first action is`self.mutex.lock()` [FACT:tokio/src/runtime/blocking/pool.rs:612]. If the worker holds the lock while executing the closure, the submission inside the closure will try to acquire the same lock, and`std::sync::Mutex`Non-reentrant, direct deadlock. Furthermore, holding the lock while executing long tasks will block all other submitters and workers from fetching tasks; even without deadlock, it will serialize the entire pool.`drop(locked)`It is necessary.
 
-Q3: `shutdown::Receiver::wait` 在 `try_enter_blocking_region()` 失败且当前正在 panic 时返回 false，否则 panic [FACT:tokio/src/runtime/blocking/shutdown.rs:44-57](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/blocking/shutdown.rs#L44-L57)。为什么要在 panic 时特殊处理？如果去掉这个分支，在什么场景下会出问题？
+Q3: `shutdown::Receiver::wait`In`try_enter_blocking_region()`Returns false when it fails and is currently panicking; otherwise panics[FACT:tokio/src/runtime/blocking/shutdown.rs:44-57]. Why special-case panics? If this branch were removed, in what scenarios would problems arise?
 
-**参考解析**：`try_enter_blocking_region` 失败意味着当前处于异步上下文，不允许阻塞。正常情况下应 panic 提示用户「不能在异步上下文中 drop runtime」。但如果当前线程已经在 panic（`std::thread::panicking()` 为真），再 panic 会导致双重 panic，Rust 默认行为是直接 abort 进程。场景：用户在异步任务里 drop 一个 Runtime，而该任务本身因为其他原因正在 panic，此时 drop 触发的 shutdown 会二次 panic。返回 false 让 shutdown 放弃等待，避免进程 abort，给用户保留看到原始 panic 信息的机会。这是「panic 安全」的典型处理。
+**Reference analysis**：`try_enter_blocking_region`Failure means the current context is asynchronous, and blocking is not allowed. Normally it should panic to tell the user, "cannot drop runtime in an asynchronous context." But if the current thread is already panicking (`std::thread::panicking()`is true), panicking again would cause a double panic, and Rust's default behavior is to abort the process directly. Scenario: the user drops a Runtime inside an asynchronous task, and that task itself is already panicking for some other reason; then the shutdown triggered by drop causes a second panic. Returning false lets shutdown give up waiting, avoiding process abort and preserving the chance for the user to see the original panic information. This is a typical "panic safety" handling.
 
-阻塞线程池与 block_on 划定了异步运行时的能力边界：前者把无法让出线程的工作隔离到专用线程，后者让非异步入口也能驱动 Future。但这两条边界在代码里往往不是手写的——下一章我们将进入宏的世界，看看 #[tokio::main]、select! 和 join! 如何在编译期生成这些运行时代码。
+The blocking thread pool and block_on define the capability boundaries of the asynchronous runtime: the former isolates work that cannot yield the thread onto dedicated threads, while the latter allows non-async entry points to drive Futures. But these two boundaries are often not handwritten in code—in the next chapter we will enter the world of macros and see how #[tokio::main], select!, and join! generate this runtime code at compile time.

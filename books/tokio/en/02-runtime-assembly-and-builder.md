@@ -1,22 +1,22 @@
-# Chapter 02: Runtime Assembly: How Builder Composes Drivers & Thread Pools
+# Chapter 2: Runtime Assembly: How Builder Assembles Drivers, Scheduler, and Thread Pool
 
+# From`Builder`to`Runtime`: The complete journey of an assembly
 
+In the previous chapter, we clarified the responsibility boundaries of Future, Waker, and Executor. But a truly usable runtime is far more than "an Executor" — it also needs an I/O event loop, timers, a blocking thread pool, and these components must share the same set of handles and the same lifecycle. This chapter traces the complete assembly chain of`Builder::build`, answering a core question:**What components exist inside a`Runtime`, and how are they assembled and share handles**。
 
-上一章我们把 Future、Waker、Executor 三者的职责边界讲清楚了。但一个真实可用的运行时远不止「一个 Executor」——它还需要 I/O 事件循环、定时器、阻塞线程池，并且这些组件必须共享同一套句柄、同一份生命周期。本章追踪 `Builder::build` 的完整装配链路，回答一个核心问题：**一个 `Runtime` 内部到底有哪些组件，它们如何被拼装并共享句柄**。
+Tokio's assembly entry point is`Builder`. It is itself a pure configuration container; all fields are "intent declarations" and hold no runtime resources. The actual resource creation happens when`build()`is called.
 
-Tokio 的装配入口是 `Builder`。它本身是一个纯配置容器，所有字段都是「意图声明」，不持有任何运行时资源。真正的资源创建发生在 `build()` 调用时。
+## Intuitive model: Builder is the "renovation blueprint", Runtime is the "house after delivery"
 
-## Intuitive Architectural Model：Builder 是「装修图纸」，Runtime 是「交房后的房子」
+`Builder`is like a renovation blueprint: you mark on it "how many rooms (worker_threads)", "whether to run water (enable_io)", "whether to run electricity (enable_time)", "outsourced helper limit (max_blocking_threads)". The blueprint itself produces no physical entity. Only when`build()`is called does the construction crew build according to the blueprint, actually constructing the "rooms" — the scheduler, drivers, thread pool — and deliver a`Runtime`instance.
 
-`Builder` 就像一张装修图纸：你在上面标注「要几个房间（worker_threads）」「要不要通水（enable_io）」「要不要通电（enable_time）」「外包帮工上限（max_blocking_threads）」。图纸本身不产生任何实体。直到调用 `build()`，施工队才按图施工，把调度器、驱动、线程池这些「房间」真正建起来，并交付一个 `Runtime` 实例。
+Without the`Builder`layer, users would have to manually new each component, manually wire them up, and manually handle failure rollback — any ordering mistake would lead to dangling handles or resource leaks.`Builder`The value of**lies in: completely separating "configuration" from "construction", so that the construction process can centrally perform validation, failure cleanup, and handle sharing**。
 
-若没有 `Builder` 这一层，用户就必须手动 new 出每个组件、手动接线、手动处理失败回滚——任何一处顺序错误都会导致句柄悬空或资源泄漏。`Builder` 的价值在于：**把「配置」与「构造」彻底分离，让构造过程可以集中做校验、失败清理和句柄共享**。
+## Memory layout:`Builder`'s field partitions
 
-## 内存布局：`Builder` 的字段分区
+`Builder`'s fields can be divided into four groups by responsibility. The first group is**form and switches**：`kind`determines the scheduler form,`enable_io` / `enable_time`determines whether to create the corresponding driver.
 
-`Builder` 的字段可以按职责分成四组。第一组是**形态与开关**：`kind` 决定调度器形态，`enable_io` / `enable_time` 决定是否创建对应驱动。
-
-[FACT:tokio/src/runtime/builder.rs:55-68](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L55-L68)
+[FACT:tokio/src/runtime/builder.rs:55-68]
 
 ```rust
 pub struct Builder {
@@ -31,18 +31,18 @@ pub struct Builder {
 }
 ```
 
-第二组是**线程池参数**：`worker_threads` 是 `Option<usize>`，`None` 表示「延迟到 build 时按 CPU 核数自动探测」；`max_blocking_threads` 默认 512。
+The second group is**thread pool parameters**：`worker_threads`is`Option<usize>`，`None`meaning "defer to build time to auto-detect based on CPU core count";`max_blocking_threads`defaults to 512.
 
-[FACT:tokio/src/runtime/builder.rs:73-79](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L73-L79)
+[FACT:tokio/src/runtime/builder.rs:73-79]
 
 ```rust
 worker_threads: Option,
 max_blocking_threads: usize,
 ```
 
-第三组是**回调钩子**，全部是 `Option<Arc<dyn Fn ...>>`。注意它们用 `Arc` 而非 `Box`，因为这些回调要被克隆进每个 worker 线程的 `Config`。
+The third group is**callback hooks**, all of which are`Option<Arc<dyn Fn ...>>`. Note that they use`Arc`rather than`Box`, because these callbacks need to be cloned into each worker thread's`Config`。
 
-[FACT:tokio/src/runtime/builder.rs:87-97](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L87-L97)
+[FACT:tokio/src/runtime/builder.rs:87-97]
 
 ```rust
 pub(super) after_start: Option,
@@ -51,9 +51,9 @@ pub(super) before_park: Option,
 pub(super) after_unpark: Option,
 ```
 
-第四组是**调度启发式与随机种子**：`global_queue_interval`、`event_interval`、`disable_lifo_slot`、`seed_generator`。
+The fourth group is**scheduling heuristics and random seed**：`global_queue_interval`、`event_interval`、`disable_lifo_slot`、`seed_generator`。
 
-[FACT:tokio/src/runtime/builder.rs:116-134](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L116-L134)
+[FACT:tokio/src/runtime/builder.rs:116-134]
 
 ```rust
 pub(super) global_queue_interval: Option,
@@ -62,9 +62,9 @@ pub(super) disable_lifo_slot: bool,
 pub(super) seed_generator: RngSeedGenerator,
 ```
 
-这里有一个值得注意的设计：`Kind` 是一个 `Copy` 的小枚举，只有两个变体。
+There is a noteworthy design here:`Kind`is a`Copy`small enum with only two variants.
 
-[FACT:tokio/src/runtime/builder.rs:261-265](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L261-L265)
+[FACT:tokio/src/runtime/builder.rs:261-265]
 
 ```rust
 #[derive(Clone, Copy)]
@@ -75,13 +75,13 @@ pub(crate) enum Kind {
 }
 ```
 
-`MultiThread` 变体被 `rt-multi-thread` feature 门控。这意味着在只启用 `rt` feature 的构建里，`Kind` 只有一个变体，`build()` 的 `match` 会被编译器优化成单分支——**用类型系统而非运行时判断来消除多线程调度器的代码体积**。
+`MultiThread`The`rt-multi-thread`variant is gated by the`rt`feature. This means that in a build where only the`Kind`feature is enabled,`build()`has only one variant, and`match`'s**will be optimized by the compiler into a single branch —**。
 
-## 默认值的哲学：为什么 I/O 和 time 默认关闭
+## using the type system rather than runtime checks to eliminate the code size of the multi-threaded scheduler
 
-`Builder::new` 是所有构造的公共入口。它把 `enable_io` 和 `enable_time` 都设为 `false`。
+`Builder::new`The philosophy of defaults: why I/O and time are disabled by default`enable_io`is the common entry point for all construction. It sets both`enable_time`and`false`。
 
-[FACT:tokio/src/runtime/builder.rs:309-318](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L309-L318)
+[FACT:tokio/src/runtime/builder.rs:309-318]
 
 ```rust
 // I/O defaults to "off"
@@ -96,12 +96,12 @@ enable_time: false,
 start_paused: false,
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个默认值选择是刻意的：创建 I/O 驱动需要向操作系统申请 epoll/kqueue 句柄，创建 time 驱动需要启动定时器基础设施。如果用户只是想要一个纯计算的Multi-Channel Task Scheduling Engine（比如跑 CPU 密集的 async 逻辑），强制创建这些驱动就是纯粹的浪费。`#[tokio::main]` 宏之所以「开箱即用」，是因为它内部调用了 `enable_all()`。
+> **[Design Inference & Architectural Trade-offs]**
+> 〔Design inference and architectural trade-offs〕`#[tokio::main]`This default choice is deliberate: creating the I/O driver requires requesting epoll/kqueue handles from the operating system, and creating the time driver requires starting timer infrastructure. If the user only wants a pure computation task scheduler (e.g., running CPU-intensive async logic), forcibly creating these drivers is pure waste.`enable_all()`。
 
-`enable_all()` 的实现揭示了 feature 门控如何影响「全开」的语义。
+`enable_all()`The reason the
 
-[FACT:tokio/src/runtime/builder.rs:398-419](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L398-L419)
+[FACT:tokio/src/runtime/builder.rs:398-419]
 
 ```rust
 pub fn enable_all(&mut self) -> &mut Self {
@@ -126,13 +126,13 @@ pub fn enable_all(&mut self) -> &mut Self {
 }
 ```
 
-注意 `enable_io()` 只在启用了 `net`、`process` 或 `signal` feature 时才被调用。如果用户只启用了 `time` feature，`enable_all()` 不会打开 I/O 驱动——因为编译产物里根本没有 I/O 驱动代码。
+'s implementation reveals how feature gating affects the semantics of "all enabled".`enable_io()`Copy`net`、`process`Note that`signal`is only called when the`time` feature，`enable_all()`or
 
-## 装配主路径：`build()` 的分流
+## feature is enabled. If the user only enabled`build()`will not enable the I/O driver — because there is simply no I/O driver code in the compiled artifact.
 
-`build()` 是装配的起点，它按 `kind` 分流到两条完全不同的路径。
+`build()`Assembly main path:`kind`'s branching
 
-[FACT:tokio/src/runtime/builder.rs:1146-1152](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1146-L1152)
+[FACT:tokio/src/runtime/builder.rs:1146-1152]
 
 ```rust
 pub fn build(&mut self) -> io::Result {
@@ -144,13 +144,13 @@ pub fn build(&mut self) -> io::Result {
 }
 ```
 
-这两条路径的差异远不止「一个线程 vs 多个线程」。下面分别展开。
+into two completely different paths.
 
-### 路径一：current_thread 的装配
+### Copy
 
-`build_current_thread_runtime` 本身很薄，它委托给 `build_current_thread_runtime_components`，然后把返回的三元组包进 `Runtime`。
+`build_current_thread_runtime`The difference between these two paths is far more than "one thread vs multiple threads". Let's expand each below.`build_current_thread_runtime_components`Path one: current_thread assembly`Runtime`。
 
-[FACT:tokio/src/runtime/builder.rs:1725-1736](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1725-L1736)
+[FACT:tokio/src/runtime/builder.rs:1725-1736]
 
 ```rust
 fn build_current_thread_runtime(&mut self) -> io::Result {
@@ -167,9 +167,9 @@ fn build_current_thread_runtime(&mut self) -> io::Result {
 }
 ```
 
-真正的装配逻辑在 `build_current_thread_runtime_components`。它的执行顺序至关重要：
+, then wraps the returned triple into`build_current_thread_runtime_components`Copy
 
-[FACT:tokio/src/runtime/builder.rs:1760-1766](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1760-L1766)
+[FACT:tokio/src/runtime/builder.rs:1760-1766]
 
 ```rust
 let mut cfg = self.get_cfg();
@@ -181,25 +181,25 @@ let blocking_pool = blocking::create_blocking_pool(self, self.max_blocking_threa
 let blocking_spawner = blocking_pool.spawner().clone();
 ```
 
-第一步创建 `driver`，返回一对 `(driver, driver_handle)`。注意这里 `?` 直接向上传播错误——如果 I/O 驱动初始化失败（比如 epoll 创建失败），整个 `build` 返回 `Err`，此时 blocking pool 还没创建，无需清理。
+. Its execution order is crucial:`driver`Copy`(driver, driver_handle)`The first step creates`?`, returning a pair of`build`. Note that here`Err`directly propagates the error upward — if I/O driver initialization fails (e.g., epoll creation fails), the entire
 
-第二步创建 blocking pool，并立刻取出它的 `spawner` 克隆。这个 `spawner` 会被注入调度器，让调度器有能力把阻塞任务投递到线程池。
+returns`spawner`, and at this point the blocking pool has not yet been created, so no cleanup is needed.`spawner`The second step creates the blocking pool and immediately takes out its
 
-第三步生成两个独立的 RNG 种子生成器。
+clone. This
 
-[FACT:tokio/src/runtime/builder.rs:1768-1770](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1768-L1770)
+[FACT:tokio/src/runtime/builder.rs:1768-1770]
 
 ```rust
 let seed_generator_1 = self.seed_generator.next_generator();
 let seed_generator_2 = self.seed_generator.next_generator();
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么需要两个？`seed_generator_1` 被放进 `Config`，供调度器内部使用（比如 `select!` 的随机分支顺序）；`seed_generator_2` 传给 `CurrentThread::new`，供任务侧使用。分离两个生成器可以避免调度器内部消费随机数影响用户可见的随机序列，从而保证 `rng_seed` 的可复现性。
+> **[Design Inference & Architectural Trade-offs]**
+> Copy`seed_generator_1`〔Design inference and architectural trade-offs〕`Config`Why are two needed?`select!`is placed into`seed_generator_2`, for internal use by the scheduler (e.g.,`CurrentThread::new`'s random branch order);`rng_seed`is passed to
 
-第四步是核心：把 driver、driver_handle、blocking_spawner、种子和 `Config` 一起交给 `CurrentThread::new`。
+, for use on the task side. Separating the two generators prevents the scheduler's internal consumption of random numbers from affecting the user-visible random sequence, thereby guaranteeing`Config`'s reproducibility.`CurrentThread::new`。
 
-[FACT:tokio/src/runtime/builder.rs:1776-1807](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1776-L1807)
+[FACT:tokio/src/runtime/builder.rs:1776-1807]
 
 ```rust
 let (scheduler, handle) = CurrentThread::new(
@@ -223,9 +223,9 @@ let (scheduler, handle) = CurrentThread::new(
 );
 ```
 
-这里有一个关键细节：`enable_eager_driver_handoff` 被硬编码为 `false`。
+together to`enable_eager_driver_handoff`Copy`false`。
 
-[FACT:tokio/src/runtime/builder.rs:1795-1798](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1795-L1798)
+[FACT:tokio/src/runtime/builder.rs:1795-1798]
 
 ```rust
 // This setting never makes sense for a current thread runtime,
@@ -234,12 +234,12 @@ let (scheduler, handle) = CurrentThread::new(
 enable_eager_driver_handoff: false,
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个注释点明了该选项的本质：它描述的是「多个 worker 之间如何抢占 I/O 驱动」，而 current_thread 只有一个线程，不存在抢占，所以强制关闭。这是「配置项语义与形态强相关」的典型例子——同一个 `Builder` 字段在不同形态下含义不同。
+> **[Design Inference & Architectural Trade-offs]**
+> This comment points out the essence of this option: it describes "how multiple workers compete for the I/O driver," and current_thread has only one thread, so there is no contention, and it is therefore forcibly disabled. This is a typical example of "configuration item semantics being strongly correlated with form"—the same`Builder`field has different meanings under different forms.
 
-最后，`CurrentThread::new` 返回的 `handle` 被包进 `scheduler::Handle::CurrentThread`，再包进公开的 `Handle`。
+Finally,`CurrentThread::new`the returned`handle`is wrapped into`scheduler::Handle::CurrentThread`, and then wrapped into the public`Handle`。
 
-[FACT:tokio/src/runtime/builder.rs:1816-1822](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1816-L1822)
+[FACT:tokio/src/runtime/builder.rs:1816-1822]
 
 ```rust
 let handle = Handle {
@@ -249,21 +249,21 @@ let handle = Handle {
 Ok((scheduler, handle, blocking_pool))
 ```
 
-### 路径二：multi_thread 的装配
+### Path two: assembly of multi_thread
 
-`build_threaded_runtime` 的骨架与 current_thread 类似，但有三处本质差异。第一处是 worker 线程数的确定：
+`build_threaded_runtime`The skeleton of is similar to current_thread, but there are three essential differences. The first is the determination of the number of worker threads:
 
-[FACT:tokio/src/runtime/builder.rs:2185](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2185)
+[FACT:tokio/src/runtime/builder.rs:2185]
 
 ```rust
 let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
 ```
 
-`None` 在这里被解析为 `num_cpus()`。这就是「延迟自动探测」的落地点——探测发生在 build 时而非 `Builder::new` 时，因为 CPU 亲和性可能在两者之间变化。
+`None`Here it is parsed as`num_cpus()`. This is where "delayed automatic detection" lands—detection happens at build time rather than at`Builder::new`time, because CPU affinity may change between the two.
 
-第二处差异在 blocking pool 的容量计算：
+The second difference is in the capacity calculation of the blocking pool:
 
-[FACT:tokio/src/runtime/builder.rs:2189-2192](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2189-L2192)
+[FACT:tokio/src/runtime/builder.rs:2189-2192]
 
 ```rust
 let blocking_pool =
@@ -271,20 +271,20 @@ let blocking_pool =
 let blocking_spawner = blocking_pool.spawner().clone();
 ```
 
-注意 `max_blocking_threads + worker_threads`。对比 current_thread 路径传入的是 `self.max_blocking_threads` 和 `0`。
+Note`max_blocking_threads + worker_threads`. In contrast, the current_thread path passes in`self.max_blocking_threads`and`0`。
 
-[FACT:tokio/src/runtime/builder.rs:1765](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1765)
+[FACT:tokio/src/runtime/builder.rs:1765]
 
 ```rust
 let blocking_pool = blocking::create_blocking_pool(self, self.max_blocking_threads, 0);
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个差异揭示了 blocking pool 容量语义：multi_thread 下，`max_blocking_threads` 是「额外的」阻塞线程上限，实际总线程上限要加上 worker 线程数。第三个参数（current_thread 传 0，multi_thread 传 `worker_threads`）很可能是「预留线程数」或「初始线程数」的提示。这个设计让 `max_blocking_threads` 的语义在两种形态下保持一致：它描述的是「超出核心 worker 之外还能额外开多少阻塞线程」。
+> **[Design Inference & Architectural Trade-offs]**
+> This difference reveals the semantics of blocking pool capacity: under multi_thread,`max_blocking_threads`is the upper limit of "additional" blocking threads, and the actual total thread limit must add the number of worker threads. The third parameter (current_thread passes 0, multi_thread passes`worker_threads`) is very likely a hint for "reserved thread count" or "initial thread count." This design keeps the semantics of`max_blocking_threads`consistent across the two forms: it describes "how many extra blocking threads can be opened beyond the core workers."
 
-第三处差异是 `MultiThread::new` 返回三元组而非二元组：
+The third difference is that`MultiThread::new`returns a triple instead of a pair:
 
-[FACT:tokio/src/runtime/builder.rs:2198-2226](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2198-L2226)
+[FACT:tokio/src/runtime/builder.rs:2198-2226]
 
 ```rust
 let (scheduler, handle, launch) = MultiThread::new(
@@ -303,9 +303,9 @@ let (scheduler, handle, launch) = MultiThread::new(
 );
 ```
 
-多出来的 `launch` 是一个「启动句柄」。`MultiThread::new` 只负责构造调度器结构，**并不立即启动 worker 线程**。真正的启动发生在后面：
+The extra`launch`is a "startup handle."`MultiThread::new`is only responsible for constructing the scheduler structure,**and does not immediately start worker threads**. The actual startup happens later:
 
-[FACT:tokio/src/runtime/builder.rs:2228-2234](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2228-L2234)
+[FACT:tokio/src/runtime/builder.rs:2228-2234]
 
 ```rust
 let handle = Handle { inner: scheduler::Handle::MultiThread(handle) };
@@ -317,14 +317,14 @@ launch.launch();
 Ok(Runtime::from_parts(Scheduler::MultiThread(scheduler), handle, blocking_pool))
 ```
 
-`handle.enter()` 进入运行时上下文，然后 `launch.launch()` 才真正 spawn 出所有 worker 线程。这个「先构造、后启动」的两阶段设计非常关键。
+`handle.enter()`enters the runtime context, and then`launch.launch()`actually spawns all worker threads. This two-phase design of "construct first, start later" is very critical.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么不能边构造边启动？因为 worker 线程一旦启动就会立刻开始 poll 任务，而任务可能引用 `handle`。如果 `handle` 还没构造完，就会出现「worker 拿着半成品句柄」的竞态。两阶段设计保证了：**所有 worker 线程启动时，完整的 `Handle` 已经就绪**。`_enter` 守卫确保 worker 线程在启动瞬间就处于正确的运行时上下文中。
+> **[Design Inference & Architectural Trade-offs]**
+> Why can't it start while constructing? Because once worker threads start, they immediately begin polling tasks, and tasks may reference`handle`. If`handle`has not finished being constructed, there will be a race where "workers hold a half-finished handle." The two-phase design guarantees:**when all worker threads start, the complete`Handle`is already ready**。`_enter`The guard ensures that worker threads are in the correct runtime context at the moment they start.
 
-## 装配流程图
+## Assembly flow diagram
 
-下面这张图把两条路径的装配顺序、关键分支和错误路径画在一起。注意 `driver::Driver::new` 失败时直接返回 `Err`，此时 blocking pool 尚未创建。
+The diagram below puts the assembly order, key branches, and error paths of both paths together. Note that when`driver::Driver::new`fails, it directly returns`Err`, and at this point the blocking pool has not yet been created.
 
 ```mermaid
 flowchart TD
@@ -357,11 +357,11 @@ flowchart TD
     mt_launch --> mt_rt["Runtime::from_parts(Scheduler::MultiThread, handle, blocking_pool)"]
 ```
 
-## 句柄共享：`Handle` 如何成为跨组件的「通行证」
+## Handle sharing:`Handle`How becomes a "pass" across components
 
-装配完成后，`Runtime` 持有 `scheduler`、`handle`、`blocking_pool` 三件套。其中 `handle` 是共享的核心。它的内部是一个枚举：
+After assembly is complete,`Runtime`holds`scheduler`、`handle`、`blocking_pool`the trio. Among them,`handle`is the shared core. Internally it is an enum:
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:29-41](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L29-L41)
+[FACT:tokio/src/runtime/scheduler/mod.rs:29-41]
 
 ```rust
 #[derive(Debug, Clone)]
@@ -378,9 +378,9 @@ pub(crate) enum Handle {
 }
 ```
 
-注意两个变体都包着 `Arc`。这意味着 `Handle` 的克隆是廉价的引用计数递增，可以被自由地分发到任意线程。`Handle` 提供了统一的访问接口，把形态差异封装在 `match` 内部。例如 `driver()`：
+Note that both variants wrap`Arc`. This means that cloning`Handle`is a cheap reference-count increment and can be freely distributed to any thread.`Handle`provides a unified access interface, encapsulating form differences inside`match`. For example`driver()`：
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:53-64](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L53-L64)
+[FACT:tokio/src/runtime/scheduler/mod.rs:53-64]
 
 ```rust
 pub(crate) fn driver(&self) -> &driver::Handle {
@@ -397,9 +397,9 @@ pub(crate) fn driver(&self) -> &driver::Handle {
 }
 ```
 
-`blocking_spawner()` 用了 `match_flavor!` 宏来消除重复：
+`blocking_spawner()`uses the`match_flavor!`macro to eliminate duplication:
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:96-98](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L96-L98)
+[FACT:tokio/src/runtime/scheduler/mod.rs:96-98]
 
 ```rust
 pub(crate) fn blocking_spawner(&self) -> &blocking::Spawner {
@@ -407,11 +407,11 @@ pub(crate) fn blocking_spawner(&self) -> &blocking::Spawner {
 }
 ```
 
-这个宏展开后就是上面 `driver()` 那样的 `match`。它的价值在于：当新增一个需要按形态分发的访问器时，只需一行 `match_flavor!`，而不必手写两遍 `match` 分支。
+After expansion, this macro is the`driver()`like the`match`above. Its value is that when adding a new accessor that needs to dispatch by form, only one line of`match_flavor!`is needed, instead of manually writing the`match`branches twice.
 
-公开的 `Handle` 是内部 `scheduler::Handle` 的薄包装：
+The public`Handle`is a thin wrapper around the internal`scheduler::Handle`:
 
-[FACT:tokio/src/runtime/handle.rs:13-15](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/handle.rs#L13-L15)
+[FACT:tokio/src/runtime/handle.rs:13-15]
 
 ```rust
 pub struct Handle {
@@ -419,9 +419,9 @@ pub struct Handle {
 }
 ```
 
-用户拿到的 `Handle` 可以跨线程克隆、可以 `spawn`、可以 `block_on`。`spawn` 的实现展示了 `AutoBox` 的编译期分支：
+The`Handle`users get can be cloned across threads, can`spawn`, can`block_on`。`spawn`The implementation shows the compile-time branching of`AutoBox`:
 
-[FACT:tokio/src/runtime/handle.rs:197-208](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/handle.rs#L197-L208)
+[FACT:tokio/src/runtime/handle.rs:197-208]
 
 ```rust
 pub fn spawn(&self, future: F) -> JoinHandle
@@ -438,9 +438,9 @@ where
 }
 ```
 
-`AutoBox::<F>::SHOULD_BOX` 是一个关联常量，由 `size_of::<F>()` 与阈值比较得出。
+`AutoBox::<F>::SHOULD_BOX`is an associated constant, derived by comparing`size_of::<F>()`with a threshold.
 
-[FACT:tokio/src/runtime/mod.rs:668-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L668-L673)
+[FACT:tokio/src/runtime/mod.rs:668-673]
 
 ```rust
 pub(crate) struct AutoBox(std::marker::PhantomData);
@@ -450,16 +450,16 @@ impl AutoBox {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 注释里解释了为什么用关联常量而非运行时 `if`：如果用运行时判断，`spawn_named` 会被单态化两次（一次针对 `F`，一次针对 `Pin<Box<F>>`），导致每个 spawn 的 future 都生成两份任务 harness，代码体积翻倍。用常量分支后，单态化收集器只保留实际走到的那个分支。
+> **[Design Inference & Architectural Trade-offs]**
+> The comment explains why an associated constant is used instead of a runtime`if`: if runtime judgment were used,`spawn_named`would be monomorphized twice (once for`F`, once for`Pin<Box<F>>`), causing every spawned future to generate two task harnesses and doubling code size. With constant branching, the monomorphization collector keeps only the branch actually taken.
 
-## 设计思考：装配顺序、错误恢复与生产踩坑
+## Design thinking: assembly order, error recovery, and production pitfalls
 
-**顺序即契约**。装配顺序 `driver -> blocking_pool -> scheduler` 不是随意的。driver 最先创建，因为它是唯一可能因 OS 资源不足而失败、且失败后无需清理其他组件的步骤。blocking_pool 在 driver 之后、scheduler 之前，因为 scheduler 需要 blocking_spawner。如果 blocking_pool 创建失败（实际上它不太会失败），driver 会被 drop 自动清理。
+**Order is contract**. The assembly order`driver -> blocking_pool -> scheduler`is not arbitrary. The driver is created first because it is the only step that may fail due to insufficient OS resources and, after failure, requires no cleanup of other components. blocking_pool comes after the driver and before the scheduler, because the scheduler needs blocking_spawner. If blocking_pool creation fails (in practice it is unlikely to fail), the driver will be automatically cleaned up by drop.
 
-**current_thread 的 `local_tid` 分支**。`build_local` 走的是 `build_current_thread_local_runtime`，它把当前线程 ID 传进去：
+**current_thread's`local_tid`branch**。`build_local`takes`build_current_thread_local_runtime`, passing in the current thread ID:
 
-[FACT:tokio/src/runtime/builder.rs:1738-1751](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1738-L1751)
+[FACT:tokio/src/runtime/builder.rs:1738-1751]
 
 ```rust
 fn build_current_thread_local_runtime(&mut self) -> io::Result {
@@ -478,9 +478,9 @@ fn build_current_thread_local_runtime(&mut self) -> io::Result {
 }
 ```
 
-这个 `tid` 被存进 `Handle`，后续 `can_spawn_local_on_local_runtime` 用它校验「spawn_local 是否在 owner 线程上调用」：
+This`tid`is stored in`Handle`, and later`can_spawn_local_on_local_runtime`uses it to verify "whether spawn_local is called on the owner thread":
 
-[FACT:tokio/src/runtime/scheduler/mod.rs:140-147](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/scheduler/mod.rs#L140-L147)
+[FACT:tokio/src/runtime/scheduler/mod.rs:140-147]
 
 ```rust
 pub(crate) fn can_spawn_local_on_local_runtime(&self) -> bool {
@@ -493,12 +493,12 @@ pub(crate) fn can_spawn_local_on_local_runtime(&self) -> bool {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这是 `LocalRuntime` 安全性的基石：`!Send` 的 future 只能在其 owner 线程上被 poll，而 `local_tid` 就是这个约束的运行时检查点。如果去掉这个检查，跨线程 spawn_local 会导致 `!Send` 数据被并发访问，引发 UB。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the cornerstone of`LocalRuntime`safety:`!Send`'s future can only be polled on its owner thread, and`local_tid`is the runtime checkpoint for this constraint. If this check were removed, cross-thread spawn_local would cause`!Send`data to be accessed concurrently, leading to UB.
 
-**生产踩坑一：`worker_threads(0)` 会 panic**。`worker_threads` 方法有断言：
+**Production pitfall one:`worker_threads(0)`will panic**。`worker_threads`The method has an assertion:
 
-[FACT:tokio/src/runtime/builder.rs:582-586](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L582-L586)
+[FACT:tokio/src/runtime/builder.rs:582-586]
 
 ```rust
 pub fn worker_threads(&mut self, val: usize) -> &mut Self {
@@ -508,23 +508,23 @@ pub fn worker_threads(&mut self, val: usize) -> &mut Self {
 }
 ```
 
-这个断言在配置阶段就失败，而不是等到 build。好处是错误定位更早，坏处是如果线程数来自配置文件的动态值，用户必须在调用前自己校验。
+This assertion fails at the configuration stage rather than waiting until build. The benefit is earlier error localization; the downside is that if the thread count comes from a dynamic value in a config file, users must validate it themselves before calling.
 
-**生产踩坑二：`max_blocking_threads` 设太小会挂起**。文档明确警告：
+**Production Pitfall Two:`max_blocking_threads`Setting it too small will hang**. The documentation explicitly warns:
 
-[FACT:tokio/src/runtime/builder.rs:600-601](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L600-L601)
+[FACT:tokio/src/runtime/builder.rs:600-601]
 
 ```rust
 /// It's recommended to not set this limit too low in order to avoid hanging on operations
 /// requiring [`spawn_blocking`].
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 因为 blocking pool 的队列没有背压——任务会一直堆积直到有线程可用。如果所有阻塞线程都在等待某个「需要新阻塞线程才能完成」的操作，就会死锁。文档里「the queue does not apply any backpressure, it could potentially grow unbounded」正是这个风险的注脚。
+> **[Design Inference & Architectural Trade-offs]**
+> Because the blocking pool's queue has no backpressure—tasks will keep accumulating until a thread becomes available. If all blocking threads are waiting on some operation that "requires a new blocking thread to complete," a deadlock occurs. The documentation's statement "the queue does not apply any backpressure, it could potentially grow unbounded" is precisely a footnote to this risk.
 
-**生产踩坑三：`UnhandledPanic::ShutdownRuntime` 只支持 current_thread**。
+**Production Pitfall Three:`UnhandledPanic::ShutdownRuntime`Only supports current_thread**。
 
-[FACT:tokio/src/runtime/builder.rs:1374-1381](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1374-L1381)
+[FACT:tokio/src/runtime/builder.rs:1374-1381]
 
 ```rust
 pub fn unhandled_panic(&mut self, behavior: UnhandledPanic) -> &mut Self {
@@ -537,34 +537,35 @@ pub fn unhandled_panic(&mut self, behavior: UnhandledPanic) -> &mut Self {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个限制的原因是：multi_thread 下「立即关闭运行时」需要协调所有 worker 线程的停止，实现复杂度高且语义模糊（正在 poll 的其他任务怎么办？）。current_thread 只有一个线程，关闭语义清晰。
+> **[Design Inference & Architectural Trade-offs]**
+> The reason for this limitation is: under multi_thread, "immediately shutting down the runtime" requires coordinating the stopping of all worker threads, which is highly complex to implement and semantically ambiguous (what about other tasks currently being polled?). current_thread has only one thread, so the shutdown semantics are clear.
 
-## 本章Summary
+## Chapter Summary
 
-本章追踪了 `Builder::build` 的完整装配链路。核心结论：
+This chapter traced the`Builder::build`complete assembly chain. Core conclusions:
 
-1. `Builder` 是纯配置容器，`build()` 才创建资源。装配顺序 `driver -> blocking_pool -> scheduler` 由错误恢复需求决定。
+1. `Builder`is a pure configuration container,`build()`is what actually creates resources. The assembly order`driver -> blocking_pool -> scheduler`is determined by error recovery requirements.
 
-2. current_thread 与 multi_thread 的差异不止线程数：blocking pool 容量计算不同（`max_blocking_threads` vs `max_blocking_threads + worker_threads`），multi_thread 多一个 `launch` 两阶段启动，`enable_eager_driver_handoff` 在 current_thread 下被强制关闭。
+2. The difference between current_thread and multi_thread is not just the thread count: the blocking pool capacity calculation differs (`max_blocking_threads` vs `max_blocking_threads + worker_threads`), multi_thread has an extra`launch`two-phase startup,`enable_eager_driver_handoff`is forcibly disabled under current_thread.
 
-3. `Handle` 是跨组件共享的核心，内部用 `Arc` 包裹形态特定的句柄，通过 `match` 或 `match_flavor!` 宏统一访问。
+3. `Handle`is the core shared across components, internally using`Arc`to wrap form-specific handles, accessed uniformly through the`match`or`match_flavor!`macros.
 
-4. `AutoBox` 用关联常量在编译期决定是否装箱 future，避免代码体积翻倍。
+4. `AutoBox`uses associated constants to decide at compile time whether to box the future, avoiding doubling the code size.
 
-5. `local_tid` 是 `LocalRuntime` 安全性的运行时检查点。
+5. `local_tid`is the`LocalRuntime`runtime checkpoint for safety.
 
-下一章，我们将进入任务的生命周期：`spawn` 如何把一个 Future 变成可调度实体，`JoinHandle` 如何与任务状态机交互，以及任务在 `PENDING` / `RUNNING` / `COMPLETE` 之间的状态迁移。
+In the next chapter, we will enter the task lifecycle:`spawn`how a Future becomes a schedulable entity,`JoinHandle`how it interacts with the task state machine, and the state transitions of tasks between`PENDING` / `RUNNING` / `COMPLETE`.
 
+# Chapter Review and Self-Test
 
-Q1: 如果把 `build_threaded_runtime` 中 `create_blocking_pool` 的容量参数从 `self.max_blocking_threads + worker_threads` 改成 `self.max_blocking_threads`，在什么场景下会导致阻塞任务饿死？为什么 current_thread 路径可以传 `self.max_blocking_threads`？
+Q1: If in`build_threaded_runtime`the capacity parameter of`create_blocking_pool`is changed from`self.max_blocking_threads + worker_threads`to`self.max_blocking_threads`, in what scenarios would blocking tasks starve? Why can the current_thread path pass`self.max_blocking_threads`？
 
-**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2189-2192](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2189-L2192)，multi_thread 路径传入 `self.max_blocking_threads + worker_threads`，而 current_thread 路径 [FACT:tokio/src/runtime/builder.rs:1765](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L1765) 传入 `self.max_blocking_threads`。差异的根源在于：multi_thread 下，worker 线程本身也会执行阻塞任务（例如 `block_in_place` 会把 worker 线程临时转成阻塞线程），所以阻塞线程的总预算必须包含 worker 线程数。如果改成只传 `self.max_blocking_threads`，当 `max_blocking_threads` 设得较小（比如 1）且已有 worker 线程在 `block_in_place` 中占用预算时，新的 `spawn_blocking` 任务将无线程可用，堆积在无背压队列中，导致依赖这些阻塞任务的 async 任务永久挂起。current_thread 只有一个线程且不支持 `block_in_place` 的 worker 转换语义，所以不需要加上 worker 数。
+**Reference Analysis**: According to[FACT:tokio/src/runtime/builder.rs:2189-2192], the multi_thread path passes in`self.max_blocking_threads + worker_threads`, while the current_thread path[FACT:tokio/src/runtime/builder.rs:1765]passes in`self.max_blocking_threads`. The root of the difference is: under multi_thread, worker threads themselves also execute blocking tasks (for example,`block_in_place`temporarily converts a worker thread into a blocking thread), so the total budget for blocking threads must include the number of worker threads. If changed to pass only`self.max_blocking_threads`, when`max_blocking_threads`is set small (say 1) and worker threads are already occupying the budget in`block_in_place`, new`spawn_blocking`tasks will have no threads available and will pile up in the backpressure-free queue, causing async tasks that depend on these blocking tasks to hang permanently. current_thread has only one thread and does not support`block_in_place`'s worker conversion semantics, so there is no need to add the worker count.
 
-Q2: `MultiThread::new` 返回 `launch` 句柄，真正启动 worker 线程的是 `launch.launch()`。如果去掉 `handle.enter()` 这一行直接调用 `launch.launch()`，会发生什么？
+Q2: `MultiThread::new`returns the`launch`handle; what actually starts the worker threads is`launch.launch()`. If the`handle.enter()`line is removed and`launch.launch()`is called directly, what happens?
 
-**参考解析**：根据 [FACT:tokio/src/runtime/builder.rs:2230-2232](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/builder.rs#L2230-L2232)，启动前有 `let _enter = handle.enter();` 然后才 `launch.launch()`。`handle.enter()` 的作用是设置线程本地上下文（thread-local），让当前线程「看起来」处于运行时内部。worker 线程启动后会立即开始 poll 任务，而任务代码可能调用 `Handle::current()`、`tokio::spawn` 等依赖上下文的 API。如果去掉 `_enter`，worker 线程在启动瞬间的上下文设置可能不完整（取决于 `launch` 内部是否自行设置），最坏情况下 worker 线程上执行的初始化代码调用 `Handle::current()` 会 panic（`CONTEXT_MISSING_ERROR`）。即使 `launch` 内部为每个 worker 设置了上下文，`_enter` 也保证了「启动动作本身」发生在正确的上下文中，避免启动过程中的竞态。
+**Reference Analysis**: According to[FACT:tokio/src/runtime/builder.rs:2230-2232], before startup there is`let _enter = handle.enter();`and only then`launch.launch()`。`handle.enter()`. The purpose is to set the thread-local context, making the current thread "appear" to be inside the runtime. After worker threads start, they immediately begin polling tasks, and task code may call`Handle::current()`、`tokio::spawn`and other context-dependent APIs. If`_enter`is removed, the context setup at the moment worker threads start may be incomplete (depending on whether`launch`sets it internally), and in the worst case, initialization code executing on the worker thread that calls`Handle::current()`will panic (`CONTEXT_MISSING_ERROR`). Even if`launch`internally sets the context for each worker,`_enter`ensures that "the startup action itself" occurs in the correct context, avoiding races during startup.
 
-Q3: `AutoBox::<F>::SHOULD_BOX` 用关联常量而非运行时 `if size_of::<F>() > THRESHOLD`。假设改成运行时判断，除了代码体积翻倍，还会在什么情况下导致性能退化？
+Q3: `AutoBox::<F>::SHOULD_BOX`uses associated constants rather than runtime`if size_of::<F>() > THRESHOLD`. Suppose it were changed to runtime judgment—besides doubling the code size, in what situations would it cause performance degradation?
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L657-L673) 的注释，运行时 `if` 会让 `spawn_named` 对每个 `T` 单态化两次（`T` 和 `Pin<Box<T>>` 各一次）。除了代码体积翻倍，性能退化体现在：1) 指令缓存（i-cache）压力增大，因为两套 harness 代码都要驻留；2) 编译器无法对「实际只走一个分支」做优化，运行时分支预测虽然通常准确，但分支本身和两套代码的寄存器分配差异会累积；3) 更隐蔽的是，`Pin<Box<T>>` 路径会强制堆分配，如果运行时判断因为某种原因（比如 `size_of` 在泛型上下文中未完全常量折叠）误判，小 future 也会被装箱，每次 spawn 多一次堆分配。关联常量让单态化收集器在编译期就剪掉未走的分支，零运行时开销。
+**Reference Analysis**: According to[FACT:tokio/src/runtime/mod.rs:657-673]'s comments, runtime`if`causes`spawn_named`to monomorphize each`T`twice (`T`and`Pin<Box<T>>`each once). Besides doubling the code size, performance degradation manifests as: 1) increased instruction cache (i-cache) pressure, because both sets of harness code must reside; 2) the compiler cannot optimize for "actually only one branch is taken," and although runtime branch prediction is usually accurate, the branch itself and the register allocation differences between the two code sets accumulate; 3) more subtly,`Pin<Box<T>>`the path forces heap allocation, and if the runtime judgment misjudges for some reason (e.g.,`size_of`is not fully constant-folded in a generic context), small futures will also be boxed, adding an extra heap allocation per spawn. Associated constants let the monomorphization collector prune the untaken branch at compile time, with zero runtime overhead.

@@ -1,54 +1,54 @@
-# Chapter 04: The Devil in the Details: Tree-shaking Semantics & Type Declarations
+# Chapter 4: Compile-Time Magic: Enum Inlining and Tree-shaking Verification Mechanism
 
+In the previous chapter, we saw how the development-time pipeline uses file watching and incremental builds to trade for the speed of "change one line and it takes effect immediately." But beyond speed, Vue has another more hidden constraint: the size of the published artifact must be controllable. One of the enemies of this constraint is TypeScript's enum—at runtime it is a real object and will break Tree-shaking. This chapter enters the compile phase to see how scripts/inline-enums.js "dissolves" enums into literals before the code is executed by the browser; then see how scripts/verify-treeshaking.js, after the build, uses artifact strings to reverse-verify that the promise of "on-demand imports" has not been quietly broken.
 
-上一章我们看到开发态链路如何用文件监听与增量构建换取「改一行立即生效」的速度。但速度之外，Vue 还有一条更隐蔽的约束：发布产物的体积必须可控。这条约束的敌人之一，是 TypeScript 的 enum——它在运行时是一个真实存在的对象，会破坏 Tree-shaking。本章进入编译期，看 scripts/inline-enums.js 如何在代码被浏览器执行之前，把枚举「溶解」成字面量；再看 scripts/verify-treeshaking.js 如何在构建之后，用产物字符串反向验证「按需引入」的承诺没有被悄悄破坏。
+# 4.1 Enum Inlining: Dissolving Runtime Objects into Literals
 
+## Intuitive model
 
-## Intuitive Architectural Model
+Imagine you write a recipe in which "a pinch of salt" appears repeatedly. If every time you cook you have to flip to the appendix to look up "a pinch = 3 grams," it is both slow and takes up space. What enum inlining does is, before printing, directly replace every "a pinch of salt" in the book with "3 grams of salt," and then tear out that appendix page. For the reader (the runtime), the result is exactly the same, but the book is thinner.
 
-想象你写了一份菜谱，里面反复出现「少许盐」。如果每次做菜都要翻到附录去查「少许 = 3 克」，既慢又占地方。枚举内联做的事，就是在印刷前把全书的「少许盐」直接替换成「3 克盐」，然后把附录那一页撕掉。对读者（运行时）而言，结果完全一样，但书更薄了。
+If it did not exist, what disaster would the system face? An ordinary TypeScript`enum`compiles into a real object literal and has a bidirectional mapping (`Enum[Enum.A] === 'A'`). This object is**a module-level declaration with side effects**, and Rollup cannot prove that it is unused, so it can only keep it—even if you import only one member, the entire enum object together with the reverse mapping will be packed into the artifact.[FACT:scripts/inline-enums.js:3-9]The comments in`const enum`say it very directly: they once used
 
-若没有它，系统会面临什么灾难？TypeScript 的普通 `enum` 编译后会生成一个真实的对象字面量，并且带有双向映射（`Enum[Enum.A] === 'A'`）。这个对象是**有副作用的模块级声明**，Rollup 无法证明它未被使用，于是只能保留——哪怕你只 import 了其中一个成员，整个枚举对象连同反向映射都会被塞进产物。[FACT:scripts/inline-enums.js:3-9](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L3-L9) 的注释说得很直白：他们曾用 `const enum`，但因 issue #1228 改用普通 enum，于是用这个脚本「手动找回 const enum 的零成本收益」。
+## , but because of issue #1228 switched to a normal enum, and therefore used this script to "manually recover the zero-cost benefit of const enum."
 
-## Data Structures & Memory Layout
+Data structures and memory layout[FACT:scripts/inline-enums.js:33-36]
 
-脚本的核心是三个类型定义，理解它们就理解了整个数据流。[FACT:scripts/inline-enums.js:33-36](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L33-L36)
+- `EnumMember`：`{ name, value }`The core of the script is three type definitions; understanding them means understanding the entire data flow.
+- `EnumDeclaration`：`{ id, range: [start, end], members }`。`range`, the name of a single enum member and the evaluated literal.**is**the source byte offset`export enum X { ... }`, pointing to the start and end positions of the entire
+- `EnumData`：`{ declarations, defines }`。`declarations`declaration in the file—this is the anchor for the subsequent precise replacement by MagicString.`defines`Indexed by file path, recording the replacement ranges of all enum declarations in that file;` `is a flat mapping whose key is the literal after `` `` 形式的字符串，值是 `${enumName}.${memberName}
 
-- `EnumMember`：`{ name, value }`，单个枚举成员的名字与求值后的字面量。
-- `EnumDeclaration`：`{ id, range: [start, end], members }`。`range` 是**源码字节偏移**，指向 `export enum X { ... }` 整段声明在文件中的起止位置——这是后续 MagicString 精确替换的锚点。
-- `EnumData`：`{ declarations, defines }`。`declarations` 按文件路径索引，记录该文件里所有枚举声明的替换范围；`defines` 是一个扁平映射，键是 `` `${枚举名}.${成员名}` `` 形式的字符串，值是 `JSON.stringify` 后的字面量。
+JSON.stringify`.`defines`There is a key design here:**the key of**。[FACT:scripts/inline-enums.js:98-103]does not include the file path`ErrorCodes`. The comments explain the reason—`@vue/compiler-core`can exist simultaneously in`@vue/runtime-core`and`ErrorCodes.__EXTEND_POINT__`, so enums with the same name are allowed to exist across files; but the same`fullKey in defines`is not allowed to repeat in two enums with the same name, otherwise`name conflict`is hit and
 
-这里有个关键设计：`defines` 的键**不含文件路径**。[FACT:scripts/inline-enums.js:98-103](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L98-L103) 注释解释了原因——`ErrorCodes` 可以同时存在于 `@vue/compiler-core` 和 `@vue/runtime-core`，所以允许同名枚举跨文件存在；但同一个 `ErrorCodes.__EXTEND_POINT__` 不允许在两个同名枚举里重复，否则 `fullKey in defines` 命中，直接抛 `name conflict`。这是一个「按成员名全局唯一」的约束，而非「按枚举名全局唯一」。
+is thrown directly. This is a constraint of "globally unique by member name," not "globally unique by enum name."`temp/enum.json`。[FACT:scripts/inline-enums.js:33-36]The cache is stored in`scanEnums()`Why is persistence to disk needed? Because**is called only once at the build entry, while Rollup will start**。[FACT:scripts/inline-enums.js:39-41]independent processes`inlineEnums()`for each package and each format. The comments point out: the data must be shared across concurrent Rollup processes, so it must be serialized to disk and read back by each process's
 
-缓存落在 `temp/enum.json`。[FACT:scripts/inline-enums.js:33-36](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L33-L36) 为什么需要落盘？因为 `scanEnums()` 在构建入口只调用一次，而 Rollup 会为每个包、每种格式启动**独立的进程**。[FACT:scripts/inline-enums.js:39-41](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L39-L41) 注释点明：数据要跨并发的 Rollup 进程共享，所以必须序列化到磁盘，由各进程的 `inlineEnums()` 读回。
+## .
 
-## Step-by-Step：从 grep 到字面量替换
+**Step-by-Step: From grep to literal replacement`export enum`Step 1: grep out all files containing**[FACT:scripts/inline-enums.js:51-61].`spawnSync('git', ['grep', 'export enum'])`uses`path:line:content`, and the output looks like`:`, then split out the first segment (the file path) by`Set`, and use`git grep`instead of traversing the file system—it naturally only scans files tracked by Git, automatically excluding`node_modules`and build artifacts.
 
-**第一步：grep 出所有含 `export enum` 的文件。**[FACT:scripts/inline-enums.js:51-61](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L51-L61) 用 `spawnSync('git', ['grep', 'export enum'])`，输出形如 `path:line:content`，再按 `:` 切出第一段（文件路径），用 `Set` 去重。注意这里用的是 `git grep` 而非遍历文件系统——它天然只扫被 Git 跟踪的文件，自动排除 `node_modules` 与构建产物。
+**Step 2: Babel parses and collects enum information.**[FACT:scripts/inline-enums.js:64-70]For each file, use`@babel/parser`with the`typescript`plugin,`sourceType: 'module'`parse into an AST, then only traverse`ast.program.body`top-level nodes.[FACT:scripts/inline-enums.js:74-79]Only recognize`ExportNamedDeclaration`nodes where`declaration.type === 'TSEnumDeclaration'`—that is,**non-exported enums will not be processed.**。
 
-**第二步：Babel 解析并收集枚举信息。**[FACT:scripts/inline-enums.js:64-70](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L64-L70) 对每个文件用 `@babel/parser` 以 `typescript` 插件、`sourceType: 'module'` 解析成 AST，然后只遍历 `ast.program.body` 的顶层节点。[FACT:scripts/inline-enums.js:74-79](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L74-L79) 只认 `ExportNamedDeclaration` 且其 `declaration.type === 'TSEnumDeclaration'` 的节点——也就是说，**非导出的 enum 不会被处理**。
+For each enum declaration, the script evaluates members one by one. Member evaluation has three paths:
 
-对每个枚举声明，脚本逐成员求值。成员求值分三条路径：
+1. **Literal initialization**：`StringLiteral`or`NumericLiteral`directly take`init.value`。[FACT:scripts/inline-enums.js:114-119]
 
-1. **字面量初始化**：`StringLiteral` 或 `NumericLiteral` 直接取 `init.value`。[FACT:scripts/inline-enums.js:114-119](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L114-L119)
+2. **Binary expression**: such as`1 << 2`. Recursively`resolveValue`process the left and right operands; operands can be literals or`MemberExpression`(i.e., referencing previously defined enum members).[FACT:scripts/inline-enums.js:121-151]The key is in the`MemberExpression`branch: it uses`content.slice(node.start, node.end)`to extract the expression string from**the original source text**(such as`ErrorCodes.FOO`), then look up`defines`. If not found, throw`unhandled enum initialization expression`。[FACT:scripts/inline-enums.js:132-141]This explains why`defines`must be a global flat map—when referencing across enums, the referenced member may come from another file, but the key only recognizes`枚举名.成员名`。
 
-2. **二元表达式**：如 `1 << 2`。递归 `resolveValue` 处理左右操作数，操作数可以是字面量，也可以是 `MemberExpression`（即引用前面已定义的枚举成员）。[FACT:scripts/inline-enums.js:121-151](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L121-L151) 关键在 `MemberExpression` 分支：它用 `content.slice(node.start, node.end)` 从**原始源码文本**里切出表达式字符串（如 `ErrorCodes.FOO`），再查 `defines`。若查不到就抛 `unhandled enum initialization expression`。[FACT:scripts/inline-enums.js:132-141](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L132-L141) 这解释了为什么 `defines` 必须是全局扁平映射——跨枚举引用时，被引用者可能来自另一个文件，但键只认 `枚举名.成员名`。
+3. **Unary expression**: such as`-1`, concatenate into a`-1`string and then use`evaluate`to evaluate.[FACT:scripts/inline-enums.js:152-163]
 
-3. **一元表达式**：如 `-1`，拼成 `-1` 字符串后用 `evaluate` 求值。[FACT:scripts/inline-enums.js:152-163](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L152-L163)
+The evaluation itself uses`new Function('return ' + exp)()`。[FACT:scripts/inline-enums.js:39-41]This is a**controlled eval**: the input comes from already-parsed AST fragments in the source code, not arbitrary user input, so the safety boundary is controllable.
 
-求值本身用的是 `new Function('return ' + exp)()`。[FACT:scripts/inline-enums.js:39-41](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L39-L41) 这是一个**受控的 eval**：输入来自源码里已解析的 AST 片段，不是任意用户输入，所以安全边界可控。
+**Step 3: Handle members without initializers (auto-increment semantics).**[FACT:scripts/inline-enums.js:171-183]If a member has no`initializer`: the first member defaults to`0`; for subsequent members, if`lastInitialized`is a number then`++`; if it is a string then throw`wrong enum initialization sequence`—because string enum members do not allow implicit auto-increment. This is exactly the semantics of TypeScript enums.
 
-**第三步：处理无初始化器的成员（自增语义）。**[FACT:scripts/inline-enums.js:171-183](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L171-L183) 若成员没有 `initializer`：第一个成员默认 `0`；后续成员若 `lastInitialized` 是数字则 `++`；若是字符串则抛 `wrong enum initialization sequence`——因为字符串枚举成员不允许隐式自增。这正是 TypeScript 枚举的语义。
+**Step 4: Write cache and return a cleanup function.**[FACT:scripts/inline-enums.js:200-213] `scanEnums()`Return a closure; calling it`rmSync`deletes the cache file.`build.js`Use it in`try/finally`.[FACT:scripts/build.js:81-112]This ensures that even if an error is thrown midway through the build, the cache will be cleaned up and will not pollute the next build.
 
-**第四步：写缓存并返回清理函数。**[FACT:scripts/inline-enums.js:200-213](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L200-L213) `scanEnums()` 返回一个闭包，调用即 `rmSync` 删除缓存文件。`build.js` 在 `try/finally` 里使用它。[FACT:scripts/build.js:81-112](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/build.js#L81-L112) 这保证了即使构建中途抛错，缓存也会被清理，不会污染下一次构建。
+**Step 5: Rollup transform phase replacement.** `inlineEnums()`Read back the cache and construct a Rollup plugin.[FACT:scripts/inline-enums.js:219-234]In`transform(code, id)`, if`id`hits`enumData.declarations`, use MagicString to replace`[start, end]`this declaration with an object literal.[FACT:scripts/inline-enums.js:242-274]
 
-**第五步：Rollup transform 阶段替换。** `inlineEnums()` 读回缓存，构造一个 Rollup 插件。[FACT:scripts/inline-enums.js:219-234](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L219-L234) 在 `transform(code, id)` 中，若 `id` 命中 `enumData.declarations`，就用 MagicString 把 `[start, end]` 这段声明替换成对象字面量。[FACT:scripts/inline-enums.js:242-274](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L242-L274)
+The replaced form is`export const X = { ... }`. Note that it**does not simply delete the enum**, but rewrites it into an object literal, and additionally generates reverse mappings for numeric members:`JSON.stringify(value.toString()) + ': ' + JSON.stringify(name)`。[FACT:scripts/inline-enums.js:257-270]The comment references the reverse-mappings rule in the official TypeScript documentation: string enum members do not generate reverse mappings, numeric members do. This ensures that the runtime behavior after replacement is exactly the same as the original enum.
 
-替换后的形态是 `export const X = { ... }`。注意它**不是简单地删掉枚举**，而是重写成对象字面量，并且对数字成员额外生成反向映射：`JSON.stringify(value.toString()) + ': ' + JSON.stringify(name)`。[FACT:scripts/inline-enums.js:257-270](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L257-L270) 注释引用了 TypeScript 官方文档的 reverse-mappings 规则：字符串枚举成员不生成反向映射，数字成员生成。这保证了替换后运行时行为与原 enum 完全一致。
+What truly eliminates runtime overhead is that`defines`is handed to`@rollup/plugin-replace`。[FACT:rollup.config.js:222-223]all references to`X.Member`'s**references**are directly replaced with literals in the replacement plugin, so if that rewritten object literal is unused, it can be tree-shaken away.
 
-而真正消除运行时开销的，是 `defines` 被交给 `@rollup/plugin-replace`。[FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223) 所有对 `X.Member` 的**引用**在替换插件里被直接换成字面量，于是那个重写出来的对象字面量如果没人用，就能被 Tree-shaking 摇掉。
-
-下面这张流程图刻画了从 grep 到替换的完整决策路径：
+The following flowchart depicts the complete decision path from grep to replacement:
 
 ```mermaid
 flowchart TD
@@ -71,36 +71,37 @@ flowchart TD
     transform --> replace["plugin-replace 用 defines 替换引用"]
 ```
 
-## 设计思考与踩坑
+## Design considerations and pitfalls
 
-**为什么用 MagicString 而不是重新生成整个文件？** 因为 `s.update(start, end, ...)` 只替换枚举声明那一段，其余源码字节完全不动，`s.generateMap()` 还能生成精确的 sourcemap。[FACT:scripts/inline-enums.js:277-281](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L277-L281) 若用 Babel 重新打印整个 AST，会丢失原始格式、注释，且 sourcemap 质量下降。
+**Why use MagicString instead of regenerating the entire file?**Because`s.update(start, end, ...)`only replaces the enum declaration segment, leaving all other source bytes completely untouched,`s.generateMap()`and can still generate precise sourcemaps.[FACT:scripts/inline-enums.js:277-281]If Babel were used to reprint the entire AST, the original formatting and comments would be lost, and sourcemap quality would degrade.
 
-**`range` 为何是 `node.start/node.end` 而非 `declaration.start`？**[FACT:scripts/inline-enums.js:189-193](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L189-L193) 断言的是 `node.start`（即 `ExportNamedDeclaration` 节点），替换范围覆盖 `export enum X {...}` 整段，包括 `export` 关键字。替换文本以 `export const` 开头，正好接续。
+**`range`Why is it`node.start/node.end`rather than`declaration.start`？**[FACT:scripts/inline-enums.js:189-193]asserts`node.start`(i.e.,`ExportNamedDeclaration`node), and the replacement range covers`export enum X {...}`the entire segment, including the`export`keyword. The replacement text starts with`export const`, which connects exactly.
 
-**踩坑点：`defines` 的全局唯一性约束。** 如果两个不同文件里各有一个 `ErrorCodes`，且都定义了 `__EXTEND_POINT__`，构建会直接失败。[FACT:scripts/inline-enums.js:101-103](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L101-L103) 这不是 bug，而是刻意设计——因为 `defines` 是全局替换表，无法区分文件来源。生产环境中新增枚举成员时，若名字与已有枚举成员冲突，会在这里炸出来。
+**Pitfalls:`defines`The global uniqueness constraint of**If two different files each have a`ErrorCodes`, and both define`__EXTEND_POINT__`, the build will fail directly.[FACT:scripts/inline-enums.js:101-103]This is not a bug, but a deliberate design—because`defines`is a global replacement table and cannot distinguish file origins. In production, when adding new enum members, if the name conflicts with an existing enum member, it will blow up here.
 
-**踩坑点：`new Function` 的求值时机。** 二元表达式求值发生在 `scanEnums` 阶段，此时 `defines` 里可能还没有被引用的成员（若引用顺序颠倒）。[FACT:scripts/inline-enums.js:136-140](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L136-L140) 会抛 `unhandled enum initialization expression`。这要求枚举成员的引用必须遵循「先定义后引用」的源码顺序。
+**Pitfall:`new Function`The evaluation timing of**Binary expression evaluation occurs during the`scanEnums`phase, at which point`defines`may not yet contain the referenced member (if the reference order is reversed).[FACT:scripts/inline-enums.js:136-140]will throw`unhandled enum initialization expression`. This requires that references to enum members must follow the source order of "define first, reference later."
 
+# 4.2 Tree-shaking verification: using artifact strings to prove the promise in reverse
 
-## Intuitive Architectural Model
+## Intuitive model
 
-枚举内联是「事前优化」，但优化是否真的生效？如果某个 helper 因为写法不当被意外保留，体积会悄悄膨胀，而开发者毫无察觉。`verify-treeshaking.js` 就是那个「事后质检员」：它构建出产物，然后像验尸一样检查产物里**不该出现的东西是否出现**。若没有它，Vue 的按需引入承诺可能在某次重构后无声破裂，直到用户抱怨包变大才被发现。
+Enum inlining is an "ahead-of-time optimization," but does the optimization actually take effect? If some helper is accidentally retained due to improper coding style, the bundle size will quietly inflate, and the developer will be completely unaware.`verify-treeshaking.js`It is that "post-mortem quality inspector": it builds the artifact, then examines the artifact like an autopsy to check whether things that**should not appear do appear**. Without it, Vue's on-demand import promise might silently break after some refactor, only to be discovered when users complain that the package got bigger.
 
-## 数据结构与检查项
+## Data structures and check items
 
-这个脚本没有复杂数据结构，核心是一个 `errors` 数组和三次 `includes` 检查。[FACT:scripts/verify-treeshaking.js:6-6](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L6-L6) 它先构建 `global-runtime` 格式，然后分别读取 dev 与 prod 产物。
+This script has no complex data structures; the core is a`errors`array and three`includes`checks.[FACT:scripts/verify-treeshaking.js:6-6]It first builds the`global-runtime`format, then reads the dev and prod artifacts separately.
 
-三个检查项对应三类「Tree-shaking 失败」：
+The three check items correspond to three types of "Tree-shaking failures":
 
-1. **dev 产物含 `__spreadValues`**。[FACT:scripts/verify-treeshaking.js:13-19](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L13-L19) 这是 esbuild 为 `{ ...obj }` 对象展开语法生成的 helper。若它出现，说明运行时代码里用了对象展开，而 Vue 约定应改用 `extend` helper 以避免额外代码。
+1. **The dev artifact contains`__spreadValues`**。[FACT:scripts/verify-treeshaking.js:13-19]This is the helper generated by esbuild for`{ ...obj }`object spread syntax. If it appears, it means object spread was used in the runtime code, whereas Vue's convention is to use the`extend`helper instead to avoid extra code.
 
-2. **prod 产物含 `Vue warn`**。[FACT:scripts/verify-treeshaking.js:26-31](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L26-L31) 说明有 `warn()` 调用没有被 `__DEV__` 条件包裹，导致警告代码泄漏进生产包。
+2. **The prod artifact contains`Vue warn`**。[FACT:scripts/verify-treeshaking.js:26-31]This indicates there is a`warn()`call not wrapped by the`__DEV__`condition, causing warning code to leak into the production bundle.
 
-3. **prod 产物含 DOM tag 配置列表**。[FACT:scripts/verify-treeshaking.js:33-42](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L33-L42) 如 `html,body,base`、`svg,animate,animateMotion`、`annotation,annotation-xml,maction`。这些是 `isHTMLTag()` 等 helper 内部的数据，本应只存在于编译器、被运行时摇掉。若出现在运行时产物里，说明运行时路径误用了编译器专属 helper。
+3. **The prod artifact contains the DOM tag configuration list**。[FACT:scripts/verify-treeshaking.js:33-42]such as`html,body,base`、`svg,animate,animateMotion`、`annotation,annotation-xml,maction`. These are`isHTMLTag()`Data inside helpers like these should only exist in the compiler and be shaken out by the runtime. If it appears in runtime artifacts, it means the runtime path mistakenly used a compiler-only helper.
 
-## Step-by-Step：验证流程
+## Step-by-Step: Verification Process
 
-[FACT:scripts/verify-treeshaking.js:5-5](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L5-L5) 先 `exec('pnpm', ['build', 'vue', '-f', 'global-runtime'])`，只构建 `vue` 包的 `global-runtime` 格式——这是最小化的运行时产物，最适合暴露泄漏。构建完成后同步读取两个文件，逐个 `includes` 检查，命中就往 `errors` 里 push 一条带解释的消息。最后若 `errors.length` 非零，抛出聚合错误。[FACT:scripts/verify-treeshaking.js:44-48](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L44-L48)
+[FACT:scripts/verify-treeshaking.js:5-5]First`exec('pnpm', ['build', 'vue', '-f', 'global-runtime'])`, only build`vue`package's`global-runtime`format—this is the minimal runtime artifact, best suited for exposing leaks. After the build completes, read both files synchronously, check each`includes`one by one, and on a hit push a message with an explanation into`errors`. Finally, if`errors.length`is non-zero, throw an aggregated error.[FACT:scripts/verify-treeshaking.js:44-48]
 
 ```mermaid
 flowchart TD
@@ -120,69 +121,73 @@ flowchart TD
     done -->|否| fail["throw 聚合错误"]
 ```
 
-## 设计思考与踩坑
+## Design Thinking and Pitfalls
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **为什么用字符串 `includes` 而不是 AST 分析？**  因为这是「哨兵检查」而非「精确分析」。它不追求完备性，只针对历史上真实发生过的三类回归设置低成本警报。字符串匹配零依赖、零解析开销，且对压缩后的产物同样有效——AST 分析在 minify 后反而更难做。
+> **[Design Inference & Architectural Trade-offs]**
+> **Why use string`includes`instead of AST analysis?**Because this is a "sentinel check" rather than "precise analysis." It does not pursue completeness; it only sets up low-cost alarms for three types of regressions that have actually occurred historically. String matching has zero dependencies, zero parsing overhead, and remains effective on minified artifacts—AST analysis actually becomes harder after minify.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **为什么只验证 `global-runtime`？**  这个格式把所有依赖内联（`external` 为空），是体积最敏感、最容易被误引入的产物。若它干净，其他格式通常也干净。同时它构建快，适合放进 CI 频繁跑。
+> **[Design Inference & Architectural Trade-offs]**
+> **Why only verify`global-runtime`？**This format inlines all dependencies (`external`is empty), making it the artifact most sensitive to size and most easily polluted by mistake. If it is clean, other formats are usually clean too. At the same time, it builds quickly, making it suitable for frequent runs in CI.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **踩坑点：检查项是「黑名单」，会随代码演进失效。** 若某天 `isHTMLTag` 的数据结构改了，`html,body,base` 这个字符串不再出现，检查就形同虚设。 这要求维护者在改动相关 helper 时同步更新这里的哨兵字符串。这是黑名单式验证的固有代价。
+> **[Design Inference & Architectural Trade-offs]**
+> **Pitfall: The check items are a "blacklist" and will become ineffective as the code evolves.**If one day`isHTMLTag`'s data structure changes,`html,body,base`this string no longer appears, and the check becomes useless. This requires maintainers to update the sentinel strings here in sync when changing related helpers. This is the inherent cost of blacklist-style verification.
 
+# 4.3 Collaboration with Rollup: Plugin Order and define Injection
 
-枚举内联不是孤立运行的，它嵌在 Rollup 的插件流水线里。理解它在流水线中的位置，才能理解为什么 `defines` 要交给 `replace` 而非 `esbuild`。
+Enum inlining does not run in isolation; it is embedded in Rollup's plugin pipeline. Only by understanding its position in the pipeline can you understand why`defines`should be handed to`replace`rather than`esbuild`。
 
-[FACT:rollup.config.js:47-50](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L47-L50) 在配置模块顶层就调用 `inlineEnums()`，解构出 `[enumPlugin, enumDefines]`。注意这是在**每个 Rollup 进程启动时**执行的，读的是 `scanEnums` 写好的缓存。
+[FACT:rollup.config.js:47-50]calling`inlineEnums()`at the top level of the config module, destructuring out`[enumPlugin, enumDefines]`. Note that this is**executed when each Rollup process starts**, reading the cache written by`scanEnums`.
 
-插件数组的顺序是：`json` → `alias` → `enumPlugin` → `...resolveReplace()` → `esbuild`。[FACT:rollup.config.js:324-339](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L324-L339) `enumPlugin` 排在 `replace` 之前，意味着枚举声明的重写先发生，然后 `replace` 才用 `defines` 去替换引用。而 `esbuild` 排在最后，负责 TS 转译。
+The order of the plugin array is:`json` → `alias` → `enumPlugin` → `...resolveReplace()` → `esbuild`。[FACT:rollup.config.js:324-339] `enumPlugin`is placed before`replace`, meaning enum declaration rewriting happens first, and then`replace`uses`defines`to replace references. And`esbuild`is placed last, responsible for TS transpilation.
 
-为什么 `defines` 走 `replace` 而不走 `esbuild` 的 `define`？[FACT:rollup.config.js:220-221](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L220-L221) 注释给出答案：esbuild 的 define「有点严格，只允许字面量 JSON 或标识符」。而枚举成员名如 `ErrorCodes.__EXTEND_POINT__` 是带点的成员表达式，esbuild 的 define 无法直接处理这种键。所以必须用 `@rollup/plugin-replace`，它支持任意字符串键的替换。[FACT:rollup.config.js:250-251](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L250-L251) 且设置了 `preventAssignment: true`，避免把赋值语句左侧也替换掉。
+Why`defines`goes through`replace`instead of`esbuild`'s`define`？[FACT:rollup.config.js:220-221]comment gives the answer: esbuild's define is "a bit strict, only allowing literal JSON or identifiers." But enum member names like`ErrorCodes.__EXTEND_POINT__`are dotted member expressions, and esbuild's define cannot directly handle such keys. So`@rollup/plugin-replace`must be used, as it supports replacement of arbitrary string keys.[FACT:rollup.config.js:250-251]and sets`preventAssignment: true`, avoiding replacing the left-hand side of assignment statements as well.
 
-`resolveReplace()` 里 `const replacements = { ...enumDefines }` 是第一步。[FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223) 之后才叠加生产环境的 `/*@__PURE__*/` 标注、`__DEV__` 等替换。这个顺序保证了枚举字面量替换始终生效。
+`resolveReplace()`In`const replacements = { ...enumDefines }`is the first step.[FACT:rollup.config.js:222-223]Only afterward are production-environment`/*@__PURE__*/`annotations,`__DEV__`and other replacements layered on. This order ensures that enum literal replacement always takes effect.
 
+# Design Thinking
 
-**枚举内联的本质是「用构建期复杂度换运行时体积」。** 它把 TypeScript 的类型系统语义（枚举求值、自增、反向映射）在构建期完整复现了一遍——`scanEnums` 里的求值逻辑几乎是 TS 编译器枚举求值的一个子集。[FACT:scripts/inline-enums.js:110-183](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L110-L183) 这带来维护成本：TS 若新增枚举语法（如更复杂的常量表达式），这里必须跟进，否则抛 `unhandled` 错误。但收益是明确的：运行时零枚举对象，Tree-shaking 得以彻底。
+**The essence of enum inlining is "trading build-time complexity for runtime size."**It fully reproduces TypeScript's type system semantics (enum evaluation, auto-increment, reverse mapping) at build time—`scanEnums`the evaluation logic in is almost a subset of the TS compiler's enum evaluation.[FACT:scripts/inline-enums.js:110-183]This brings maintenance cost: if TS adds new enum syntax (such as more complex constant expressions), this must keep up, otherwise it throws`unhandled`an error. But the benefit is clear: zero enum objects at runtime, and Tree-shaking can be thorough.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> **验证脚本与内联脚本是一对「承诺与兑现」。** 内联脚本承诺「枚举不占运行时体积」，验证脚本检查「其他代码也没偷偷占体积」。两者共同守护 Vue 的体积预算。 这种「优化 + 验证」的成对设计，是大型前端库工程化的典型模式：任何优化都需要一个自动化检查来防止回归。
+> **[Design Inference & Architectural Trade-offs]**
+> **The verification script and the inline script are a pair of "promise and fulfillment."**The inline script promises "enums do not take up runtime size," and the verification script checks "other code has not secretly taken up size either." Together they guard Vue's size budget. This paired design of "optimization + verification" is a typical pattern in engineering large frontend libraries: any optimization needs an automated check to prevent regression.
 
-**跨进程缓存是并发构建的必需品。** `scanEnums` 单次执行、`inlineEnums` 多次读取的模式，[FACT:scripts/inline-enums.js:39-41](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L39-L41) 解决了「一次扫描、N 个进程消费」的问题。若没有缓存，每个 Rollup 进程都要重新 grep + 解析，浪费大量 IO 与 CPU。
+**Cross-process caching is a necessity for concurrent builds.** `scanEnums`The pattern of single execution and`inlineEnums`multiple reads[FACT:scripts/inline-enums.js:39-41]solves the problem of "one scan, N processes consuming." Without caching, every Rollup process would have to grep + parse again, wasting a large amount of IO and CPU.
 
+# Chapter Summary
 
+# Chapter Review and Self-Test
 
-Q1: 若把 `scanEnums` 中 `saveValue` 里的 `if (fullKey in defines)` 冲突检查删掉，在什么场景下会导致构建产物出现错误？
+Q1: If you delete`scanEnums`in`saveValue`'s`if (fullKey in defines)`conflict check, in what scenarios would it cause errors in the build artifacts?
 
-**参考解析**：
+**Reference Analysis**：
 
-`defines` 是全局扁平映射，键为 `枚举名.成员名`，不含文件路径。[FACT:scripts/inline-enums.js:98-103](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L98-L103) 删除冲突检查后，若两个不同文件各有一个同名枚举且定义了同名成员（如 `@vue/compiler-core` 与 `@vue/runtime-core` 都有 `ErrorCodes.__EXTEND_POINT__`），后写入者会覆盖先写入者。
+`defines`is a global flat mapping, with keys as`枚举名.成员名`, not including file paths.[FACT:scripts/inline-enums.js:98-103]After deleting the conflict check, if two different files each have an enum with the same name and define a member with the same name (such as`@vue/compiler-core`and`@vue/runtime-core`both having`ErrorCodes.__EXTEND_POINT__`), the later writer will overwrite the earlier writer.
 
-后果：`defines['ErrorCodes.__EXTEND_POINT__']` 只剩一个值，而 `plugin-replace` 在替换时无法区分文件来源，会把**所有**文件里的 `ErrorCodes.__EXTEND_POINT__` 都替换成同一个值。[FACT:rollup.config.js:222-223](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L222-L223) 于是其中一个包的枚举成员值被静默篡改，运行时行为错误且极难排查——因为源码看起来完全正确。
+Consequences:`defines['ErrorCodes.__EXTEND_POINT__']`only one value remains, and`plugin-replace`cannot distinguish the file source during replacement, so it will replace**all**files'`ErrorCodes.__EXTEND_POINT__`with the same value.[FACT:rollup.config.js:222-223]As a result, one package's enum member value is silently tampered with, causing incorrect runtime behavior that is extremely hard to troubleshoot—because the source code looks completely correct.
 
-这正是注释强调「允许同名枚举跨文件，但不允许同名成员」的原因。[FACT:scripts/inline-enums.js:98-100](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L98-L100) 冲突检查是防止全局替换表被污染的守门人。
+This is exactly why the comment emphasizes "same-name enums across files are allowed, but same-name members are not."[FACT:scripts/inline-enums.js:98-100]The conflict check is the gatekeeper preventing the global replacement table from being polluted.
 
-Q2: 若把 `rollup.config.js` 中插件数组里 `enumPlugin` 与 `...resolveReplace()` 的顺序对调，会发生什么？
+Q2: If you swap the order of`rollup.config.js`in`enumPlugin`'s plugin array with`...resolveReplace()`, what will happen?
 
-**参考解析**：
+**Reference Analysis**：
 
-当前顺序是 `enumPlugin` 在前、`replace` 在后。[FACT:rollup.config.js:331-332](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/rollup.config.js#L331-L332) Rollup 的 `transform` 钩子按插件数组顺序执行。
+The current order is`enumPlugin`first,`replace`later.[FACT:rollup.config.js:331-332]Rollup's`transform`hook executes in plugin array order.
 
-若对调，`replace` 会先运行，此时枚举声明还是原始的 `export enum X { ... }` 形态。`replace` 用 `defines` 去替换 `X.Member` 引用——但此时引用还在，替换能生效。问题出在 `enumPlugin` 随后运行时：它用 `s.update(start, end, ...)` 重写声明段。[FACT:scripts/inline-enums.js:250-273](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/inline-enums.js#L250-L273) 但 `replace` 已经修改过 `code`，而 `enumPlugin` 拿到的 `code` 是 `replace` 的输出，其字节偏移已与 `scanEnums` 记录的 `range`（基于原始源码）**不再对应**。
+If swapped,`replace`will run first, and at this point the enum declaration is still in its original`export enum X { ... }`form.`replace`uses`defines`to replace`X.Member`references—but at this point the references are still there, so the replacement can take effect. The problem occurs when`enumPlugin`subsequently runs: it uses`s.update(start, end, ...)`to rewrite the declaration section.[FACT:scripts/inline-enums.js:250-273]But`replace`has already modified`code`, and`enumPlugin`receives`code`is`replace`The output's byte offsets have already been compared with`scanEnums`recorded in`range`(based on the original source code)**no longer correspond**。
 
-后果：MagicString 会在错误的偏移处切割，产物语法错乱。这揭示了插件流水线的一个隐含契约：**基于源码偏移的变换必须最先执行**，后续变换才能安全地在其输出上继续。
+Consequence: MagicString will cut at the wrong offsets, and the output's syntax will be corrupted. This reveals an implicit contract of the plugin pipeline:**Transformations based on source offsets must be executed first**so that subsequent transformations can safely continue on its output.
 
-Q3: `verify-treeshaking.js` 只检查三个字符串哨兵。若某次重构把 `isHTMLTag` 内部数据从 `'html,body,base'` 改成数组形式 `['html','body','base']`，验证脚本会怎样？这暴露了什么设计缺陷？
+Q3: `verify-treeshaking.js`only checks three string sentinels. If some refactor changes`isHTMLTag`internal data from`'html,body,base'`to array form`['html','body','base']`what would the verification script do? What design flaw does this expose?
 
-**参考解析**：
+**Reference analysis**：
 
-验证脚本用 `prodBuild.includes('html,body,base')` 检查。[FACT:scripts/verify-treeshaking.js:33-37](https://github.com/vuejs/core/blob/4ab865a848a1da3d10fb674f857e5fff13094644/scripts/verify-treeshaking.js#L33-L37) 若数据改成数组，压缩产物里不再出现逗号连接的字符串，`includes` 返回 `false`，检查**静默通过**——即使 `isHTMLTag` 真的泄漏进了运行时产物。
+The verification script uses`prodBuild.includes('html,body,base')`to check.[FACT:scripts/verify-treeshaking.js:33-37]If the data is changed to an array, the comma-joined string will no longer appear in the minified output,`includes`returns`false`and the check**silently passes**— even if`isHTMLTag`really leaked into the runtime output.
 
-这暴露了黑名单式字符串验证的固有缺陷：**哨兵字符串与源码实现耦合，实现一变，验证即失效**。它无法检测「未知的泄漏」，只能检测「已知的、且字符串形态未变的泄漏」。
+This exposes the inherent flaw of blacklist-style string verification:**sentinel strings are coupled to the source implementation; once the implementation changes, the verification becomes invalid**. It cannot detect "unknown leaks"; it can only detect "known leaks whose string form has not changed."
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 改进方向： 可以改为检查更稳定的标识符（如函数名 `isHTMLTag`），或在源码层面用 lint 规则禁止运行时 import 编译器 helper，而非依赖产物字符串。但在当前成本约束下，字符串哨兵是「够用且廉价」的折中。
+> **[Design Inference & Architectural Trade-offs]**
+> Improvement direction: You could instead check for more stable identifiers (such as the function name`isHTMLTag`), or use lint rules at the source level to prohibit runtime imports of compiler helpers, rather than relying on output strings. But under the current cost constraints, string sentinels are a "good enough and cheap" compromise.
 
-枚举内联解决了「构建期如何消除运行时开销」，验证脚本解决了「如何确认优化没被破坏」。但构建产物除了 JS，还有一类同样需要流水线加工的产物——类型声明文件。下一章将进入类型产物流水线，看 Vue 如何从源码 `.d.ts` 生成发布级类型包，以及 `dts-test` 如何用类型契约测试守住公开 API 的类型形状。
+Enum inlining solves "how to eliminate runtime overhead at build time," and the verification script solves "how to confirm that the optimization has not been broken." But build outputs include more than JS; there is another type of artifact that also requires pipeline processing — type declaration files. The next chapter will enter the type artifact pipeline and see how Vue generates a release-grade type package from source`.d.ts`and how`dts-test`uses type contract tests to guard the type shape of the public API.
 
-本章拆解了编译期的两个关键脚本。inline-enums.js 用 git grep 定位枚举、Babel 解析 AST、new Function 求值成员、MagicString 精确重写声明，最终通过 defines 全局替换表把枚举引用变成字面量，让枚举对象可被 Tree-shaking 摇掉。verify-treeshaking.js 则在构建后用字符串哨兵检查产物，确保三类已知的 Tree-shaking 泄漏不会回归。两者一个负责「优化」，一个负责「验证优化没被破坏」，共同守护 Vue 的体积承诺。接下来，我们将从编译期转向类型产物的生成链路，看 Vue 如何保证源码类型与发布类型严格一致。
+This chapter dismantled two key scripts in the compilation phase. inline-enums.js uses git grep to locate enums, Babel to parse the AST, new Function to evaluate members, and MagicString to precisely rewrite declarations, ultimately turning enum references into literals through the defines global replacement table, allowing the enum object to be tree-shaken away. verify-treeshaking.js then uses string sentinels to check the build output, ensuring that three known types of Tree-shaking leaks do not regress. One is responsible for "optimization," and the other for "verifying that the optimization has not been broken," together safeguarding Vue's size commitment. Next, we will shift from the compilation phase to the generation pipeline of type artifacts, and see how Vue ensures strict consistency between source types and published types.

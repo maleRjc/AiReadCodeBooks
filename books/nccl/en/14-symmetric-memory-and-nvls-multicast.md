@@ -1,23 +1,23 @@
-# Chapter 14: Symmetric Memory & NVLS: Hardware Multicast & LSA Direct Addressing
+# Chapter 14: Symmetric Memory and NVLS: Multicast Acceleration and LSA Device-Side Direct Addressing
 
+In the previous chapter, we followed an inter-node AllReduce and saw how data travels from GPU memory through the NIC to the peer GPU. That path solves communication between machines. But in modern AI clusters, the communication volume between GPUs within the same machine or even within the same NVLink domain is equally enormous—gradient synchronization in data parallel training and activation exchange in tensor parallelism mostly occur within a node. If intra-node communication still goes through the inter-node flow of GPU→memory→NIC→peer NIC→memory→GPU, it is like sending a local package by air freight, wasting latency for no reason. This chapter will dissect exactly the two powerful tools NCCL prepares for intra-node communication: symmetric memory and NVLS. The former lets each rank use the same set of virtual addresses to access all ranks' buffers, while the latter uses the multicast capability of NVSwitch hardware for reduction. Combined, they can push the latency of small-message collective communication close to the hardware limit.
 
-上一章我们跟随一次跨机 AllReduce，看数据如何从 GPU 显存经网卡到达对端 GPU，那条路径解决的是机器之间的通信。但现代 AI 集群里，同一台机器甚至同一个 NVLink 域内部的 GPU 间通信量同样巨大——数据并行训练中的梯度同步、张量并行中的激活值交换，绝大多数都发生在机内。如果机内通信仍走 GPU→显存→网卡→对端网卡→显存→GPU 这套跨机流程，就相当于同城寄快递非要走航空件，延迟白白浪费。本章要拆解的，正是 NCCL 为机内通信准备的两把利器：Symmetric Memory & NVLS Hardware Multicast。前者让每个 rank 用同一套虚拟地址访问所有 rank 的缓冲区，后者利用 NVSwitch 硬件的多播能力做归约。两者结合，能把小消息集合通信的延迟压到接近硬件极限。
+# 14.1 Symmetric Memory: Making "Row 3, Seat 5" Point to the Same Location in Everyone's Home
 
-## 14.1 对称内存：让"第 3 排第 5 座"在每个人家里都指同一个位置
+## Intuitive Model
 
-### Intuitive Architectural Model
+Imagine a class exchanging homework notebooks. The traditional approach is: everyone numbers their own notebooks, then shouts, "Zhang San, my 5th notebook is for you; Li Si, my 8th notebook is for you"—everyone has to remember "whose notebook is where, and which number it is." This is ordinary communication: addresses are**relative and private**, and to access peer data, you must first know the peer's address mapping.
 
-想象一个班级要交换作业本。传统做法是：每个人把自己的本子编号，然后喊"张三，我的第 5 本给你；李四，我的第 8 本给你"——每个人都要记住"谁的本子放在哪、第几本"。这就是普通通信：地址是**相对的、私有的**，你要访问对端数据，得先知道对端的地址映射。
+Symmetric memory takes a different approach: the whole class agrees that the coordinate "Row 3, Seat 5" points to the same physical location in everyone's home. So if Zhang San wants Li Si's 5th notebook, he can just say "Li Si's home, Row 3, Seat 5," without any address translation. This is the core of symmetric memory:**each rank's buffer is mapped to the same virtual address in all ranks' address spaces**。
 
-对称内存换了个思路：全班约定"第 3 排第 5 座"这个坐标，在每个人家里都指向同一个物理位置。于是张三要拿李四的第 5 本，直接说"李四家第 3 排第 5 座"就行，不需要任何地址翻译。这就是对称内存的核心：**每个 rank 的缓冲区在所有 rank 的地址空间里映射到相同的虚拟地址**。
+> **[Design Inference & Architectural Trade-offs]**
+> Without symmetric memory, what disaster would intra-node collective communication face? Each rank accessing a peer buffer would have to go through an "address translation"—looking up tables, calculating offsets, and possibly even cross-process communication to confirm the mapping relationship. For small messages (a few KB), the overhead of this translation may be greater than the data transmission itself. Symmetric memory eliminates this overhead entirely, which is precisely the fundamental reason it "significantly reduces small-message latency."
 
-如果没有对称内存，机内集合通信会面临什么灾难？[INFERENCE] 每个 rank 访问对端缓冲区时，都要经过一次"地址翻译"——查表、计算偏移、可能还要跨进程通信确认映射关系。对于小消息（几 KB），这次翻译的开销可能比数据本身传输还大。对称内存把这个开销彻底消除，这正是它"显著降低小消息延迟"的根本原因。
+## Data Structures and Memory Layout
 
-### Data Structures & Memory Layout
+The registration type of symmetric memory is described by`ncclSymRegType_t`,`ncclGetSymRegType`which divides registration states into four categories based on whether the send/recv windows carry the`NCCL_WIN_COLL_SYMMETRIC`flag.
 
-对称内存的注册类型由 `ncclSymRegType_t` 描述，`ncclGetSymRegType` 根据 send/recv 窗口是否带 `NCCL_WIN_COLL_SYMMETRIC` 标志，把注册状态分成四类。
-
-[FACT:src/sym_kernels.cc:395-412](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L395-L412)
+[FACT:src/sym_kernels.cc:395-412]
 
 ```c
 ncclResult_t ncclGetSymRegType(struct ncclDevrWindow* sendWin, struct ncclDevrWindow* recvWin,
@@ -40,11 +40,11 @@ ncclResult_t ncclGetSymRegType(struct ncclDevrWindow* sendWin, struct ncclDevrWi
 }
 ```
 
-这四个状态决定了后续 kernel 走哪条路径：全对称注册（`SendRegRecvReg`）走最快的 LSA 路径，全非注册（`SendNonregRecvNonreg`）走普通路径，混合状态则要特殊处理。`winFlags` 里的 `NCCL_WIN_COLL_SYMMETRIC` 位就是"这个窗口是否已做对称注册"的标记。
+These four states determine which path subsequent kernels take: fully symmetric registration (`SendRegRecvReg`) takes the fastest LSA path, fully non-registered (`SendNonregRecvNonreg`) takes the ordinary path, and mixed states require special handling.`winFlags`The`NCCL_WIN_COLL_SYMMETRIC`bit in
 
-对称内存的初始化入口是 `ncclSymkInitOnce`，它做了一件关键的事：判断当前通信域是否支持 LSA 多播（`hasLsaMultimem`）。
+is the marker for "whether this window has undergone symmetric registration."`ncclSymkInitOnce`The initialization entry point for symmetric memory is`hasLsaMultimem`）。
 
-[FACT:src/sym_kernels.cc:185-196](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L185-L196)
+[FACT:src/sym_kernels.cc:185-196]
 
 ```c
 ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
@@ -61,13 +61,13 @@ ncclResult_t ncclSymkInitOnce(struct ncclComm* comm) {
     reqs.lsaMultimem = symk->hasLsaMultimem;
 ```
 
-`hasLsaMultimem` 的三个条件缺一不可：NVLS 对称多播已启用、LSA 团队 rank 数大于 2（两个 rank 直接点对点更快，不需要多播）、且不跨 clique（跨 clique 时 NVSwitch 多播不可用）。这个判断直接决定了 `reqs.lsaMultimem` 是否置位，进而影响设备侧通信器的资源分配。
+`hasLsaMultimem`All three conditions are indispensable: NVLS symmetric multicast is enabled, the LSA team rank count is greater than 2 (two ranks are faster with direct point-to-point, no multicast needed), and it does not cross cliques (NVSwitch multicast is unavailable when crossing cliques). This determination directly decides whether`reqs.lsaMultimem`is set, which in turn affects the resource allocation of the device-side communicator.
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-Driven Step-by-Step Walkthrough
 
-假设我们发起一次 AllReduce，消息大小 4KB，8 个 rank 在同一 NVLink 域内。`ncclSymkMask` 会决定哪些 kernel 可用。
+Suppose we initiate an AllReduce with a message size of 4KB, and 8 ranks are within the same NVLink domain.`ncclSymkMask`will determine which kernels are available.
 
-[FACT:src/sym_kernels.cc:304-352](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L304-L352)
+[FACT:src/sym_kernels.cc:304-352]
 
 ```c
 uint32_t ncclSymkMask(struct ncclComm* comm, ncclFunc_t coll, int /*ncclDevRedOp_t*/ red, ncclDataType_t ty,
@@ -89,46 +89,28 @@ uint32_t ncclSymkMask(struct ncclComm* comm, ncclFunc_t coll, int /*ncclDevRedOp
   if (!hasLDMC) kmask &= ~kernelMask_LDMC;
 ```
 
-第一步：`kernelMask_coll` 根据集合类型（AllReduce）取出候选 kernel 集合 `kernelMask_AR`。第二步：检查 `hasLsaMultimem`，如果支持多播，则进一步判断数据类型和归约操作是否支持 LDMC（Load-Multicast）。第三步：用位掩码清除不支持的特性——`kmask &= ~kernelMask_STMC` 把不支持 STMC 的 kernel 全部剔除。
+Step one:`kernelMask_coll`Based on the collective type (AllReduce), retrieve the candidate kernel set`kernelMask_AR`. Step two: check`hasLsaMultimem`. If multicast is supported, further determine whether the data type and reduction operation support LDMC (Load-Multicast). Step three: use a bitmask to clear unsupported features—`kmask &= ~kernelMask_STMC`remove all kernels that do not support STMC.
 
-接着是大小限制：
+Next is the size limit:
 
-[FACT:src/sym_kernels.cc:336-342](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L336-L342)
+[FACT:src/sym_kernels.cc:336-342]
 
 ```c
   size_t nBytes = alignUp(nElts * ncclTypeSize(ty), NCCL_SYM_KERNEL_CELL_SIZE);
   size_t nBusBytes = (coll == ncclFuncAllReduce ? 1 : comm->nRanks) * nBytes;
   // LL kernels use 32-bit ints to track element counts and indices.
-  if (nBusBytes >= (size_t(2) << 30)) kmask &= ~kernelMask_LL;
-  // Any kernel might use 32-bit int to track unrolled loop chunks (which are going
-  // to be at least 32 bytes per chunk)
-  if (nBusBytes >= 32 * (size_t(2) << 30)) kmask = 0;
-```
-
-这里有两个硬边界：LL 系列 kernel 用 32 位整数追踪元素计数，所以当总线字节数超过 2GB 时，LL kernel 被剔除；当超过 64GB 时，所有 kernel 都被剔除（`kmask = 0`）。这是典型的"用位宽换性能"——32 位索引比 64 位省寄存器、省指令，但代价是消息大小上限。
-
-最后是 TMA 和 GIN 的可用性检查：
-
-[FACT:src/sym_kernels.cc:344-350](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L344-L350)
-
-```c
-  if (!ncclSymkTmaAvailable(comm)) kmask &= ~kernelMask_Tma;
-  if (!symAligned16B) kmask &= ~kernelMask_Tma;
-
-  bool hasGin = ncclParamSymGinKernelsEnable() != 0;
-  if (!hasGin) kmask &= ~kernelMask_Gin;
-  bool needGin = ncclTeamLsa(comm).nRanks < comm->nRanks;
+  if (nBusBytes >= (size_t(2) = 32 * (size_t(2) nRanks;
   kmask &= needGin ? kernelMask_Gin : ~kernelMask_Gin;
   return kmask;
 ```
 
-TMA 需要 SMEM 容量达标（`ncclSymkTmaAvailable` 检查 `maxSharedMemOptin`）且 16 字节对齐。GIN 则只在"LSA 团队 rank 数小于总 rank 数"时才需要——也就是说，只有当通信域跨越了 LSA 边界（需要走网络）时，GIN 才有意义。如果整个通信域都在 LSA 内，GIN kernel 被剔除。
+TMA requires SMEM capacity to meet the threshold (`ncclSymkTmaAvailable`check`maxSharedMemOptin`) and 16-byte alignment. GIN is only needed when "the LSA team rank count is less than the total rank count"—that is, GIN only makes sense when the communication domain crosses the LSA boundary (requiring network traversal). If the entire communication domain is within the LSA, GIN kernels are removed.
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-对称内存的地址解析最终落到设备侧。`ncclSymkMakeDevWork` 把 host 侧的任务描述翻译成设备侧可读的工作项。
+Address resolution for symmetric memory ultimately lands on the device side.`ncclSymkMakeDevWork`translates the host-side task description into device-readable work items.
 
-[FACT:src/sym_kernels.cc:380-393](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L380-L393)
+[FACT:src/sym_kernels.cc:380-393]
 
 ```c
 ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* task, struct ncclSymkDevWork* outDevWork) {
@@ -147,18 +129,18 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 }
 ```
 
-注意 `inputOff` 的计算：如果 sendWin 存在（对称注册窗口），偏移是 `sendbuff - sendWin->userPtr`——这是**窗口内偏移**，设备侧拿到 `inputWin`（窗口基址）加上 `inputOff` 就能算出实际地址。如果 sendWin 不存在，偏移直接是 `sendbuff` 的绝对地址。这个设计让设备侧 kernel 用同一套逻辑处理注册和非注册缓冲区。
+Note the computation of`inputOff`: if sendWin exists (a symmetrically registered window), the offset is`sendbuff - sendWin->userPtr`—this is the**offset within the window**, and the device side can compute the actual address by taking`inputWin`(the window base address) plus`inputOff`. If sendWin does not exist, the offset is directly the absolute address of`sendbuff`. This design lets device-side kernels handle both registered and unregistered buffers with the same logic.
 
-`ncclSymkInitOnce` 里还初始化了 GIN 相关的资源需求，包括 inbox、outbox、accumulation buffer 和 rail signal。
+`ncclSymkInitOnce`also initializes GIN-related resource requirements, including inbox, outbox, accumulation buffer, and rail signal.
 
-[FACT:src/sym_kernels.cc:208-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L208-L251)
+[FACT:src/sym_kernels.cc:208-251]
 
 ```c
     struct ncclDevResourceRequirements ginInboxRailReq = {};
     struct ncclDevResourceRequirements ginOutboxReq = {};
     struct ncclDevResourceRequirements rsGinAccumReq = {};
     struct ncclDevResourceRequirements railSignalReq = {};
-    if (ncclParamSymGinKernelsEnable() && ncclTeamLsa(comm).nRanks < comm->nRanks) {
+    if (ncclParamSymGinKernelsEnable() && ncclTeamLsa(comm).nRanks nRanks) {
       int maxBlocks;
       size_t bufSize;
       getRequirements_gin(comm, &maxBlocks, &bufSize);
@@ -183,7 +165,7 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
     }
 ```
 
-`getRequirements_gin` 用调优模型算出需要的 block 数和缓冲区大小，然后被 clamp 到 `[minCTAs, maxCTAs]` 区间。`rsGinAccumBytesPerBlock` 是每个 block 的累加缓冲区大小，对齐到 128 字节——这是缓存行大小，避免伪共享。
+`getRequirements_gin`uses the tuning model to compute the required number of blocks and buffer size, which are then clamped to the`[minCTAs, maxCTAs]`range.`rsGinAccumBytesPerBlock`is the accumulation buffer size per block, aligned to 128 bytes—the cache line size, to avoid false sharing.
 
 ```mermaid
 flowchart TD
@@ -205,39 +187,38 @@ flowchart TD
     clear_ll --> tma_check{"TMA可用且16B对齐?"}
     tma_check -->|否| clear_tma["kmask &= ~kernelMask_Tma"]
     tma_check -->|是| gin_check
-    clear_tma --> gin_check{"需要GIN? LSA rank < 总rank"}
-    gin_check -->|否| clear_gin["kmask &= ~kernelMask_Gin"]
+    clear_tma --> gin_check{"需要GIN? LSA rank |否| clear_gin["kmask &= ~kernelMask_Gin"]
     gin_check -->|是| done
     clear_gin --> done["返回 kmask"]
 ```
 
-这张图完整刻画了 `ncclSymkMask` 的决策链：从集合类型出发，依次经过多播支持、数据类型、大小边界、TMA 可用性、GIN 需求五道过滤，最终返回一个位掩码。每一道过滤都可能把一批 kernel 剔除，这正是 NCCL "按场景选最优 kernel" 的体现。
+This diagram fully depicts the decision chain of`ncclSymkMask`: starting from the collective type, it passes through five filters in sequence—multicast support, data type, size boundary, TMA availability, and GIN requirement—and finally returns a bitmask. Each filter may eliminate a batch of kernels, which is exactly the embodiment of NCCL's "select the optimal kernel by scenario."
 
-### 生产避坑指南
+## Production Pitfall Guide
 
-**坑 1：跨 clique 时多播静默失效。** `hasLsaMultimem` 的第三个条件是 `!comm->p2pCrossClique`。如果你的集群配置了 MNNVL（Multi-Node NVLink），但某些 rank 跨了 clique，多播会被禁用，性能悄悄退化到普通路径。排查时看 `ncclNvlsSymmetricMultimemEnabled` 的日志输出。
+**Pitfall 1: Multicast silently fails when crossing cliques.** `hasLsaMultimem`The third condition of`!comm->p2pCrossClique`is`ncclNvlsSymmetricMultimemEnabled`. If your cluster is configured with MNNVL (Multi-Node NVLink) but some ranks cross cliques, multicast will be disabled, and performance will silently degrade to the normal path. When troubleshooting, check the log output of
 
-**坑 2：16 字节对齐的隐性要求。** `ncclSymkMask` 里 `if (!symAligned16B) kmask &= ~kernelMask_Tma;`——如果用户缓冲区不是 16 字节对齐，TMA kernel 被剔除。TMA 是 Hopper/Blackwell 上最快的拷贝引擎，失去它意味着性能下降。生产环境里，用户传入的 buffer 往往来自 `cudaMalloc`，天然对齐；但如果来自自定义 allocator 或切片，就可能踩坑。
+**Pitfall 2: The implicit requirement of 16-byte alignment.** `ncclSymkMask`In`if (!symAligned16B) kmask &= ~kernelMask_Tma;`—if the user buffer is not 16-byte aligned, TMA kernels are removed. TMA is the fastest copy engine on Hopper/Blackwell, and losing it means a performance drop. In production environments, user-passed buffers often come from`cudaMalloc`, which are naturally aligned; but if they come from a custom allocator or a slice, you may hit this pitfall.
 
-**坑 3：2GB 边界。** LL kernel 用 32 位索引，超过 2GB 总线字节数就被剔除。对于大模型训练，单次 AllReduce 的梯度可能超过这个值，此时 NCCL 会自动切到 STMC 或 Simple 协议。这不是 bug，但如果你手动指定了 LL 协议，会得到 `ncclInvalidArgument`。
+**Pitfall 3: The 2GB boundary.**LL kernels use 32-bit indices, and are removed once the total bus bytes exceed 2GB. For large model training, the gradients of a single AllReduce may exceed this value, in which case NCCL automatically switches to the STMC or Simple protocol. This is not a bug, but if you manually specify the LL protocol, you will get`ncclInvalidArgument`。
 
 ---
 
-## 14.2 NVLS：让 NVSwitch 硬件替你做归约
+# 14.2 NVLS: Let NVSwitch Hardware Do the Reduction for You
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-传统 AllReduce 是"软件归约"：每个 GPU 把数据发给邻居，邻居做加法，再转发——数据在 GPU 之间来回搬运，加法在 SM 上执行。这就像 8 个人传纸条算总和，每个人都要读一遍、加一遍、再传出去。
+Traditional AllReduce is "software reduction": each GPU sends data to its neighbor, the neighbor performs addition, and then forwards it—data is shuttled back and forth between GPUs, and the addition is executed on the SM. This is like 8 people passing notes to compute a sum, where each person has to read it, add it, and pass it on.
 
-NVLS 换了个思路：NVSwitch 芯片内置了**多播（multicast）和归约（reduction）能力**。你把数据往多播地址一写，NVSwitch 自动把它广播给所有成员，并在硬件里完成加法。这就像 8 个人把数字写在同一块白板上，白板自动显示总和——GPU 只写一次、读一次，中间的搬运和加法全由交换机硬件完成。
+NVLS takes a different approach: the NVSwitch chip has built-in**multicast and reduction capabilities**You write the data to the multicast address, and NVSwitch automatically broadcasts it to all members and performs the addition in hardware. It's like 8 people writing numbers on the same whiteboard, and the whiteboard automatically displays the sum—the GPU only writes once and reads once, while all the intermediate movement and addition are handled entirely by the switch hardware.
 
-如果没有 NVLS，机内 AllReduce 的带宽会被 GPU 之间的点对点链路限制，且 SM 要花大量周期做加法。NVLS 把这两件事都卸载到硬件，SM 可以去做别的计算。
+Without NVLS, the bandwidth of intra-node AllReduce would be limited by the point-to-point links between GPUs, and the SM would have to spend a large number of cycles doing additions. NVLS offloads both of these to hardware, freeing the SM to do other computations.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-NVLS 的核心是**多播组（MC group）**。`ncclMcGroup` 结构体描述了一个多播组的全部状态。
+The core of NVLS is the**multicast group (MC group)**。`ncclMcGroup`The struct describes the entire state of a multicast group.
 
-[FACT:src/transport/multicast.cc:72-77](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L72-L77)
+[FACT:src/transport/multicast.cc:72-77]
 
 ```c
 struct ncclMcGroup {
@@ -248,31 +229,29 @@ struct ncclMcGroup {
 };
 ```
 
-四个字段：`handle` 是 CUDA 多播对象的句柄，`base` 是多播虚拟地址的基址，`capacity` 是总映射大小，`dev` 是本地设备号（用于解绑）。注意这里没有锁——多播组的创建和销毁都在初始化/销毁阶段，不在热路径上。
+Four fields:`handle`is the handle of the CUDA multicast object,`base`is the base address of the multicast virtual address,`capacity`is the total mapping size,`dev`is the local device number (used for unbinding). Note that there is no lock here—the creation and destruction of multicast groups happen during the initialization/destruction phase, not on the hot path.
 
-多播组被切分成多个**分区（partition）**，每个分区是一个不可变的切片。`ncclMcPartition` 描述一个分区。
+The multicast group is divided into multiple**partitions**, and each partition is an immutable slice.`ncclMcPartition`describes a partition.
 
-[FACT:src/transport/multicast.cc:162-170](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L162-L170)
+[FACT:src/transport/multicast.cc:162-170]
 
 ```c
   // A partition is self-sufficient for binds: it carries the group's handle, device and
   // bind granularity alongside its own extent.
-  for (int i = 0; i < nRequests; i++) {
-    if (outPartitions[i].size == 0) continue;
-    outPartitions[i].ptr = group->base + outPartitions[i].offset;
+  for (int i = 0; i base + outPartitions[i].offset;
     outPartitions[i].mcHandle = mcHandle;
     outPartitions[i].minGranularity = minGran;
     outPartitions[i].dev = comm->cudaDev;
   }
 ```
 
-每个分区携带自己的 `offset`、`size`、`ptr`，以及所属组的 `mcHandle`、`minGranularity`、`dev`。这种"自给自足"的设计让分区可以独立传递给绑定函数，不需要再查组信息。
+Each partition carries its own`offset`、`size`、`ptr`, as well as the owning group's`mcHandle`、`minGranularity`、`dev`. This "self-contained" design allows partitions to be passed independently to the bind function without needing to look up group information again.
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-Driven Step-by-Step Walkthrough
 
-假设 8 个 rank 要建立一个 NVLS 域。`ncclMcGroupBuildPartitions` 负责创建多播组并切分分区。
+Suppose 8 ranks want to establish an NVLS domain.`ncclMcGroupBuildPartitions`is responsible for creating the multicast group and splitting partitions.
 
-[FACT:src/transport/multicast.cc:79-121](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L79-L121)
+[FACT:src/transport/multicast.cc:79-121]
 
 ```c
 ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct ncclMcRequest* requests, int nRequests,
@@ -282,17 +261,7 @@ ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct nccl
   mcprop.handleTypes = ncclCuMemHandleType;
   mcprop.flags = 0;
   mcprop.size = 0;
-  for (int i = 0; i < nRequests; i++) mcprop.size += requests[i].size;
-  CUCHECKGOTO(cuMulticastGetGranularity(&recGran, &mcprop, CU_MULTICAST_GRANULARITY_RECOMMENDED), ret, fail);
-  CUCHECKGOTO(cuMulticastGetGranularity(&minGran, &mcprop, CU_MULTICAST_GRANULARITY_MINIMUM), ret, fail);
-
-  // Bump-allocate an immutable slice per request. Offsets and sizes are rounded
-  // to the recommended granularity (a multiple of the MC minimum) so every slice
-  // boundary is a valid bind offset.
-  for (int i = 0; i < nRequests; i++) {
-    outPartitions[i] = {};
-    if (requests[i].size == 0) continue;
-    size_t align = requests[i].alignment > recGran ? requests[i].alignment : recGran;
+  for (int i = 0; i  recGran ? requests[i].alignment : recGran;
     ALIGN_SIZE(capacity, align);
     size_t slice = requests[i].size;
     ALIGN_SIZE(slice, recGran);
@@ -302,11 +271,11 @@ ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct nccl
   }
 ```
 
-第一步：累加所有请求的大小，得到多播组总大小。第二步：查询 CUDA 的推荐粒度和最小粒度——这是硬件约束，多播对象的地址和大小必须是粒度的整数倍。第三步：bump 分配——每个请求切一块，偏移和大小都对齐到推荐粒度。`ALIGN_SIZE(capacity, align)` 确保每个切片的起始偏移是合法的绑定偏移。
+Step 1: Accumulate the sizes of all requests to get the total multicast group size. Step 2: Query CUDA's recommended granularity and minimum granularity—these are hardware constraints, and the address and size of the multicast object must be integer multiples of the granularity. Step 3: Bump allocation—carve out a block for each request, with offsets and sizes aligned to the recommended granularity.`ALIGN_SIZE(capacity, align)`ensures that the starting offset of each slice is a valid bind offset.
 
-接下来是跨 rank 的创建与导入：
+Next is cross-rank creation and import:
 
-[FACT:src/transport/multicast.cc:125-146](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L125-L146)
+[FACT:src/transport/multicast.cc:125-146]
 
 ```c
   if (comm->localRank == 0) {
@@ -333,11 +302,11 @@ ncclResult_t ncclMcGroupBuildPartitions(struct ncclComm* comm, const struct nccl
                 ret, fail);
 ```
 
-localRank 0 创建多播对象，然后通过 bootstrap 广播 shareable handle；其他 rank 接收 handle 并导入。`cuMulticastAddDevice` 把本地设备加入多播组。注意那个 barrier——注释说得很清楚：`cuMemMap` 会阻塞直到所有设备都加入，如果某个 peer 在 `cuMulticastAddDevice` 之前失败，幸存者会卡死在 `cuMemMap` 里。这个 barrier 让失败在阻塞前就被 abort 标志捕获。
+localRank 0 creates the multicast object, then broadcasts the shareable handle via bootstrap; other ranks receive the handle and import it.`cuMulticastAddDevice`adds the local device to the multicast group. Note that barrier—the comment makes it very clear:`cuMemMap`blocks until all devices have joined, and if some peer fails before`cuMulticastAddDevice`, the survivors will hang in`cuMemMap`. This barrier allows failures to be captured by the abort flag before blocking.
 
-最后是映射和访问权限设置：
+Finally, mapping and access permission setup:
 
-[FACT:src/transport/multicast.cc:148-155](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L148-L155)
+[FACT:src/transport/multicast.cc:148-155]
 
 ```c
   // Reserve and map the whole MC VA once; each consumer slice is a view into it.
@@ -350,13 +319,13 @@ localRank 0 创建多播对象，然后通过 bootstrap 广播 shareable handle�
   CUCHECKGOTO(cuMemSetAccess(base, capacity, &desc, 1), ret, fail);
 ```
 
-整个多播 VA 只保留和映射一次，每个消费者切片是这个 VA 的一个视图。这是"一次映射、多次切片"的设计——比每个消费者单独创建多播对象省资源。
+The entire multicast VA is reserved and mapped only once, and each consumer slice is a view of this VA. This is the "map once, slice many times" design—more resource-efficient than creating a separate multicast object for each consumer.
 
-### 并发控制与硬件交互
+## Concurrency Control and Hardware Interaction
 
-绑定是 NVLS 最关键的操作。`ncclMcPartitionBindMem` 把一个 UC（单播）内存句柄绑定到多播组的某个偏移。
+Binding is the most critical operation in NVLS.`ncclMcPartitionBindMem`binds a UC (unicast) memory handle to a certain offset in the multicast group.
 
-[FACT:src/transport/multicast.cc:200-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L200-L225)
+[FACT:src/transport/multicast.cc:200-225]
 
 ```c
 ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, size_t offsetInPartition,
@@ -383,13 +352,13 @@ ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, siz
 }
 ```
 
-第一道防线是边界检查：`offsetInPartition + bindSize > partition->size` 就报错。注释解释了原因——UC 内存的粒度可能比 MC 分区大，如果 UC 对齐后超出了 MC 分区的边界，会踩到下一个消费者的分区。这是典型的"两种粒度不匹配"陷阱。
+The first line of defense is bounds checking:`offsetInPartition + bindSize > partition->size`and it errors out. The comment explains why—the granularity of UC memory may be larger than the MC partition, and if the UC alignment exceeds the boundary of the MC partition, it will step on the next consumer's partition. This is a typical "two granularities mismatch" trap.
 
-`cuMulticastBindMem` 是硬件调用，注释说它"blocks until all ranks have been added to the group"——这是 NVLS 最容易出问题的地方。如果 Fabric Manager 配置错误或 NVSwitch 固件有问题，这里会挂起或返回错误。错误信息里直接建议用户 `NCCL_NVLS_ENABLE=0`，这是生产环境的标准逃生舱。
+`cuMulticastBindMem`is a hardware call, and the comment says it "blocks until all ranks have been added to the group"—this is where NVLS is most prone to problems. If Fabric Manager is misconfigured or there is an issue with the NVSwitch firmware, it will hang or return an error here. The error message directly suggests that the user`NCCL_NVLS_ENABLE=0`, which is the standard escape hatch in production environments.
 
-还有一个"尝试绑定"的变体，用于用户缓冲区注册：
+There is also a "try bind" variant, used for user buffer registration:
 
-[FACT:src/transport/multicast.cc:237-268](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L237-L268)
+[FACT:src/transport/multicast.cc:237-268]
 
 ```c
 ncclResult_t ncclMcPartitionTryBindAddr(const struct ncclMcPartition* partition, size_t offsetInPartition,
@@ -424,17 +393,17 @@ ncclResult_t ncclMcPartitionTryBindAddr(const struct ncclMcPartition* partition,
 }
 ```
 
-这里有个精妙的错误分类：`CUDA_ERROR_INVALID_VALUE`、`NOT_SUPPORTED`、`NOT_PERMITTED` 被归类为 `ncclMcBindStatusNoSupport`——这是**永久性失败**，说明这个 buffer 本身不支持多播绑定。而其他错误（尤其是 `OUT_OF_MEMORY`）被归类为 `ncclMcBindStatusTransient`——这是**临时性失败**，可以重试。这个区分至关重要：如果把 OOM 当成永久失败，会错误地放弃一个本可以成功的注册；如果把参数错误当成临时失败，会无限重试。
+Here there is a subtle error classification:`CUDA_ERROR_INVALID_VALUE`、`NOT_SUPPORTED`、`NOT_PERMITTED`is classified as`ncclMcBindStatusNoSupport`—this is a**permanent failure**, indicating that this buffer itself does not support multicast binding. Other errors (especially`OUT_OF_MEMORY`) are classified as`ncclMcBindStatusTransient`—this is a**temporary failure**, and can be retried. This distinction is crucial: if OOM is treated as a permanent failure, a registration that could have succeeded will be mistakenly abandoned; if a parameter error is treated as a temporary failure, it will be retried indefinitely.
 
-### 生产避坑指南
+## Production Pitfall Avoidance Guide
 
-**坑 1：Fabric Manager 配置错误导致 `cuMulticastBindMem` 挂起。** 这是 NVLS 最经典的生产故障。错误信息里明确指向 Fabric Manager 或 NVSwitch。排查步骤：先 `NCCL_NVLS_ENABLE=0` 确认问题消失，然后检查 Fabric Manager 日志和 NVSwitch 固件版本。
+**Pitfall 1: Fabric Manager misconfiguration causes`cuMulticastBindMem`to hang.**This is the most classic production failure of NVLS. The error message explicitly points to Fabric Manager or NVSwitch. Troubleshooting steps: first`NCCL_NVLS_ENABLE=0`to confirm the problem disappears, then check the Fabric Manager logs and NVSwitch firmware version.
 
-**坑 2：UC/MC 粒度不匹配。** `ncclMcPartitionBindMem` 的边界检查会捕获这个问题，但如果你看到 "UC/MC granularity mismatch" 警告，说明某个请求的 UC 大小对齐后超出了 MC 分区。这通常发生在请求大小接近粒度边界时。
+**Pitfall 2: UC/MC granularity mismatch.** `ncclMcPartitionBindMem`The bounds check in
 
-**坑 3：多播组创建失败后的资源泄漏。** `ncclMcGroupBuildPartitions` 的 fail 路径用了 `CUCALL`（best-effort）而不是 `CUCHECK`：
+**will catch this problem, but if you see the "UC/MC granularity mismatch" warning, it means that the UC size of some request exceeds the MC partition after alignment. This usually happens when the request size is close to the granularity boundary.** `ncclMcGroupBuildPartitions`Pitfall 3: Resource leak after multicast group creation failure.`CUCALL`The fail path of`CUCHECK`：
 
-[FACT:src/transport/multicast.cc:179-184](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L179-L184)
+[FACT:src/transport/multicast.cc:179-184]
 
 ```c
 fail:
@@ -445,7 +414,7 @@ fail:
   return ret;
 ```
 
-注释解释了原因：如果 cleanup 操作本身失败，不能因此跳过释放 MC handle——MC slot 是稀缺资源，泄漏会导致后续创建失败。这是"清理路径必须尽力而为"的典型设计。
+The comment explains the reason: if the cleanup operation itself fails, releasing the MC handle must not be skipped because of it—MC slots are a scarce resource, and a leak will cause subsequent creations to fail. This is a typical design of "the cleanup path must do its best."
 
 ```mermaid
 sequenceDiagram
@@ -472,23 +441,23 @@ sequenceDiagram
     CU-->>R0: "绑定完成，硬件多播就绪"
 ```
 
-这张时序图刻画了多播组从创建到绑定的完整流程。关键点是那个 barrier——它把"peer 失败"和"cuMemMap 阻塞"解耦，避免幸存者卡死。
+This sequence diagram depicts the complete flow of a multicast group from creation to binding. The key point is that barrier—it decouples "peer failure" from "cuMemMap blocking," preventing survivors from getting stuck.
 
 ---
 
-## 14.3 Symmetric Memory & NVLS Hardware Multicast 的合体：LSA 指针如何在设备侧解析
+# 14.3 The Combination of Symmetric Memory and NVLS: How LSA Pointers Are Resolved on the Device Side
 
-### Intuitive Architectural Model
+## Intuitive Model
 
-对称内存解决了"地址一致"问题，NVLS 解决了"硬件归约"问题。但两者要真正协同，还需要一个关键机制：**设备侧如何知道某个地址是对称的、可以走多播路径？**
+Symmetric memory solves the "address consistency" problem, and NVLS solves the "hardware reduction" problem. But for the two to truly work together, a key mechanism is still needed:**How does the device side know that a certain address is symmetric and can take the multicast path?**
 
-答案在 LSA（Load-Store Accessible）指针。LSA 是"可加载-存储访问"的缩写，意思是这个指针指向的内存，GPU 可以直接用普通的 load/store 指令访问——不管它物理上在本地还是远端。如果地址落在多播组内，load/store 会被 NVSwitch 硬件拦截并广播。
+The answer lies in the LSA (Load-Store Accessible) pointer. LSA is short for "Load-Store Accessible," meaning that the memory this pointer points to can be directly accessed by the GPU using ordinary load/store instructions—regardless of whether it is physically local or remote. If the address falls within a multicast group, the load/store will be intercepted and broadcast by the NVSwitch hardware.
 
-### Data Structures & Memory Layout
+## Data Structures and Memory Layout
 
-`ncclSymkDevWork` 是设备侧的工作描述符，它携带了对称内存的关键信息。
+`ncclSymkDevWork`It is the device-side work descriptor, and it carries the key information of symmetric memory.
 
-[FACT:src/sym_kernels.cc:380-393](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L380-L393)
+[FACT:src/sym_kernels.cc:380-393]
 
 ```c
 ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* task, struct ncclSymkDevWork* outDevWork) {
@@ -507,11 +476,11 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 }
 ```
 
-`inputWin` 是窗口的设备侧虚拟地址（`vidmem`），`inputOff` 是缓冲区在窗口内的偏移。设备侧 kernel 拿到这两个值后，计算 `inputWin + inputOff` 就得到实际地址。如果这个地址落在多播组内，硬件会自动处理广播。
+`inputWin`It is the device-side virtual address of the window (`vidmem`），`inputOff`It is the offset of the buffer within the window. After the device-side kernel obtains these two values, it computes`inputWin + inputOff`to get the actual address. If this address falls within the multicast group, the hardware will automatically handle the broadcast.
 
-`ncclSymkInitOnce` 里还设置了 LSA barrier 和 LLA2A（Low-Latency All-to-All）资源。
+`ncclSymkInitOnce`It also sets up the LSA barrier and LLA2A (Low-Latency All-to-All) resources.
 
-[FACT:src/sym_kernels.cc:197-206](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L197-L206)
+[FACT:src/sym_kernels.cc:197-206]
 
 ```c
     reqs.lsaBarrierCount = ncclSymkMaxBlocks;
@@ -526,41 +495,25 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
     reqs.resourceRequirementsList = &lla2aReq;
 ```
 
-`lsaBarrierCount` 设为 `ncclSymkMaxBlocks`——每个 block 一个 barrier 槽位。LLA2A 是低延迟 all-to-all 的缩写，用于在 LSA 域内做快速数据交换。`ncclLLA2ACalcSlots` 根据 rank 数、线程数和最大元素大小算出需要的槽位数。
+`lsaBarrierCount`Set to`ncclSymkMaxBlocks`—one barrier slot per block. LLA2A is short for low-latency all-to-all, used for fast data exchange within the LSA domain.`ncclLLA2ACalcSlots`The required number of slots is calculated based on the number of ranks, the number of threads, and the maximum element size.
 
-### 场景驱动的 Step-by-Step Walkthrough
+## Scenario-Driven Step-by-Step Walkthrough
 
-假设一次 AllReduce 使用 `AllReduce_AGxLLMC_R` kernel（AllGather + LL + MC + Reduce）。这个 kernel 的工作流程是：
+Suppose an AllReduce uses`AllReduce_AGxLLMC_R`kernel (AllGather + LL + MC + Reduce). The workflow of this kernel is:
 
-1. **AllGather 阶段**：每个 rank 把自己的数据写入多播组，NVSwitch 硬件广播给所有 rank。
-2. **Reduce 阶段**：每个 rank 从多播组读取所有 rank 的数据，在本地做归约。
+1. **AllGather Phase**: Each rank writes its own data into the multicast group, and the NVSwitch hardware broadcasts it to all ranks.
 
-`ncclSymkMask` 会检查这个 kernel 是否可用。`kernelMask_LL` 包含 `AllReduce_AGxLLMC_R`，但前提是 `hasLsaMultimem` 为真（否则 `kernelMask_STMC` 被清除，而 `AllReduce_AGxLLMC_R` 属于 STMC 集合）。
+2. **Reduce Phase**: Each rank reads the data of all ranks from the multicast group and performs the reduction locally.
 
-等等，这里有个细节：`kernelMask_STMC` 包含 `AllReduce_AGxLLMC_R` 吗？看源码：
+`ncclSymkMask`It will check whether this kernel is available.`kernelMask_LL`It includes`AllReduce_AGxLLMC_R`, but only if`hasLsaMultimem`is true (otherwise`kernelMask_STMC`is cleared, and`AllReduce_AGxLLMC_R`belongs to the STMC set).
 
-[FACT:src/sym_kernels.cc:17-21](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/sym_kernels.cc#L17-L21)
+Wait, there is a detail here:`kernelMask_STMC`Does it include`AllReduce_AGxLLMC_R`? Look at the source code:
+
+[FACT:src/sym_kernels.cc:17-21]
 
 ```c
 constexpr uint32_t kernelMask_STMC =
-  1 << ncclSymkKernelId_AllGather_LLMC | 1 << ncclSymkKernelId_AllGather_STMC |
-  1 << ncclSymkKernelId_AllGather_TmaSTMC | 1 << ncclSymkKernelId_AllReduce_AGxLLMC_R |
-  1 << ncclSymkKernelId_AllReduce_RSxLDMC_AGxSTMC | 1 << ncclSymkKernelId_ReduceScatter_LDMC |
-  1 << ncclSymkKernelId_AllGather_RailRing_LsaSTMC;
-```
-
-是的，`AllReduce_AGxLLMC_R` 在 `kernelMask_STMC` 里。所以如果 `hasLsaMultimem` 为假，这个 kernel 会被剔除。这解释了为什么对称内存和 NVLS 必须协同工作——没有多播，MC 系列 kernel 全部不可用。
-
-设备侧拿到 `ncclSymkDevWork` 后，会根据 `inputWin` 和 `inputOff` 计算地址。如果地址在多播组内，load/store 指令会被 NVSwitch 拦截。这就是 LSA 指针的解析过程：**不需要软件翻译，硬件根据地址范围自动判断**。
-
-### 并发控制与硬件交互
-
-NVLS 的同步机制依赖 **credit（信用）**。`ncclNvlsSetup` 里初始化了 credit 分区。
-
-[FACT:src/transport/nvls.cc:407-447](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L407-L447)
-
-```c
-    int nChannels = comm->nvlsChannels;
+  1 nvlsChannels;
     size_t creditSize = nChannels * 2 * memSize * nHeads;
     int nvlsStepSize = comm->nvlsChunkSize;
 
@@ -573,11 +526,7 @@ NVLS 的同步机制依赖 **credit（信用）**。`ncclNvlsSetup` 里初始化
     comm->nvlsResources->treeMaxChunkSize = comm->nvlsTreeMaxChunkSize;
     resources = comm->nvlsResources;
 
-    for (int c = 0; c < nChannels; c++) {
-      NCCLCHECKGOTO(initNvlsChannel(comm, c, NULL, false), res, fail);
-    }
-
-    memset(&resources->accessDesc, 0, sizeof(resources->accessDesc));
+    for (int c = 0; c accessDesc, 0, sizeof(resources->accessDesc));
     resources->accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
     resources->accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     resources->accessDesc.location.id = comm->cudaDev;
@@ -603,17 +552,15 @@ NVLS 的同步机制依赖 **credit（信用）**。`ncclNvlsSetup` 里初始化
     }
 ```
 
-多播组被切成三个分区：`creditPartition`（信用）、`dataPartition`（数据）、`ubPartition`（用户缓冲区）。credit 分区用于同步——每个 channel 有独立的 head/tail 指针，通过多播组共享。
+The multicast group is divided into three partitions:`creditPartition`(credit),`dataPartition`(data),`ubPartition`(user buffer). The credit partition is used for synchronization—each channel has independent head/tail pointers, shared through the multicast group.
 
-credit 的初始化在后面的循环里：
+The initialization of credit is in the later loop:
 
-[FACT:src/transport/nvls.cc:456-491](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L456-L491)
+[FACT:src/transport/nvls.cc:456-491]
 
 ```c
-    for (int h = 0; h < nHeads; h++) {
-      int nvlsPeer = comm->nRanks + 1 + h;
-      for (int c = 0; c < nChannels; c++) {
-        struct ncclChannel* channel = comm->channels + c;
+    for (int h = 0; h nRanks + 1 + h;
+      for (int c = 0; c channels + c;
         char* mem = NULL;
         struct ncclChannelPeer* peer = channel->peers[nvlsPeer];
 
@@ -633,13 +580,13 @@ credit 的初始化在后面的循环里：
         peer->recv[0].conn.flags |= NCCL_NVLS_MIN_POLL;
 ```
 
-每个 head 和 channel 组合都有独立的 credit 区域。`head` 和 `tail` 是 64 位指针，`memSize` 是 64 字节（`size_t memSize = 64;`），所以 head 和 tail 各占 32 字节——正好半个缓存行。`NCCL_NVLS_MIN_POLL` 标志让接收方用最小轮询模式，减少 CPU 开销。
+Each combination of head and channel has an independent credit region.`head`and`tail`are 64-bit pointers,`memSize`is 64 bytes (`size_t memSize = 64;`), so head and tail each occupy 32 bytes—exactly half a cache line.`NCCL_NVLS_MIN_POLL`The flag lets the receiver use the minimum polling mode, reducing CPU overhead.
 
-### 生产避坑指南
+## Production Pitfall Avoidance Guide
 
-**坑 1：credit 分区的 head/tail 竞争。** 多个 channel 共享同一个多播组，但每个 channel 有独立的 credit 区域。如果 channel 数配置不当（比如 `nvlsCTAs` 设得太大），credit 区域会膨胀，占用宝贵的多播地址空间。`ncclNvlsChannels` 会根据 GPU 架构和节点数自动调整 channel 数：
+**Pitfall 1: head/tail contention in the credit partition.**Multiple channels share the same multicast group, but each channel has an independent credit region. If the number of channels is configured improperly (for example,`nvlsCTAs`is set too large), the credit region will expand and occupy precious multicast address space.`ncclNvlsChannels`The number of channels is automatically adjusted based on the GPU architecture and the number of nodes:
 
-[FACT:src/transport/nvls.cc:100-133](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L100-L133)
+[FACT:src/transport/nvls.cc:100-133]
 
 ```c
   if (comm->config.nvlsCTAs != NCCL_CONFIG_UNDEF_INT) {
@@ -649,13 +596,13 @@ credit 的初始化在后面的循环里：
     // comm->nNodes is not yet initialized at this point so we need to use local information.
     bool multiNode = false;
     if (comm->MNNVL) {
-      multiNode = (comm->clique.size < comm->nRanks);
+      multiNode = (comm->clique.size nRanks);
     } else {
       int i;
-      for (i = 1; i < comm->nRanks; i++) {
+      for (i = 1; i nRanks; i++) {
         if (comm->peerInfo[i].hostHash != comm->peerInfo[0].hostHash) break;
       }
-      multiNode = (i < comm->nRanks);
+      multiNode = (i nRanks);
     }
     if (multiNode) {
       channels = RUBIN_AND_LATER(comm->compCap) ? /*RUBIN=*/64 : /*SM100=*/32;
@@ -667,20 +614,20 @@ credit 的初始化在后面的循环里：
   }
 ```
 
-注意 `comm->nNodes` 在这个阶段还没初始化，所以代码用 `peerInfo[i].hostHash` 手动判断是否多节点。这是初始化顺序的经典陷阱——你不能依赖还没算出来的字段。
+Note that`comm->nNodes`has not been initialized at this stage, so the code uses`peerInfo[i].hostHash`to manually determine whether it is multi-node. This is a classic trap in initialization order—you cannot rely on a field that has not yet been computed.
 
-**坑 2：MNNVL 不支持 NVLS buffer 注册。** [FACT:src/transport/nvls.cc:516-517](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L516-L517)
+**Pitfall 2: MNNVL does not support NVLS buffer registration.** [FACT:src/transport/nvls.cc:516-517]
 
 ```c
   // MNNVL does not support NVLS buffer registration
   if (!comm->MNNVL && comm->nvlsResources->nvlsShmemHandle == NULL) {
 ```
 
-MNNVL（Multi-Node NVLink）环境下，用户缓冲区注册被跳过。如果你的集群是 MNNVL 且依赖 UB 注册来提升性能，会发现注册没生效。这是硬件限制，不是 bug。
+In an MNNVL (Multi-Node NVLink) environment, user buffer registration is skipped. If your cluster is MNNVL and relies on UB registration to improve performance, you will find that the registration does not take effect. This is a hardware limitation, not a bug.
 
-**坑 3：共享资源的引用计数。** `ncclNvlsSetup` 支持父子通信域共享 NVLS 资源：
+**Pitfall 3: Reference counting for shared resources.** `ncclNvlsSetup`Supports parent-child communicator sharing of NVLS resources:
 
-[FACT:src/transport/nvls.cc:380-392](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/nvls.cc#L380-L392)
+[FACT:src/transport/nvls.cc:380-392]
 
 ```c
   if (nvlsShare) {
@@ -690,7 +637,7 @@ MNNVL（Multi-Node NVLink）环境下，用户缓冲区注册被跳过。如果�
      * NVLS buffers, which were allocated and laid out based on these values. */
     comm->nvlsChunkSize = parent->nvlsResources->chunkSize;
     comm->nvlsTreeMaxChunkSize = parent->nvlsResources->treeMaxChunkSize;
-    for (int c = 0; c < comm->nvlsChannels; c++) {
+    for (int c = 0; c nvlsChannels; c++) {
       NCCLCHECKGOTO(initNvlsChannel(comm, c, parent, true), res, fail);
     }
 
@@ -699,76 +646,68 @@ MNNVL（Multi-Node NVLink）环境下，用户缓冲区注册被跳过。如果�
   }
 ```
 
-子通信域复用父通信域的资源，引用计数加一。`ncclNvlsFree` 里引用计数减到零才真正释放。如果引用计数管理出错，会导致资源提前释放或泄漏。注意 `nvlsChunkSize` 和 `nvlsTreeMaxChunkSize` 必须继承父通信域的值——因为缓冲区是按这些值布局的，改了会导致地址计算错误。
+The child communicator reuses the parent communicator's resources, incrementing the reference count by one.`ncclNvlsFree`The resource is only truly released when the reference count drops to zero. If reference counting is mismanaged, it can lead to premature resource release or leaks. Note that`nvlsChunkSize`and`nvlsTreeMaxChunkSize`must inherit the parent communicator's values—because buffers are laid out according to these values, and changing them would cause address calculation errors.
 
 ```mermaid
 flowchart LR
     subgraph host["Host 侧"]
-        task["ncclTaskColl<br/>sendbuff/recvbuff"]
-        devwork["ncclSymkDevWork<br/>inputWin + inputOff"]
+        task["ncclTaskCollsendbuff/recvbuff"]
+        devwork["ncclSymkDevWorkinputWin + inputOff"]
         task -->|"ncclSymkMakeDevWork"| devwork
     end
     subgraph device["Device 侧"]
-        kernel["SymKernel<br/>load/store"]
+        kernel["SymKernelload/store"]
         lsa{"地址在多播组内?"}
         devwork --> kernel
         kernel --> lsa
     end
     subgraph hw["NVSwitch 硬件"]
-        mc["多播组<br/>MC group"]
-        reduce["硬件归约<br/>Reduction"]
+        mc["多播组MC group"]
+        reduce["硬件归约Reduction"]
         lsa -->|"是"| mc
-        lsa -->|"否"| local["本地显存<br/>UC memory"]
+        lsa -->|"否"| local["本地显存UC memory"]
         mc --> reduce
         reduce -->|"广播结果"| kernel
     end
 ```
 
-这张数据流图展示了从 host 侧任务到设备侧执行的完整链路。关键分支是 `lsa{"地址在多播组内?"}`——如果是，走 NVSwitch 硬件多播和归约；如果否，走本地显存。这个判断由硬件根据地址范围自动完成，不需要软件干预。
+This data flow diagram shows the complete chain from host-side tasks to device-side execution. The key branch is`lsa{"地址在多播组内?"}`—if yes, it goes through NVSwitch hardware multicast and reduction; if no, it goes through local memory. This determination is made automatically by the hardware based on the address range, requiring no software intervention.
 
 ---
 
-## 14.4 设计思考：为什么对称内存能降低小消息延迟
+# 14.4 Design Reflection: Why Symmetric Memory Reduces Small Message Latency
 
-回到本章开头的核心问题：为什么对称内存能显著降低小消息延迟？
+Returning to the core question at the beginning of this chapter: why can symmetric memory significantly reduce small message latency?
 
-**第一，消除了地址翻译开销。** 传统通信里，每个 rank 访问对端缓冲区都要查表、计算偏移。对称内存让所有 rank 用同一套地址，设备侧 kernel 直接算 `base + offset` 就行。对于小消息，这次翻译的开销占比很高。
+**First, it eliminates address translation overhead.**In traditional communication, each rank accessing a peer's buffer must look up a table and calculate offsets. Symmetric memory lets all ranks use the same set of addresses, and the device-side kernel can directly compute`base + offset`For small messages, the overhead of this translation is proportionally very high.
 
-**第二，消除了控制消息往返。** 传统通信需要交换"我要写你的哪个缓冲区"这类控制信息。对称内存下，地址是预先约定好的，不需要运行时协商。
+**Second, it eliminates control message round trips.**Traditional communication requires exchanging control information such as "which buffer of yours do I want to write to." With symmetric memory, addresses are pre-agreed upon and no runtime negotiation is needed.
 
-**第三，让硬件多播成为可能。** 只有当地址对称时，NVSwitch 才能用同一套地址做多播。如果每个 rank 的地址不同，硬件无法知道该广播到哪里。
+**Third, it makes hardware multicast possible.**Only when addresses are symmetric can NVSwitch use the same set of addresses for multicast. If each rank has different addresses, the hardware cannot know where to broadcast.
 
-**第四，减少了 SM 的归约负担。** NVLS 把加法卸载到 NVSwitch，SM 只需要发起一次写、一次读。对于小消息，SM 的指令开销是延迟的主要来源。
+**Fourth, it reduces the SM's reduction burden.**NVLS offloads addition to NVSwitch, so the SM only needs to issue one write and one read. For small messages, the SM's instruction overhead is the main source of latency.
 
-这四个因素叠加，让小消息延迟从"微秒级"降到"亚微秒级"。
+The combination of these four factors reduces small message latency from "microsecond-level" to "sub-microsecond-level."
 
-[INFERENCE] 从工程角度看，对称内存的设计体现了 NCCL 的一个核心哲学：**把复杂性推到初始化阶段，让热路径尽可能简单**。地址协商、多播组创建、credit 分配都在初始化时完成，运行时 kernel 只需要做最简单的地址计算和 load/store。这种"初始化重、运行时轻"的设计，是高性能通信库的通用模式。
+> **[Design Inference & Architectural Trade-offs]**
+> From an engineering perspective, the design of symmetric memory embodies a core philosophy of NCCL:**Push complexity to the initialization phase, keeping the hot path as simple as possible.**Address negotiation, multicast group creation, and credit allocation are all completed at initialization time, and the runtime kernel only needs to perform the simplest address calculations and load/store operations. This "heavy initialization, light runtime" design is a common pattern in high-performance communication libraries.
 
 ---
 
-## 本章Summary
+# Chapter Summary
 
-本章拆解了 NCCL 机内通信的两大支柱：
+This chapter dissected the two pillars of NCCL intra-node communication:
 
-1. **对称内存**：通过 `ncclSymkInitOnce` 和 `ncclSymkMask` 建立地址一致的缓冲区，让每个 rank 用同一套地址访问所有 rank 的数据。`ncclSymkMakeDevWork` 把 host 侧任务翻译成设备侧工作项，`inputWin + inputOff` 是地址解析的核心公式。
+1. **Symmetric Memory**: Through`ncclSymkInitOnce`and`ncclSymkMask`establish buffers with consistent addresses, allowing each rank to access all ranks' data using the same set of addresses.`ncclSymkMakeDevWork`translates host-side tasks into device-side work items,`inputWin + inputOff`is the core formula for address resolution.
 
-2. **NVLS 多播**：通过 `ncclMcGroupBuildPartitions` 创建多播组，`ncclMcPartitionBindMem` 把 UC 内存绑定到多播组，`cuMulticastBindMem` 是硬件调用。多播组被切成 credit、data、ub 三个分区，分别用于同步、数据传输和用户缓冲区注册。
+2. **NVLS Multicast**: Through`ncclMcGroupBuildPartitions`create multicast groups,`ncclMcPartitionBindMem`binds UC memory to multicast groups,`cuMulticastBindMem`is the hardware call. The multicast group is divided into three partitions—credit, data, and ub—used for synchronization, data transfer, and user buffer registration respectively.
 
-3. **LSA 指针解析**：设备侧根据地址范围自动判断是否走多播路径，不需要软件翻译。`NCCL_NVLS_MIN_POLL` 标志优化轮询开销。
+3. **LSA Pointer Resolution**: The device side automatically determines whether to use the multicast path based on the address range, requiring no software translation.`NCCL_NVLS_MIN_POLL`The flag optimizes polling overhead.
 
-4. **错误处理**：`ncclMcPartitionTryBindAddr` 区分永久性失败和临时性失败，`ncclMcGroupBuildPartitions` 的 fail 路径用 `CUCALL` 确保资源释放。
+4. **Error Handling**：`ncclMcPartitionTryBindAddr`distinguishes permanent failures from transient failures,`ncclMcGroupBuildPartitions`the fail path uses`CUCALL`to ensure resource release.
 
-## 本章思考与自测
+# Chapter Review Questions
 
-<details><summary>Q1: 如果把 `ncclMcPartitionBindMem` 里的边界检查 `if (offsetInPartition + bindSize > partition->size)` 去掉，在什么场景下会触发内存越界？为什么这个检查不能用"UC 和 MC 粒度相同"来替代？</summary>
+Q1: If the boundary check in`ncclMcPartitionBindMem`is removed,`if (offsetInPartition + bindSize > partition->size)`under what scenarios would an out-of-bounds memory access be triggered? Why can't this check be replaced by "UC and MC have the same granularity"?
 
-**参考解析**：看 [FACT:src/transport/multicast.cc:200-208](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/transport/multicast.cc#L200-L208)：
-
-```c
-ncclResult_t ncclMcPartitionBindMem(const struct ncclMcPartition* partition, size_t offsetInPartition,
-                                    CUmemGenericAllocationHandle mem, size_t memOffset, size_t bindSize) {
-  // A bind overrunning its partition would corrupt the next consumer's partition; fail
-  // cleanly instead (possible when UC rounding exceeds the MC-rounded partition).
-  if (offsetInPartition + bindSize > partition->size)
-
-对称内存与 NVLS 把机内通信的延迟压到了接近硬件极限，但 NCCL 的通信版图并未止步于集合操作。当应用需要更灵活的远程内存访问，或希望 GPU 直接发起网络请求而无需 host 代理时，就需要另一套机制。下一章将拆解 RMA 与 GIN：RMA 提供 put/get 语义的远程内存操作，GIN 让 GPU kernel 直接发起网络请求。我们将探明 NCCL 如何从集合通信扩展到点对点远程访问，以及 GIN 如何绕过 proxy 线程降低延迟——这是 NCCL 面向 DOCA GPUNetIO 等新硬件的演进方向。
+**Reference Analysis**: See[FACT:src/transport/multicast.cc:200-208]：

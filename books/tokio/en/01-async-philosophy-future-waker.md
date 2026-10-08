@@ -1,18 +1,18 @@
-# Chapter 01: Async Philosophy & Core Mental Model: Future, Waker & Cooperative Scheduling
+# Chapter 1: The Mental Model of Async: The Trio of Future, Waker, and Executor
 
+Async programming in Rust is not a library, but a language-level protocol. Tokio became a production-grade runtime not because it invented Future, but because it precisely implements the boundary conditions of every contract in this protocol. This chapter does not rush into Tokio's scheduler code, but first thoroughly explains the "trio"—Future, Waker, Executor—their responsibility boundaries and reverse control flow. Once you understand how these three interlock, the subsequent chapters on Runtime assembly, work-stealing scheduling, and I/O drivers have a foundation to stand on.
 
-异步编程在 Rust 中不是一个库，而是一套语言级的协议。Tokio 之所以能成为生产级运行时，不是因为它发明了 Future，而是因为它精确地实现了这套协议中每一个契约的边界条件。本章不急于跳进 Tokio 的调度器代码，而是先把「三件套」——Future、Waker、Executor——的职责边界和反向控制流讲透。理解了这三者如何咬合，后续章节中 Runtime 的组装、work-stealing 调度、I/O 驱动才有落脚点。
+# 1.1 From Blocking to Pulling: Why Rust Chooses poll Over Callbacks
 
+## Intuitive Model
 
-## Intuitive Architectural Model
+Imagine you order a dish at a restaurant that needs to be made fresh. Callback-style async (like early Node.js style) is equivalent to leaving your phone number, and the chef calls you**proactively**—control is in the chef's hands, and your code merely responds passively. Pull-style async (Rust's choice) is equivalent to getting a pickup ticket, and you**decide for yourself**when to go to the window and ask "is it ready?": if not, go do something else; if ready, pick it up.
 
-想象你在餐厅点了一份需要现做的菜。回调式异步（如 Node.js 早期风格）相当于你留下手机号，厨师做好后**主动打给你**——控制权在厨师手里，你的代码只是被动响应。拉取式异步（Rust 的选择）相当于你拿到一张取餐凭证，你**自己决定**什么时候去窗口问「好了吗」：没好就去做别的事，好了就取走。
+This difference seems minor, but it determines the shape of the entire system. In the callback model, every async operation must carry a closure for "what to do when done," closures nest layer upon layer forming callback hell, and cancellation is extremely difficult—you cannot "withdraw" an already-registered callback. In the pull model, a Future is just a state machine,`poll`is a pure query action; if you don't advance it, it consumes no resources; cancellation is just drop, clean and neat.
 
-这个区别看似微小，却决定了整个系统的形态。回调式模型中，每个异步操作都必须携带一个「完成后做什么」的闭包，闭包层层嵌套形成回调地狱，且取消操作极其困难——你无法「撤回」一个已经注册的回调。拉取式模型中，Future 只是一个状态机，`poll` 是纯粹的查询动作，不推进就不消耗资源，取消就是 drop，干净利落。
+## The Core Contract of the Pull Model
 
-## 拉取式模型的核心契约
-
-Rust 标准库定义的 `Future` trait 只有两个要素：一个 `poll` 方法，一个 `Output` 关联类型。Tokio 并没有重新定义这个 trait，而是直接复用标准库的实现。这一点在源码中有明确体现：
+The`Future`trait defined by the Rust standard library has only two elements: a`poll`method, and a`Output`associated type. Tokio does not redefine this trait, but directly reuses the standard library's implementation. This is clearly reflected in the source code:
 
 ```rust
 // tokio/src/future/mod.rs
@@ -23,9 +23,9 @@ cfg_not_trace! {
 }
 ```
 
-[FACT:tokio/src/future/mod.rs:24-28](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/future/mod.rs#L24-L28)
+[FACT:tokio/src/future/mod.rs:24-28]
 
-这段代码揭示了一个重要事实：在未启用 `tracing` 特性时，Tokio 内部的 `Future` 就是 `std::future::Future` 的别名，没有任何包装。只有在启用 `tracing` 时，才会用 `InstrumentedFuture` 替换：
+This code reveals an important fact: when the`tracing`feature is not enabled, Tokio's internal`Future`is an alias for`std::future::Future`, with no wrapping whatsoever. Only when`tracing`is enabled is it replaced with`InstrumentedFuture`:
 
 ```rust
 cfg_trace! {
@@ -35,33 +35,34 @@ cfg_trace! {
 }
 ```
 
-[FACT:tokio/src/future/mod.rs:18-22](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/future/mod.rs#L18-L22)
+[FACT:tokio/src/future/mod.rs:18-22]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这种「默认零开销、按需插桩」的设计是 Tokio 的一贯哲学：核心路径不引入任何额外抽象层，可观测性作为可选特性叠加。`InstrumentedFuture` 的存在说明 Tokio 团队认为 tracing 的插桩成本不应由所有用户承担。
+> **[Design Inference & Architectural Trade-offs]**
+> This "zero overhead by default, instrumentation on demand" design is Tokio's consistent philosophy: the core path introduces no additional abstraction layers, and observability is layered on as an optional feature.`InstrumentedFuture`The existence of
 
-## poll 契约的三个隐含约束
+## shows that the Tokio team believes the instrumentation cost of tracing should not be borne by all users.
 
-`poll` 方法的签名是 `fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>`。这个签名里藏着三条契约，违反任何一条都会导致未定义行为或逻辑错误：
+`poll`Three Implicit Constraints of the poll Contract`fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>`The signature of the
 
-**契约一：Pin 保证自引用安全。** `Pin<&mut Self>` 意味着 Future 一旦被 poll，其内存地址就不能再移动。这是因为 async 块编译后会生成包含自引用的状态机——局部变量可能持有指向同一状态机内其他字段的引用。如果允许移动，这些引用就会悬空。
+**method is** `Pin<&mut Self>`. This signature hides three contracts; violating any one of them leads to undefined behavior or logical errors:
 
-**契约二：Pending 必须已注册唤醒。** 当 `poll` 返回 `Poll::Pending` 时，Future 必须已经通过 `cx.waker()` 获取并保存了 Waker，或者已经将 Waker 注册到了某个事件源。否则执行器将永远不知道该 Future 何时可以再次被 poll，导致任务永久挂起。
+**Contract One: Pin Guarantees Self-Reference Safety.**means that once a Future is polled, its memory address cannot be moved again. This is because an async block compiles into a state machine containing self-references—local variables may hold references pointing to other fields within the same state machine. If movement were allowed, these references would dangle.`poll`Contract Two: Pending Must Have Registered a Waker.`Poll::Pending`When`cx.waker()`Obtain and save the Waker, or have already registered the Waker with some event source. Otherwise, the executor will never know when this Future can be polled again, causing the task to be permanently suspended.
 
-**契约三：Ready 之后不应再 poll。** 一旦 `poll` 返回 `Poll::Ready`，再次 poll 同一个 Future 是逻辑错误（虽然不会导致 UB，但行为未定义）。执行器有责任在收到 Ready 后不再调度该任务。
+**Contract Three: After Ready, it should not be polled again.**Once`poll`returns`Poll::Ready`, polling the same Future again is a logical error (although it will not cause UB, the behavior is undefined). The executor is responsible for no longer scheduling the task after receiving Ready.
 
-这三条契约中，契约二是最容易出错的地方，也是 Waker 存在的根本原因。
+Among these three contracts, Contract Two is the most error-prone place, and it is also the fundamental reason for the existence of Waker.
 
+# 1.2 Waker: The Carrier of Reverse Control Flow
 
-## Intuitive Architectural Model
+## Intuitive Model
 
-Waker 是餐厅给你的「震动取餐器」。你不需要站在窗口反复问「好了吗」——那会浪费你的时间。你只需要在第一次去窗口时把取餐器交给厨师（注册 Waker），然后安心做别的事。菜好了，厨师按下按钮，取餐器震动（调用 `wake`），你收到信号后再去窗口取餐（重新 poll）。
+Waker is the "vibrating pager" the restaurant gives you. You do not need to stand at the window repeatedly asking "Is it ready?" - that would waste your time. You only need to hand the pager to the chef the first time you go to the window (register the Waker), and then go do other things with peace of mind. When the food is ready, the chef presses the button, the pager vibrates (calls`wake`), and after you receive the signal, you go to the window to pick up the food (poll again).
 
-如果没有 Waker，执行器只有两种选择：要么忙轮询所有任务（浪费 CPU），要么永远不 poll 已返回 Pending 的任务（任务饿死）。Waker 是打破这个僵局的唯一机制。
+Without Waker, the executor has only two choices: either busy-poll all tasks (wasting CPU), or never poll tasks that have already returned Pending (task starvation). Waker is the only mechanism that breaks this deadlock.
 
-## Waker 的内存布局与虚表设计
+## Waker's Memory Layout and Vtable Design
 
-Waker 是标准库类型，但它的设计直接影响了 Tokio 的任务结构。`Waker` 本质上是一个胖指针：一个 `RawWaker` 结构体，包含一个数据指针和一个虚表指针。
+Waker is a standard library type, but its design directly influenced Tokio's task structure.`Waker`is essentially a fat pointer: a`RawWaker`struct containing a data pointer and a vtable pointer.
 
 ```rust
 // 标准库中的定义（非 Tokio 源码，此处为背景说明）
@@ -78,14 +79,14 @@ pub struct RawWakerVTable {
 }
 ```
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个设计的精妙之处在于：`Waker` 本身不关心「唤醒」具体意味着什么。它只是四个函数指针的载体。Tokio 可以提供一个 Waker，其 `wake` 函数把任务重新推入调度队列；而另一个运行时（比如 `futures` crate 的 `block_on`）可以提供完全不同的 Waker 实现。这种「数据 + 虚表」的模式使得 Waker 可以在不同运行时之间传递而不丢失语义。
+> **[Design Inference & Architectural Trade-offs]**
+> The brilliance of this design lies in:`Waker`itself does not care what "wake" specifically means. It is just a carrier of four function pointers. Tokio can provide a Waker whose`wake`function pushes the task back into the scheduling queue; while another runtime (such as the`futures`crate's`block_on`) can provide a completely different Waker implementation. This "data + vtable" pattern allows Waker to be passed between different runtimes without losing semantics.
 
-`wake` 和 `wake_by_ref` 的区别至关重要：`wake` 消耗 Waker 的所有权（调用后 Waker 被 drop），而 `wake_by_ref` 只借用。执行器通常实现 `wake_by_ref` 为「将任务标记为就绪并入队」，而 `wake` 则在此基础上额外处理引用计数的递减。Tokio 的任务结构中，Waker 的数据指针指向任务的引用计数头，每次 clone 增加计数，drop 减少计数，计数归零时释放任务内存。
+`wake`and`wake_by_ref`The difference is crucial:`wake`consumes ownership of the Waker (the Waker is dropped after the call), while`wake_by_ref`only borrows. Executors usually implement`wake_by_ref`as "mark the task as ready and enqueue it", while`wake`additionally handles the decrement of the reference count on top of that. In Tokio's task structure, the Waker's data pointer points to the task's reference count header. Each clone increases the count, and drop decreases the count. When the count reaches zero, the task memory is released.
 
-## 唤醒的完整时序
+## Complete Timing of Waking
 
-下面这张时序图展示了一个 TCP 读取操作从发起到被唤醒的完整链路。注意 Waker 是如何从任务上下文一路传递到 I/O 驱动的：
+The sequence diagram below shows the complete chain from initiation to being woken for a TCP read operation. Note how the Waker is passed all the way from the task context to the I/O driver:
 
 ```mermaid
 sequenceDiagram
@@ -110,29 +111,30 @@ sequenceDiagram
     Future-->>App: 返回 Poll::Ready(n)
 ```
 
-这张图的关键在于：**Waker 是唯一能从 Reactor 反向触达 Executor 的通道**。Reactor 不持有任务的任何其他信息，它只知道「当这个 fd 就绪时，调用这个 Waker」。这种解耦使得 I/O 驱动可以独立于调度器实现，两者只通过 Waker 这个窄接口通信。
+The key to this diagram is:**Waker is the only channel that can reach the Executor in reverse from the Reactor**. The Reactor does not hold any other information about the task; it only knows "when this fd is ready, call this Waker." This decoupling allows the I/O driver to be implemented independently of the scheduler, and the two communicate only through the narrow interface of Waker.
 
-## 虚假唤醒：契约的灰色地带
+## Spurious Wakeup: The Gray Area of the Contract
 
-Tokio 的文档明确承认虚假唤醒的存在：
+Tokio's documentation explicitly acknowledges the existence of spurious wakeups:
 
 > Normally, tasks are scheduled only if they have been woken by calling `wake` on their waker. However, this is not guaranteed, and Tokio may schedule tasks that have not been woken under some circumstances.
 
-[FACT:tokio/src/runtime/mod.rs:306-309](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L306-L309)
+[FACT:tokio/src/runtime/mod.rs:306-309]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这意味着 `poll` 的实现必须能够容忍「没有被唤醒就被再次 poll」的情况。一个正确的 Future 在返回 Pending 后，即使没有任何事件发生，再次被 poll 时也应该返回 Pending 而不是 panic 或产生错误结果。这个约束看似宽松，实际上对状态机的设计提出了要求：不能假设「两次 poll 之间一定有事件发生」。
+> **[Design Inference & Architectural Trade-offs]**
+> This means that the implementation of`poll`must be able to tolerate the situation of "being polled again without having been woken." A correct Future, after returning Pending, should still return Pending when polled again even if no event has occurred, rather than panicking or producing an erroneous result. This constraint may seem loose, but in fact it imposes requirements on the design of the state machine: it cannot assume that "an event must occur between two polls."
 
+# 1.3 Executor: Encapsulation from Future to Task
 
-## Intuitive Architectural Model
+## Intuitive Model
 
-Executor 是餐厅的调度员。他手里有一摞订单（任务队列），决定哪个订单先做、谁来做。当取餐器震动时，他把对应订单重新排进队列。没有调度员，厨师们就不知道该做哪道菜，也不知道该在什么时候切换工作。
+The Executor is the restaurant's dispatcher. He has a stack of orders (task queue) in his hands and decides which order to make first and who makes it. When the pager vibrates, he puts the corresponding order back into the queue. Without a dispatcher, the chefs would not know which dish to make or when to switch work.
 
-但 Executor 的职责远不止「轮询 Future」。它必须解决三个核心问题：**任务的生命周期管理**（创建、调度、完成、取消）、**公平性保证**（防止某个任务饿死其他任务）、**资源驱动集成**（I/O 和定时器事件如何转化为唤醒）。
+But the Executor's responsibilities go far beyond "polling Futures." It must solve three core problems:**Task lifecycle management**(creation, scheduling, completion, cancellation),**fairness guarantees**(preventing one task from starving other tasks),**resource driver integration**(how I/O and timer events are converted into wakeups).
 
-## 任务的内存布局：从 Future 到 Task
+## Task Memory Layout: From Future to Task
 
-当调用 `tokio::spawn` 时，传入的 Future 并不会被直接放入队列。它会被包装成一个 `Task` 结构，包含引用计数头、调度元数据和 Future 本身。这个包装过程有一个关键的优化决策：
+When calling`tokio::spawn`, the passed-in Future is not directly placed into the queue. It is wrapped into a`Task`struct containing a reference count header, scheduling metadata, and the Future itself. This wrapping process has a key optimization decision:
 
 ```rust
 /// Boundary value to prevent stack overflow caused by a large-sized
@@ -151,130 +153,133 @@ impl AutoBox {
 }
 ```
 
-[FACT:tokio/src/runtime/mod.rs:649-673](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L649-L673)
+[FACT:tokio/src/runtime/mod.rs:649-673]
 
-这段代码解决了一个非常具体的问题：如果 Future 太大（超过 16KB，debug 模式下 2KB），直接内联到 Task 结构中会导致栈溢出或内存浪费。`AutoBox` 通过编译期常量 `SHOULD_BOX` 来决定是否将 Future 装箱。
+This code solves a very specific problem: if the Future is too large (over 16KB, 2KB in debug mode), inlining it directly into the Task struct will cause stack overflow or memory waste.`AutoBox`uses the compile-time constant`SHOULD_BOX`to decide whether to box the Future.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 注释中特别强调了「用关联常量而非运行时 `if`」的原因：如果用运行时判断，编译器会为每个 `T` 同时实例化两条分支的代码（一条处理 `T`，一条处理 `Pin<Box<T>>`），导致代码膨胀。而用常量分支，单态化收集器会剪掉不可达的分支，只为实际使用的类型生成代码。这是一个典型的「用类型系统替代运行时判断」的优化。
+> **[Design Inference & Architectural Trade-offs]**
+> The comment particularly emphasizes "using associated constants rather than runtime`if`The reason: if runtime judgment is used, the compiler will, for each`T`simultaneously instantiate code for both branches (one handling`T`, one handling`Pin<Box<T>>`), causing code bloat. With constant branching, the monomorphization collector prunes unreachable branches and generates code only for the types actually used. This is a classic optimization of "replacing runtime judgment with the type system."
 
-## 调度公平性：31 与 61 的魔法数字
+## Scheduling fairness: the magic numbers 31 and 61
 
-Tokio 的调度器文档中定义了一个形式化的公平性保证：
+Tokio's scheduler documentation defines a formal fairness guarantee:
 
 > If the total number of tasks does not grow without bound, and no task is blocking the thread, then it is guaranteed that tasks are scheduled fairly.
 
-[FACT:tokio/src/runtime/mod.rs:279-281](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L279-L281)
+[FACT:tokio/src/runtime/mod.rs:279-281]
 
-这个保证的实现依赖于两个关键参数。对于 current-thread 运行时：
+The implementation of this guarantee depends on two key parameters. For the current-thread runtime:
 
 > The runtime will prefer to choose the next task to schedule from the local queue, and will only pick a task from the global queue if the local queue is empty, or if it has picked a task from the local queue 31 times in a row.
 
-[FACT:tokio/src/runtime/mod.rs:328-333](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L328-L333)
+[FACT:tokio/src/runtime/mod.rs:328-333]
 
 > The runtime will check for new IO or timer events whenever there are no tasks ready to be scheduled, or when it has scheduled 61 tasks in a row.
 
-[FACT:tokio/src/runtime/mod.rs:335-337](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L335-L337)
+[FACT:tokio/src/runtime/mod.rs:335-337]
 
-这两个数字（31 和 61）不是随意选择的。31 是 2 的 5 次方减 1，可以用位运算快速判断；61 则是为了确保 I/O 事件不会被无限延迟——即使任务队列永远非空，每 61 次调度后也必须检查一次 I/O。
+These two numbers (31 and 61) are not chosen arbitrarily. 31 is 2 to the 5th power minus 1, which can be quickly checked with bitwise operations; 61 is chosen to ensure that I/O events are not delayed indefinitely—even if the task queue is never empty, I/O must be checked once every 61 scheduling rounds.
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 为什么是 31 而不是 32？因为计数器从 0 开始，每调度一次加 1，当计数器达到 31 时触发全局队列检查。用 `counter & 31 == 31` 判断比 `counter % 32 == 0` 更高效（虽然现代编译器会自动优化）。61 的选择则更微妙：它需要足够大以避免频繁的 epoll_wait 系统调用开销，又需要足够小以保证 I/O 延迟在可接受范围内。
+> **[Design Inference & Architectural Trade-offs]**
+> Why 31 and not 32? Because the counter starts at 0 and increments by 1 on each scheduling round, and when the counter reaches 31, a global queue check is triggered. Using`counter & 31 == 31`to check is more efficient than`counter % 32 == 0`(although modern compilers will optimize it automatically). The choice of 61 is more subtle: it needs to be large enough to avoid the overhead of frequent epoll_wait system calls, yet small enough to keep I/O latency within an acceptable range.
 
-## 多线程运行时的 LIFO 槽优化
+## LIFO slot optimization in the multi-threaded runtime
 
-多线程运行时在公平性之上还增加了一个性能优化——LIFO 槽：
+On top of fairness, the multi-threaded runtime adds a performance optimization—the LIFO slot:
 
 > The multi thread runtime uses the lifo slot optimization: Whenever a task wakes up another task, the other task is added to the worker thread's lifo slot instead of being added to a queue.
 
-[FACT:tokio/src/runtime/mod.rs:373-377](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L373-L377)
+[FACT:tokio/src/runtime/mod.rs:373-377]
 
-这个优化的直觉是：当一个任务唤醒另一个任务时，被唤醒的任务很可能与当前任务有数据依赖（比如生产者-消费者模式）。把它放在 LIFO 槽中，当前任务完成后立即执行它，可以利用 CPU 缓存的热数据。
+The intuition behind this optimization is: when a task wakes another task, the awakened task is very likely to have a data dependency with the current task (such as in the producer-consumer pattern). By placing it in the LIFO slot, the current task can execute it immediately after finishing, taking advantage of hot data in the CPU cache.
 
-但 LIFO 槽有一个防滥用机制：
+But the LIFO slot has an anti-abuse mechanism:
 
 > if a worker thread uses the lifo slot three times in a row, it is temporarily disabled until the worker thread has scheduled a task that didn't come from the lifo slot.
 
-[FACT:tokio/src/runtime/mod.rs:380-382](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L380-L382)
+[FACT:tokio/src/runtime/mod.rs:380-382]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个「三次连续使用后禁用」的规则是为了防止两个任务互相唤醒形成活锁。如果任务 A 唤醒任务 B，B 又唤醒 A，没有这个限制的话，LIFO 槽会被这两个任务永久占用，其他任务永远得不到调度。三次的限制给了其他任务一个插入的机会。
+> **[Design Inference & Architectural Trade-offs]**
+> This rule of "disabled after three consecutive uses" is intended to prevent two tasks from waking each other and forming a livelock. If task A wakes task B, and B wakes A, without this restriction the LIFO slot would be permanently occupied by these two tasks, and other tasks would never get scheduled. The limit of three gives other tasks a chance to be inserted.
 
-## 任务取消：abort 的真实语义
+## Task cancellation: the real semantics of abort
 
-`JoinHandle::abort` 的行为经常被误解。文档明确指出：
+`JoinHandle::abort`The behavior of
 
 > Be aware that calls to `JoinHandle::abort` just schedule the task for cancellation, and will return before the cancellation has completed.
 
-[FACT:tokio/src/task/mod.rs:146-148](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/mod.rs#L146-L148)
+[FACT:tokio/src/task/mod.rs:146-148]
 
-这意味着 `abort` 不是同步的。它只是设置一个标志位，任务会在下一个 `.await` 点检查这个标志并自行终止。如果任务正在执行一段没有 `.await` 的 CPU 密集代码，`abort` 不会立即生效。
+is often misunderstood. The documentation clearly states:`abort`This means that`.await`is not synchronous. It only sets a flag, and the task will check this flag at the next`.await`point and terminate itself. If the task is executing a CPU-intensive section of code with no`abort`,
 
-更微妙的是：
+will not take effect immediately.
 
 > Note that aborting a task does not guarantee that it fails with a cancelled error, since it may complete normally first.
 
-[FACT:tokio/src/task/mod.rs:134-138](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/task/mod.rs#L134-L138)
+[FACT:tokio/src/task/mod.rs:134-138]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这个语义的设计动机是：取消是一个「尽力而为」的操作。Tokio 不强制杀死任务（Rust 没有安全的强制终止机制），而是协作式地请求任务自行退出。这与 `spawn_blocking` 任务不可取消的设计是一致的——阻塞任务没有 `.await` 点，无法检查取消标志。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]`spawn_blocking`The design motivation for this semantics is: cancellation is a "best-effort" operation. Tokio does not forcibly kill tasks (Rust has no safe forced-termination mechanism), but instead cooperatively requests that the task exit on its own. This is consistent with the design that`.await`tasks are not cancellable—blocking tasks have no
 
+# points and cannot check the cancellation flag.
 
-## 为什么 Future 不包含 Executor
+## 1.4 Design reflections: the boundaries and costs of the trio
 
-Rust 的 `Future` trait 刻意不包含「如何调度自己」的信息。这是一个深思熟虑的解耦决策。如果 Future 知道自己的 Executor，那么：
+Why Future does not include Executor`Future`Rust's
 
-1. 同一个 Future 无法在不同运行时上执行（比如从 Tokio 迁移到 async-std）
+trait deliberately does not include information about "how to schedule itself." This is a deliberate decoupling decision. If a Future knew its Executor, then:
 
-2. 测试时无法用简单的 `block_on` 驱动
+1. The same Future could not be executed on different runtimes (for example, migrating from Tokio to async-std)`block_on`2. During testing, it could not be driven with a simple
 
-3. 组合器（如 `select!`、`join!`）无法跨运行时工作
+`select!`、`join!`3. Combinators (such as
 
-Waker 的存在正是为了在保持这种解耦的同时，仍然允许 Future 通知 Executor。Waker 是一个「能力令牌」——Future 只知道「我可以调用这个来请求重新调度」，但不知道调度具体如何发生。
+) could not work across runtimes
 
-## 协作式调度的代价
+## The existence of Waker is precisely to preserve this decoupling while still allowing the Future to notify the Executor. Waker is a "capability token"—the Future only knows "I can call this to request rescheduling," but does not know how scheduling actually happens.
 
-Tokio 的任务是协作式的：任务只有在 `.await` 点才会让出执行权。这意味着：
+The cost of cooperative scheduling`.await`Tokio's tasks are cooperative: a task yields execution only at
 
 > code that spends a long time without reaching an `.await` will prevent other tasks from running.
 
-[FACT:tokio/src/lib.rs:178-179](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/lib.rs#L178-L179)
+[FACT:tokio/src/lib.rs:178-179]
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这是协作式调度的根本代价。操作系统可以在任意指令边界抢占线程，但 Tokio 只能在 `.await` 点切换任务。如果一个任务执行了一个 10 秒的 CPU 密集循环且中间没有 `.await`，那么同一个 worker 线程上的其他所有任务都会被阻塞 10 秒。Tokio 的应对策略是提供 `spawn_blocking` 和 `block_in_place`，把这类工作转移到专用线程池。但这是用户的责任，运行时无法自动检测。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]`.await`This is the fundamental cost of cooperative scheduling. The operating system can preempt a thread at any instruction boundary, but Tokio can switch tasks only at`.await`points. If a task executes a 10-second CPU-intensive loop with no`spawn_blocking`in between, then all other tasks on the same worker thread will be blocked for 10 seconds. Tokio's response is to provide`block_in_place`and
 
-## 公平性保证的边界条件
+## , moving this kind of work to a dedicated thread pool. But this is the user's responsibility; the runtime cannot detect it automatically.
 
-Tokio 的公平性保证有两个前提条件：任务总数有上界，且没有任务阻塞线程。这两个条件在实际生产环境中经常被违反：
+Boundary conditions of the fairness guarantee
 
-- 如果任务不断 spawn 新任务且不回收，任务总数无上界，公平性保证失效
-- 如果某个任务执行了阻塞系统调用（比如同步文件 I/O），它阻塞了整个 worker 线程
+- Tokio's fairness guarantee has two preconditions: the total number of tasks is bounded, and no task blocks the thread. These two conditions are often violated in real production environments:
+- If tasks continuously spawn new tasks and do not reclaim them, the total number of tasks is unbounded and the fairness guarantee fails
 
-> **〔Design Inference & Architectural Trade-offs〕**
-> 这就是为什么 Tokio 文档反复强调「不要在异步任务中执行阻塞操作」。公平性保证不是运行时的硬性保证，而是「在正确使用的前提下」的保证。运行时不检测违规行为，因为检测本身需要开销。
+> **[Design Inference & Architectural Trade-offs]**
+> [Design inference and architectural trade-offs]
 
+# This is why Tokio's documentation repeatedly emphasizes "do not perform blocking operations in asynchronous tasks." The fairness guarantee is not a hard guarantee of the runtime, but a guarantee "under the premise of correct use." The runtime does not detect violations, because detection itself has overhead.
 
-本章建立了理解 Tokio 的三个基石：
+1.5 Chapter summary
 
-**Future 是拉取式的状态机。** `poll` 是纯粹的查询动作，返回 `Pending` 时必须已注册唤醒，返回 `Ready` 后不应再被 poll。Tokio 直接复用 `std::future::Future`，不做额外包装（除非启用 tracing）。
+**Future is a pull-based state machine.** `poll`is a pure query action, returning`Pending`must have already registered a waker when returning`Ready`should no longer be polled after returning. Tokio directly reuses`std::future::Future`without additional wrapping (unless tracing is enabled).
 
-**Waker 是反向控制流的唯一通道。** 它通过「数据指针 + 虚表」的设计实现了运行时无关性。`wake` 消耗所有权，`wake_by_ref` 只借用。虚假唤醒是允许的，Future 必须容忍。
+**Waker is the only channel for reverse control flow.**It achieves runtime independence through a "data pointer + vtable" design.`wake`consumes ownership,`wake_by_ref`only borrows. Spurious wakeups are allowed, and Future must tolerate them.
 
-**Executor 负责生命周期、公平性和资源集成。** 它把 Future 包装成 Task，通过 `AutoBox` 在编译期决定是否装箱，通过 31/61 这两个魔法数字平衡本地队列和全局队列的调度，通过 LIFO 槽优化数据依赖场景的性能。
+**Executor is responsible for lifecycle, fairness, and resource integration.**It wraps Future into a Task, through`AutoBox`deciding at compile time whether to box, through the two magic numbers 31/61 balancing scheduling between the local queue and the global queue, and through the LIFO slot optimizing performance in data-dependent scenarios.
 
-这三个组件通过窄接口解耦：Future 只知道 `poll`，Waker 只知道 `wake`，Executor 只知道「轮询直到 Pending 或 Ready」。正是这种解耦使得 Tokio 可以在不修改 Future 定义的前提下，实现 work-stealing 调度、I/O 驱动集成、协作式预算等高级特性。
+These three components are decoupled through narrow interfaces: Future only knows`poll`, Waker only knows`wake`, Executor only knows "poll until Pending or Ready." It is precisely this decoupling that allows Tokio to implement advanced features such as work-stealing scheduling, I/O driver integration, and cooperative budgeting without modifying the Future definition.
 
+# Chapter Review and Self-Test
 
-Q1: 如果将 `AutoBox::SHOULD_BOX` 的判断从编译期常量改为运行时 `if size_of::<T>() > THRESHOLD`，会对编译产物产生什么影响？为什么 Tokio 的注释特别强调这一点？
+Q1: If the`AutoBox::SHOULD_BOX`judgment is changed from a compile-time constant to a runtime`if size_of::<T>() > THRESHOLD`, what impact will it have on the compiled artifact? Why does Tokio's comment specifically emphasize this point?
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:657-667](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L657-L667) 的注释，如果用运行时 `if`，编译器会为每个 `T` 同时实例化两条分支的代码——一条处理 `T` 直接内联的情况，一条处理 `Pin<Box<T>>` 的情况。这意味着每个 spawn 的 Future 类型都会生成两份任务驱动代码（task harness），导致二进制体积翻倍。而用关联常量 `SHOULD_BOX`，由于它在 `T` 确定后就是编译期常量，单态化收集器会剪掉不可达的分支，只为实际使用的路径生成代码。这是一个「用类型系统替代运行时判断」的典型优化，代价是 `AutoBox` 必须是一个泛型结构体而非普通函数。
+**Reference Analysis**: According to the[FACT:tokio/src/runtime/mod.rs:657-667]comment, if a runtime`if`is used, the compiler will instantiate code for both branches for each`T`—one handling the case where`T`is directly inlined, and one handling the`Pin<Box<T>>`case. This means that each spawned Future type will generate two copies of the task harness code, causing the binary size to double. With the associated constant`SHOULD_BOX`, since it is a compile-time constant once`T`is determined, the monomorphization collector will prune unreachable branches and generate code only for the path actually used. This is a typical optimization of "replacing runtime judgment with the type system," at the cost that`AutoBox`must be a generic struct rather than an ordinary function.
 
-Q2: 假设一个任务在 `poll` 中返回了 `Pending`，但忘记注册 Waker。在 current-thread 运行时和 multi-thread 运行时下，这个任务分别会发生什么？Tokio 有没有机制检测这种情况？
+Q2: Suppose a task returns`poll`in`Pending`but forgets to register a Waker. What happens to this task under the current-thread runtime and the multi-thread runtime respectively? Does Tokio have a mechanism to detect this situation?
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:306-309](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L306-L309)，Tokio 允许虚假唤醒，这意味着任务可能在没有被唤醒的情况下被重新调度。但这不意味着忘记注册 Waker 是安全的。在 current-thread 运行时下，如果本地队列和全局队列都为空，运行时会进入 `park` 状态等待 I/O 或定时器事件。忘记注册 Waker 的任务永远不会被重新入队，导致永久挂起。在 multi-thread 运行时下，情况类似，但如果有其他任务持续唤醒，该任务可能因为虚假唤醒而被偶然重新调度——但这不可依赖。Tokio 没有运行时检测机制来发现「返回 Pending 但未注册 Waker」的情况，因为这需要在每次 poll 后检查 Waker 是否被使用，开销太大。这是 Future 实现者的责任。
+**Reference Analysis**: According to[FACT:tokio/src/runtime/mod.rs:306-309], Tokio allows spurious wakeups, which means a task may be rescheduled without being woken. But this does not mean forgetting to register a Waker is safe. Under the current-thread runtime, if both the local queue and the global queue are empty, the runtime enters the`park`state waiting for I/O or timer events. A task that forgets to register a Waker will never be re-enqueued, resulting in permanent suspension. Under the multi-thread runtime, the situation is similar, but if other tasks continue to wake, the task may be accidentally rescheduled due to spurious wakeups—but this cannot be relied upon. Tokio has no runtime detection mechanism to discover the case of "returning Pending but not registering a Waker," because this would require checking after every poll whether the Waker was used, which is too expensive. This is the responsibility of the Future implementer.
 
-Q3: LIFO 槽的「三次连续使用后禁用」规则是为了防止什么具体场景？如果去掉这个限制，在什么样的任务依赖模式下会导致其他任务饿死？
+Q3: What specific scenario is the "disabled after three consecutive uses" rule of the LIFO slot intended to prevent? If this restriction were removed, under what kind of task dependency pattern would other tasks be starved?
 
-**参考解析**：根据 [FACT:tokio/src/runtime/mod.rs:380-382](https://github.com/tokio-rs/tokio/blob/e800714ad714f1d996ddd56265b550d879349c0a/tokio/src/runtime/mod.rs#L380-L382)，LIFO 槽在连续使用三次后会被临时禁用，直到调度了一个非 LIFO 来源的任务。这个规则防止的场景是：两个任务互相唤醒形成紧密循环。例如任务 A 处理完一批数据后唤醒任务 B，任务 B 处理完后立即唤醒任务 A。如果没有三次限制，A 和 B 会永远占据 LIFO 槽，worker 线程会在这两个任务之间无限切换，本地队列和全局队列中的其他任务永远得不到执行机会。三次的限制确保了每处理三轮「互相唤醒」后，至少有一个其他任务被调度，打破了活锁。这个数字的选择是经验性的：太小会降低 LIFO 优化的收益，太大会增加其他任务的延迟。
+**Reference Analysis**: According to[FACT:tokio/src/runtime/mod.rs:380-382], the LIFO slot is temporarily disabled after three consecutive uses, until a task from a non-LIFO source is scheduled. The scenario this rule prevents is: two tasks waking each other in a tight loop. For example, task A wakes task B after processing a batch of data, and task B immediately wakes task A after processing. Without the three-use limit, A and B would forever occupy the LIFO slot, the worker thread would switch infinitely between these two tasks, and other tasks in the local queue and global queue would never get a chance to execute. The three-use limit ensures that after every three rounds of "mutual waking," at least one other task is scheduled, breaking the livelock. The choice of this number is empirical: too small reduces the benefit of the LIFO optimization, too large increases the latency of other tasks.
 
-至此，Future、Waker 与 Executor 三者的职责边界与协作机制已经清晰：Future 定义计算，Waker 负责唤醒，Executor 驱动执行。但单个组件无法独立工作，它们必须被组装进一个统一的运行时环境。下一章，我们将追踪 Runtime::new 与 Builder::build 的完整装配链路，看调度器、I/O 驱动、时间驱动和阻塞线程池如何被注入同一个 Runtime 实例，并揭示 current_thread 与 multi_thread 两种形态在装配阶段的根本差异。
+At this point, the responsibility boundaries and collaboration mechanisms among Future, Waker, and Executor are clear: Future defines computation, Waker is responsible for waking, and Executor drives execution. But a single component cannot work independently; they must be assembled into a unified runtime environment. In the next chapter, we will trace the complete assembly chain of Runtime::new and Builder::build, see how the scheduler, I/O driver, time driver, and blocking thread pool are injected into the same Runtime instance, and reveal the fundamental differences between the current_thread and multi_thread forms during the assembly stage.

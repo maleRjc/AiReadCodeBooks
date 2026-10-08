@@ -1,48 +1,49 @@
-# Chapter 22: Production Troubleshooting: Deadlocks, Timeouts & Diagnosis Workflows
+# Chapter 22: Production Troubleshooting and Pitfalls: Common Deadlocks, Timeouts, Version Mismatches, and Troubleshooting Solutions
 
+In the previous chapter, we sorted out the troubleshooting order and key knobs for performance tuning, but NCCL failures in production environments are often not due to performance falling short, but because the program hangs directly or crashes. The root cause of these failures is usually not that some function was written incorrectly, but that the call order, lifecycle, or version contract was violated. This chapter focuses on the four most typical pitfalls: deadlocks caused by misuse of group semantics, silent errors caused by missing parameter validation, ABI version mismatches, and the boundaries of timeouts and retries. We will follow four clues - src/group.cc, src/misc/argcheck.cc, src/include/checks.h, and contrib/nccl_ep/nccl_ep.cc - to see clearly how NCCL blocks errors before they occur.
 
-上一章我们梳理了性能调优的排查顺序与关键旋钮，但生产环境中的 NCCL 故障往往不是性能不达标，而是程序直接挂起或崩溃。这些故障的根源通常不是某个函数写错了，而是调用顺序、生命周期或版本契约被破坏。本章聚焦四类最典型的踩坑：group 语义误用导致的死锁、参数校验缺失导致的静默错误、ABI 版本不匹配、以及超时与重试的边界。我们会沿着 src/group.cc、src/misc/argcheck.cc、src/include/checks.h 和 contrib/nccl_ep/nccl_ep.cc 四条线索，看清 NCCL 内部是如何在错误发生前就把它挡住的。
+# Misuse of Group Semantics: Why "forgetting a GroupEnd" causes a hang
 
-## Group 语义误用：为什么"少写一个 GroupEnd"会挂死
+## Intuitive model: Group is a "shopping cart", not an "acceleration switch"
 
-### Intuitive Architectural Model：Group 是"购物车"，不是"加速开关"
+Think of`ncclGroupStart()` / `ncclGroupEnd()`as an online shopping cart: you put multiple items (multiple communication calls) into the cart, and finally check out all at once (`ncclGroupEnd`). If you only add items without checking out, the cart remains suspended forever - the`ncclGroupDepth`counter maintained internally by NCCL will not return to zero, and all subsequent communication calls will think they are "still accumulating the order", never actually launching the kernel, so the entire process hangs.
 
-把 `ncclGroupStart()` / `ncclGroupEnd()` 想象成网购的购物车：你把多件商品（多次通信调用）放进购物车，最后一次性结算（`ncclGroupEnd`）。如果只放不结算，购物车永远悬在半空——NCCL 内部维护的 `ncclGroupDepth` 计数器就不会归零，后续所有通信调用都会以为"还在攒单"，永远不真正下发 kernel，于是整个进程挂死。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the most common deadlock pattern in production: code in some exception branch`return`, skipping`ncclGroupEnd`, and`ncclGroupDepth`is`thread_local`, and will not be automatically cleaned up when the function returns.
 
-[INFERENCE] 这是生产中最常见的死锁形态：代码在某个异常分支里 `return` 了，跳过了 `ncclGroupEnd`，而 `ncclGroupDepth` 是 `thread_local` 的，不会因为函数返回而自动清理。
+## Data structure: thread_local group state
 
-### 数据结构：thread_local 的 group 状态
+NCCL stores all group state in thread-local storage, which is the key to understanding the deadlock.
 
-NCCL 把 group 状态全部放在线程局部存储里，这是理解死锁的关键。
-
-[FACT:src/group.cc:34-34](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L34-L34)
+[FACT:src/group.cc:34-34]
 
 ```cpp
 thread_local int ncclGroupDepth = 0; // depth of ncclGroupStart nesting
 thread_local ncclResult_t ncclGroupError = ncclSuccess;
 thread_local struct ncclComm* ncclGroupCommHead[ncclGroupTaskTypeNum] = {nullptr};
 thread_local struct ncclComm* ncclGroupCommPreconnectHead = nullptr;
-thread_local struct ncclIntruQueue<struct ncclAsyncJob, &ncclAsyncJob::next> ncclAsyncJobs;
+thread_local struct ncclIntruQueue ncclAsyncJobs;
 thread_local int ncclGroupBlocking = -1; /* default mode */
 ```
 
-逐字段解读：
+Field-by-field interpretation:
 
-- `ncclGroupDepth`：嵌套深度。`ncclGroupStart` 递增，`ncclGroupEnd` 递减，只有减到 0 才真正触发下发。支持嵌套是设计上的便利，但也意味着"漏掉一个 End"会让深度永远停在 1。
-- `ncclGroupError`：本线程累积的 group 错误。一旦某次调用失败，后续 `ncclGroupEnd` 会直接走失败路径。
-- `ncclGroupCommHead[]`：按任务类型（collective / rawTask / mgmtTask / symRegister）分组的通信域链表头。
-- `ncclAsyncJobs`：待执行的异步任务队列（比如 preconnect、symmetric register）。
-- `ncclGroupBlocking`：`-1` 表示"还没遇到任何通信域"，`0` 表示非阻塞，`1` 表示阻塞。这个字段是后面"阻塞与非阻塞混用"检测的核心。
+- `ncclGroupDepth`: nesting depth.`ncclGroupStart`increments,`ncclGroupEnd`decrements, and only when it reaches 0 does it actually trigger submission. Supporting nesting is a design convenience, but it also means that "missing one End" will leave the depth stuck at 1 forever.
+- `ncclGroupError`: the group error accumulated by this thread. Once a call fails, subsequent`ncclGroupEnd`will directly take the failure path.
+- `ncclGroupCommHead[]`: the heads of the communication domain linked lists grouped by task type (collective / rawTask / mgmtTask / symRegister).
+- `ncclAsyncJobs`: the queue of asynchronous tasks to be executed (such as preconnect, symmetric register).
+- `ncclGroupBlocking`：`-1`means "no communication domain has been encountered yet,"`0`means non-blocking,`1`means blocking. This field is the core of the later "mixed blocking and non-blocking" detection.
 
-[INFERENCE] 用 `thread_local` 而非全局变量的动机很直接：NCCL 允许多线程各自持有独立的 group 上下文，互不干扰。代价是——线程退出时这些状态不会自动清理，如果线程在 group 中途退出，状态就泄漏了。
+> **[Design Inference & Architectural Trade-offs]**
+> Using`thread_local`instead of a global variable has a straightforward motivation: NCCL allows multiple threads to each hold independent group contexts without interfering with each other. The cost is that these states are not automatically cleaned up when a thread exits. If a thread exits in the middle of a group, the state leaks.
 
-### Step-by-Step：一次 GroupEnd 的完整校验链
+## Step-by-Step: the complete validation chain of a GroupEnd
 
-代入场景：应用调用 `ncclGroupEnd()`，此时 `ncclGroupDepth` 为 1。
+Scenario: the application calls`ncclGroupEnd()`, and at this point`ncclGroupDepth`is 1.
 
-第一步，检查是否真的在 group 里：
+Step one, check whether it is really inside a group:
 
-[FACT:src/group.cc:1048-1052](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1048-L1052)
+[FACT:src/group.cc:1048-1052]
 
 ```cpp
   if (ncclGroupDepth == 0) {
@@ -52,11 +53,11 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
   }
 ```
 
-如果用户没调用 `ncclGroupStart` 就直接 `ncclGroupEnd`，这里会打印 "not in a group call" 并返回 `ncclInvalidUsage`。这是最友好的错误——立刻报错，不会挂死。
+If the user did not call`ncclGroupStart`and directly`ncclGroupEnd`, this will print "not in a group call" and return`ncclInvalidUsage`. This is the friendliest error - it reports immediately and will not hang.
 
-第二步，递减深度，判断是否是最外层：
+Step two, decrement the depth and determine whether this is the outermost layer:
 
-[FACT:src/group.cc:1061-1063](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1061-L1063)
+[FACT:src/group.cc:1061-1063]
 
 ```cpp
   if ((--ncclGroupDepth) > 0) goto exit;
@@ -64,11 +65,11 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
   if ((ret = ncclGroupError) != ncclSuccess) goto fail;
 ```
 
-如果嵌套了多层，内层的 `End` 只是递减深度就返回，不触发下发。只有最外层才继续。同时检查累积错误。
+If multiple layers are nested, the inner`End`only decrements the depth and returns without triggering submission. Only the outermost layer continues. At the same time, accumulated errors are checked.
 
-第三步，校验阻塞模式一致性。这是"阻塞与非阻塞混用"的检测点：
+Step three, validate consistency of the blocking mode. This is the detection point for "mixed blocking and non-blocking":
 
-[FACT:src/group.cc:1095-1101](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1095-L1101)
+[FACT:src/group.cc:1095-1101]
 
 ```cpp
   if (hasCommHead || !ncclIntruQueueEmpty(&groupJob->asyncJobs) || ncclGroupCommPreconnectHead != nullptr) {
@@ -80,11 +81,11 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
     }
 ```
 
-`ncclGroupBlocking` 必须在 `{0, 1}` 之间。如果它还是 `-1`，说明 group 里既没有通信域也没有异步任务，逻辑上不该走到这里。
+`ncclGroupBlocking`must be between`{0, 1}`. If it is still`-1`, it means the group contains neither a communication domain nor an asynchronous task, and logically execution should not reach here.
 
-第四步，根据阻塞模式分叉。非阻塞走线程异步下发，阻塞走同步下发：
+Step four, branch according to the blocking mode. Non-blocking goes through asynchronous submission by a thread, while blocking goes through synchronous submission:
 
-[FACT:src/group.cc:1102-1134](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1102-L1134)
+[FACT:src/group.cc:1102-1134]
 
 ```cpp
     if (ncclGroupBlocking == 0) {
@@ -108,13 +109,13 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
     }
 ```
 
-注意 `groupRefCount++` 和 `ret = ncclInProgress`：非阻塞模式下，`ncclGroupEnd` 立刻返回 `ncclInProgress`，真正的下发在后台线程里跑。调用方必须后续用 `ncclCommGetAsyncError` 轮询，或者用 `ncclGroupJobComplete` 等待。
+Note`groupRefCount++`and`ret = ncclInProgress`: in non-blocking mode,`ncclGroupEnd`returns immediately with`ncclInProgress`, and the actual submission runs in a background thread. The caller must subsequently poll with`ncclCommGetAsyncError`, or wait with`ncclGroupJobComplete`.
 
-### 阻塞与非阻塞混用：为什么被禁止
+## Mixing blocking and non-blocking: why it is forbidden
 
-回到 `ncclAsyncLaunch`，看混用检测：
+Return to`ncclAsyncLaunch`and look at the mixed-use detection:
 
-[FACT:src/group.cc:55-64](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L55-L64)
+[FACT:src/group.cc:55-64]
 
 ```cpp
     /* check if there are blocking and nonblocking comms at the same time in group. */
@@ -129,17 +130,18 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
     }
 ```
 
-[INFERENCE] 为什么禁止混用？因为阻塞通信域的下发语义是"调用返回时 kernel 已提交"，而非阻塞是"调用返回时任务已入队但未提交"。如果两者在同一个 group 里，`ncclGroupEnd` 无法给出统一的返回语义——到底是等还是不等？NCCL 选择直接拒绝，把问题暴露在 API 边界。
+> **[Design Inference & Architectural Trade-offs]**
+> Why is mixing forbidden? Because the submission semantics of a blocking communication domain are "the kernel has been submitted when the call returns," while non-blocking means "the task has been enqueued but not submitted when the call returns." If both are in the same group,`ncclGroupEnd`cannot provide a unified return semantics - should it wait or not? NCCL chooses to reject it outright and expose the problem at the API boundary.
 
-### 生产踩坑：三个真实场景
+## Production pitfalls: three real scenarios
 
-**场景一：异常分支漏掉 GroupEnd。** 代码在 `ncclGroupStart` 和 `ncclGroupEnd` 之间抛异常或提前 `return`，`ncclGroupDepth` 停在 1。后续所有通信调用都进入"攒单"状态，永远不下发。排查方法：在 `ncclGroupEnd` 前打印 `ncclGroupDepth`，或者用 `gdb` 观察该 thread_local 变量。
+**Scenario one: an exception branch misses GroupEnd.**Code throws an exception between`ncclGroupStart`and`ncclGroupEnd`or returns early`return`，`ncclGroupDepth`stays at 1. All subsequent communication calls enter a "batching" state and are never submitted. Troubleshooting method: print`ncclGroupEnd`before`ncclGroupDepth`, or use`gdb`to observe that thread_local variable.
 
-**场景二：跨线程使用同一个 comm。** 因为 group 状态是 `thread_local`，线程 A 调用 `ncclGroupStart` 后，线程 B 调用 `ncclAllReduce` 不会进入 A 的 group。如果 A 和 B 操作同一个 comm，会出现"部分调用在 group 内、部分在 group 外"的错乱。NCCL 不检测这种情况，因为它假设一个 comm 在任一时刻只被一个线程操作。
+**Scenario two: using the same comm across threads.**Because group state is`thread_local`, after thread A calls`ncclGroupStart`, thread B calling`ncclAllReduce`will not enter A's group. If A and B operate on the same comm, there will be confusion where "some calls are inside the group and some are outside the group." NCCL does not detect this situation because it assumes that a comm is operated on by only one thread at any given time.
 
-**场景三：CUDA graph capture 与 group 的交互。** 看 `doLaunches` 里的检测：
+**Scenario three: the interaction between CUDA graph capture and groups.**Look at the detection in`doLaunches`:
 
-[FACT:src/group.cc:448-455](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L448-L455)
+[FACT:src/group.cc:448-455]
 
 ```cpp
     if (capturingYes && capturingNo) {
@@ -152,39 +154,39 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
     }
 ```
 
-注释说得很直白：一旦进入 barrier 又中途放弃，这些 comm 就被"永久损坏"了。所以规则是——一个 group 里的所有通信域，要么全部在 capture 中，要么全部不在。混用会导致 comm 状态不一致，且 NCCL 目前没有好的恢复机制。
+The comment says it very directly: once a barrier is entered and then abandoned midway, these comms are "permanently corrupted." So the rule is - all communication domains in a group must either all be in capture or all not be. Mixing them will cause inconsistent comm state, and NCCL currently has no good recovery mechanism.
 
 ```mermaid
 flowchart TD
     start["ncclGroupEnd()"] --> depth_check{"ncclGroupDepth == 0?"}
-    depth_check -->|是| err_usage["WARN not in a group call<br/>return ncclInvalidUsage"]
+    depth_check -->|是| err_usage["WARN not in a group callreturn ncclInvalidUsage"]
     depth_check -->|否| dec["--ncclGroupDepth"]
     dec --> nested{"depth > 0?"}
     nested -->|是| exit_ok["goto exit 返回"]
     nested -->|否| err_check{"ncclGroupError == success?"}
     err_check -->|否| fail_clean["groupCleanup 清理所有 comm 与 asyncJobs"]
     err_check -->|是| blocking_check{"ncclGroupBlocking in {0,1}?"}
-    blocking_check -->|否| err_internal["WARN Invalid group blocking state<br/>return ncclInternalError"]
+    blocking_check -->|否| err_internal["WARN Invalid group blocking statereturn ncclInternalError"]
     blocking_check -->|是| mode_split{"ncclGroupBlocking == 0?"}
-    mode_split -->|是 非阻塞| async_launch["STDTHREADCREATE groupLaunchNonBlocking<br/>ret = ncclInProgress"]
-    mode_split -->|否 阻塞| sync_launch["groupLaunch 同步下发<br/>delete groupJob"]
+    mode_split -->|是 非阻塞| async_launch["STDTHREADCREATE groupLaunchNonBlockingret = ncclInProgress"]
+    mode_split -->|否 阻塞| sync_launch["groupLaunch 同步下发delete groupJob"]
     async_launch --> reset["groupLocalResetJobState"]
     sync_launch --> reset
     reset --> exit_ok
     fail_clean --> reset
 ```
 
-## 参数校验与静默错误：ArgCheck 如何挡住"看起来正常"的调用
+# Parameter validation and silent errors: how ArgCheck blocks calls that "look normal"
 
-### Intuitive Architectural Model：ArgCheck 是"机场安检"
+## Intuitive model: ArgCheck is "airport security"
 
-参数校验就像机场安检：它不负责让你飞得更快，但能挡住那些"看起来是行李、实际是危险品"的东西。没有它，一个传错设备的指针会让 GPU kernel 读到垃圾数据，或者更糟——静默写坏别人的显存。
+Parameter validation is like airport security: it is not responsible for making you fly faster, but it can block those things that "look like luggage but are actually dangerous goods." Without it, a pointer with the wrong device passed in will make the GPU kernel read garbage data, or worse - silently corrupt someone else's memory.
 
-### 数据结构：校验模式与全局检查队列
+## Data structure: validation modes and the global check queue
 
-NCCL 的参数校验不是"每次都全查"，而是分模式。核心是 `comm->checkMode`：
+NCCL parameter validation is not "check everything every time," but is divided into modes. The core is`comm->checkMode`：
 
-[FACT:src/misc/argcheck.cc:227-251](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L227-L251)
+[FACT:src/misc/argcheck.cc:227-251]
 
 ```cpp
   if (info->comm->checkMode != ncclCheckModeDefault) {
@@ -214,21 +216,22 @@ NCCL 的参数校验不是"每次都全查"，而是分模式。核心是 `comm-
   }
 ```
 
-三种模式：
+Three modes:
 
-- `ncclCheckModeDefault`：只做最便宜的检查（root 范围、datatype 范围、op 范围），不碰 CUDA API。
-- 非默认模式：调用 `CudaPtrCheck`，这会真正调用 `cudaPointerGetAttributes`，有性能开销。
-- `ncclCheckModeDebugGlobal`：除了本地检查，还把 `ncclInfo` 塞进 `argsInfoQueue`，等 group 结束时做跨 rank 的全局一致性检查。
+- `ncclCheckModeDefault`: only the cheapest checks are performed (root range, datatype range, op range), without touching the CUDA API.
+- Non-default mode: calls`CudaPtrCheck`, which actually calls`cudaPointerGetAttributes`, and has performance overhead.
+- `ncclCheckModeDebugGlobal`: in addition to local checks, it also puts`ncclInfo`into`argsInfoQueue`, perform a cross-rank global consistency check when the group ends.
 
-[INFERENCE] 这个设计是性能与正确性的权衡：`cudaPointerGetAttributes` 是同步 CUDA 调用，在热路径上每次通信都调会显著拖慢小消息。所以默认模式只做"零成本"检查，把昂贵的指针校验留给调试模式。
+> **[Design Inference & Architectural Trade-offs]**
+> This design is a trade-off between performance and correctness:`cudaPointerGetAttributes`It is a synchronous CUDA call, and calling it on every communication in the hot path would significantly slow down small messages. So the default mode only performs "zero-cost" checks, leaving expensive pointer validation to debug mode.
 
-### Step-by-Step：CudaPtrCheck 的三层防线
+## Step-by-Step: The Three Layers of Defense in CudaPtrCheck
 
-代入场景：用户传入一个 `sendbuff`，NCCL 在调试模式下校验它。
+Scenario: The user passes in a`sendbuff`, and NCCL validates it in debug mode.
 
-第一层，指针是否有效：
+First layer, whether the pointer is valid:
 
-[FACT:src/misc/argcheck.cc:12-18](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L12-L18)
+[FACT:src/misc/argcheck.cc:12-18]
 
 ```cpp
 ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char* ptrname, const char* opname) {
@@ -240,11 +243,11 @@ ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char
   }
 ```
 
-`cudaPointerGetAttributes` 对无效指针会返回错误，或者 `devicePointer` 为 NULL。这挡住了"传了个 host 栈地址"或"传了个已释放的指针"。
+`cudaPointerGetAttributes`It returns an error for invalid pointers, or`devicePointer`is NULL. This blocks "passed a host stack address" or "passed a freed pointer."
 
-第二层，设备是否匹配：
+Second layer, whether the device matches:
 
-[FACT:src/misc/argcheck.cc:19-26](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L19-L26)
+[FACT:src/misc/argcheck.cc:19-26]
 
 ```cpp
 #if CUDART_VERSION >= 10000
@@ -257,11 +260,11 @@ ncclResult_t CudaPtrCheck(const void* pointer, struct ncclComm* comm, const char
   }
 ```
 
-这是最隐蔽的坑：指针是有效的 GPU 指针，但属于另一块 GPU。在多卡机器上，如果用户忘了 `cudaSetDevice`，很容易传错。NCCL 在这里明确拒绝。
+This is the most insidious pitfall: the pointer is a valid GPU pointer, but it belongs to another GPU. On multi-GPU machines, if the user forgets`cudaSetDevice`, it is very easy to pass the wrong one. NCCL explicitly rejects it here.
 
-第三层，通信域对象完整性：
+Third layer, communication domain object integrity:
 
-[FACT:src/misc/argcheck.cc:38-45](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L38-L45)
+[FACT:src/misc/argcheck.cc:38-45]
 
 ```cpp
 ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* ptrname) {
@@ -274,20 +277,20 @@ ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* pt
 }
 ```
 
-`startMagic` / `endMagic` 是放在 `ncclComm` 结构体首尾的哨兵值。如果用户传了个野指针、或者 comm 已被释放，magic 就对不上。这是"内存损坏检测"的经典手法——用两个哨兵夹住结构体，任何越界写都可能破坏其中一个。
+`startMagic` / `endMagic`It is a sentinel value placed at the beginning and end of the`ncclComm`struct. If the user passes a wild pointer, or comm has already been freed, the magic will not match. This is the classic technique for "memory corruption detection" — sandwiching the struct with two sentinels, so any out-of-bounds write is likely to corrupt one of them.
 
-### 全局一致性检查：registrationCheck 的跨 rank 校验
+## Global Consistency Check: registrationCheck's Cross-Rank Validation
 
-这是 NCCL 里最"重"的校验，只在 `ncclCheckModeDebugGlobal` 下触发。它检查的是——所有 rank 的对称内存注册状态是否一致。
+This is the "heaviest" validation in NCCL, and is triggered only under`ncclCheckModeDebugGlobal`. What it checks is — whether the symmetric memory registration state of all ranks is consistent.
 
-[FACT:src/misc/argcheck.cc:95-111](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L95-L111)
+[FACT:src/misc/argcheck.cc:95-111]
 
 ```cpp
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, bufInfo, sizeof(struct symBufInfo) * 2), ret, fail);
 
   cmpBufInfo[0] = bufInfo[0];
   cmpBufInfo[1] = bufInfo[1];
-  for (int r = 1; r < comm->nRanks; r++) {
+  for (int r = 1; r nRanks; r++) {
     int infoIdx = r * 2;
     if (cmpBufInfo[0].isSymRegistered != bufInfo[infoIdx].isSymRegistered ||
         cmpBufInfo[1].isSymRegistered != bufInfo[infoIdx + 1].isSymRegistered) {
@@ -302,40 +305,41 @@ ncclResult_t CommCheck(struct ncclComm* comm, const char* opname, const char* pt
     }
 ```
 
-它通过 bootstrap 的 `allGather` 把每个 rank 的 `(isSymRegistered, bigOffset, userOffset)` 收集起来，然后逐 rank 比对。如果 rank 0 的 send buffer 注册了对称内存，而 rank 3 没注册，这里就会报错。
+It uses the bootstrap's`allGather`to collect each rank's`(isSymRegistered, bigOffset, userOffset)`, then compares them rank by rank. If rank 0's send buffer has symmetric memory registered, but rank 3 does not, an error will be reported here.
 
-[INFERENCE] 为什么这个检查重要？对称内存（symmetric memory）要求所有 rank 用同一套虚拟地址访问缓冲区。如果某个 rank 的 buffer 没注册，kernel 里算出来的地址就是错的，会读到垃圾或越界。这种错误在运行时表现为"结果偶尔不对"，极难排查。NCCL 选择在 API 边界用一次 allGather 的代价把它挡住。
+> **[Design Inference & Architectural Trade-offs]**
+> Why is this check important? Symmetric memory requires all ranks to access the buffer using the same set of virtual addresses. If some rank's buffer is not registered, the address computed in the kernel will be wrong, causing reads of garbage or out-of-bounds access. This kind of error manifests at runtime as "results are occasionally wrong," and is extremely difficult to troubleshoot. NCCL chooses to block it at the API boundary at the cost of one allGather.
 
-### 生产踩坑
+## Production Pitfalls
 
-**坑一：默认模式下指针错误不报。** 如果用户没开调试模式，传了个错误设备的指针，NCCL 不会在 `ArgsCheck` 阶段报错，而是等到 kernel 执行时才发现——此时可能已经写坏了别的 rank 的显存。建议在开发阶段用 `NCCL_DEBUG=WARN` 加 `checkMode` 调试。
+**Pitfall 1: Pointer errors are not reported in default mode.**If the user has not enabled debug mode and passes a pointer for the wrong device, NCCL will not report an error during the`ArgsCheck`phase, but will only discover it when the kernel executes — by which time it may have already corrupted another rank's GPU memory. It is recommended to use`NCCL_DEBUG=WARN`plus`checkMode`for debugging during development.
 
-**坑二：`ncclCheckModeDebugGlobal` 的 allGather 开销。** 每次通信都做一次 bootstrap allGather，在小消息高频场景下会成为瓶颈。这个模式只适合调试，不能上生产。
+**Pitfall 2:`ncclCheckModeDebugGlobal`'s allGather overhead.**Every communication performs a bootstrap allGather, which becomes a bottleneck in high-frequency small-message scenarios. This mode is only suitable for debugging and cannot be used in production.
 
-**坑三：userRedOp 的生命周期。** 看这段：
+**Pitfall 3: The lifecycle of userRedOp.**Look at this section:
 
-[FACT:src/misc/argcheck.cc:220-225](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L220-L225)
+[FACT:src/misc/argcheck.cc:220-225]
 
 ```cpp
   int opIx = int(ncclUserRedOpMangle(info->comm, info->op)) - int(ncclNumOps);
-  if (ncclNumOps <= info->op &&
-      (info->comm->userRedOpCapacity <= opIx || info->comm->userRedOps[opIx].freeNext != -1)) {
+  if (ncclNumOps op &&
+      (info->comm->userRedOpCapacity comm->userRedOps[opIx].freeNext != -1)) {
     WARN("%s : reduction operation %d unknown to this communicator", info->opName, info->op);
     return ncclInvalidArgument;
   }
 ```
 
-用户自定义的 reduction op 是注册在 comm 上的。如果用户传了一个"曾经注册过但已被释放"的 op，`freeNext != -1` 会检测到它已被回收。这是防止"悬空 op 句柄"的检查。
+The user-defined reduction op is registered on comm. If the user passes an op that "was once registered but has already been freed,"`freeNext != -1`will detect that it has been reclaimed. This is a check to prevent "dangling op handles."
 
-## 错误传播宏：NCCLCHECK 家族如何保证"错误不丢"
+# Error Propagation Macros: How the NCCLCHECK Family Ensures "Errors Are Not Lost"
 
-### Intuitive Architectural Model：错误传播宏是"接力棒"
+## Intuitive Model: Error propagation macros are a "relay baton"
 
-NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上层用 `NCCLCHECK` 检查，非成功就立刻返回。这就像接力赛——棒子（错误码）必须一路传到底，任何一棒掉了，整个链条就断了。
+NCCL's error handling relies on a set of macros in a relay: the lower-level function returns`ncclResult_t`, the upper layer uses`NCCLCHECK`to check, and if it is not successful, it returns immediately. This is like a relay race — the baton (error code) must be passed all the way to the end; if any leg drops it, the whole chain breaks.
 
-### 数据结构：宏家族全貌
+## Data Structures: Overview of the Macro Family
 
-[FACT:src/include/checks.h:148-166](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L148-L166)
+[FACT:src/include/checks.h:148-166]
 
 ```cpp
 #define NCCLCHECK(call) \
@@ -359,13 +363,13 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
   } while (0)
 ```
 
-关键细节：`ncclInProgress` 被视为"非错误"。这是非阻塞通信的核心——`ncclGroupEnd` 返回 `ncclInProgress` 表示"任务已提交，还没完成"，调用方应该继续轮询而不是当错误处理。
+Key details:`ncclInProgress`is treated as "not an error." This is the core of non-blocking communication —`ncclGroupEnd`returning`ncclInProgress`means "the task has been submitted but not yet completed," and the caller should continue polling rather than treating it as an error.
 
-`NCCLCHECK` 直接 `return`，`NCCLCHECKGOTO` 跳到 `label`。后者用于需要清理资源的场景。
+`NCCLCHECK`directly`return`，`NCCLCHECKGOTO`jumps to`label`. The latter is used in scenarios that require resource cleanup.
 
-### 清理路径：NCCLCHECKIGNORE 保留首个错误
+## Cleanup Path: NCCLCHECKIGNORE Preserves the First Error
 
-[FACT:src/include/checks.h:168-177](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L168-L177)
+[FACT:src/include/checks.h:168-177]
 
 ```cpp
 // Report failure but continue - useful for cleanup paths where we want to
@@ -380,11 +384,11 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
   } while (0)
 ```
 
-注释说得很清楚：清理路径上要"尝试所有清理步骤"，不能被第一个错误打断。但错误码要保留第一个——因为第一个错误通常是最有诊断价值的根因。
+The comment makes it very clear: on the cleanup path, it should "attempt all cleanup steps" and must not be interrupted by the first error. But the error code should preserve the first one — because the first error is usually the root cause with the most diagnostic value.
 
-### 等待与中止：NCCLWAIT 的 abortFlag 检查
+## Waiting and Aborting: NCCLWAIT's abortFlag Check
 
-[FACT:src/include/checks.h:196-205](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L196-L205)
+[FACT:src/include/checks.h:196-205]
 
 ```cpp
 #define NCCLWAIT(call, cond, abortFlagPtr) \
@@ -399,13 +403,14 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
   } while (!(cond))
 ```
 
-这是轮询等待的模板：每次循环调用 `call`（推进进度），检查 `cond`（是否满足），同时检查 `abortFlag`（是否被中止）。`abortFlag` 用 `memory_order_acquire` 加载，保证看到其他线程写入的中止信号。
+This is the template for polling waits: each loop iteration calls`call`(advance progress), checks`cond`(whether it is satisfied), and also checks`abortFlag`(whether it has been aborted).`abortFlag`uses`memory_order_acquire`loading to ensure it sees the abort signal written by other threads.
 
-[INFERENCE] 这个设计解决了一个经典问题：当某个 rank 出错时，其他 rank 可能还在死等它的数据。`abortFlag` 是跨 rank 传播中止信号的机制——一旦设置，所有等待循环都会退出。
+> **[Design Inference & Architectural Trade-offs]**
+> This design solves a classic problem: when one rank errors out, other ranks may still be waiting forever for its data.`abortFlag`is the mechanism for propagating the abort signal across ranks — once set, all waiting loops will exit.
 
-### 线程创建与内存分配的安全宏
+## Safe Macros for Thread Creation and Memory Allocation
 
-[FACT:src/include/checks.h:237-256](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L237-L256)
+[FACT:src/include/checks.h:237-256]
 
 ```cpp
 #define STDTHREADCREATE_IMPL(var, func, error_action, ...) \
@@ -430,9 +435,9 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
     __VA_ARGS__)
 ```
 
-`std::thread` 构造失败会抛异常（比如线程数超限）。这个宏把异常转成 `ncclSystemError`，避免异常穿透 C API 边界。
+`std::thread`Construction failure throws an exception (for example, exceeding the thread limit). This macro converts the exception into`ncclSystemError`, preventing exceptions from crossing the C API boundary.
 
-[FACT:src/include/checks.h:258-275](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/include/checks.h#L258-L275)
+[FACT:src/include/checks.h:258-275]
 
 ```cpp
 #define NEW_NOTHROW(var, x) \
@@ -445,23 +450,23 @@ NCCL 的错误处理靠一组宏接力：底层函数返回 `ncclResult_t`，上
   } while (0)
 ```
 
-`new (std::nothrow)` 在分配失败时返回 nullptr 而非抛异常。这是 C++ 代码在 C API 边界上的标准做法。
+`new (std::nothrow)`Returns nullptr instead of throwing an exception when allocation fails. This is the standard practice for C++ code at the C API boundary.
 
-### 生产踩坑
+## Production Pitfalls
 
-**坑一：`ncclInProgress` 被误当成功。** 有些用户代码写 `if (ret == ncclSuccess)` 判断成功，但非阻塞模式下返回的是 `ncclInProgress`。正确做法是 `if (ret == ncclSuccess || ret == ncclInProgress)`，或者用 `ncclCommGetAsyncError` 查询。
+**Pitfall 1:`ncclInProgress`is mistakenly treated as success.**Some user code writes`if (ret == ncclSuccess)`to determine success, but in non-blocking mode what is returned is`ncclInProgress`. The correct approach is`if (ret == ncclSuccess || ret == ncclInProgress)`, or use`ncclCommGetAsyncError`to query.
 
-**坑二：`NCCLCHECK` 在析构函数里用。** 如果析构函数里用 `NCCLCHECK`，错误会直接 `return`，跳过后续清理。应该用 `NCCLCHECKIGNORE`。
+**Pitfall 2:`NCCLCHECK`Used in destructors.**If used in a destructor`NCCLCHECK`, the error will directly`return`, skipping subsequent cleanup. Should use`NCCLCHECKIGNORE`。
 
-## ABI 版本不匹配：nccl_ep 的 size-based 设计
+# ABI version mismatch: nccl_ep's size-based design
 
-### Intuitive Architectural Model：ABI 是"插座标准"
+## Intuitive model: ABI is a "socket standard"
 
-ABI（应用二进制接口）就像电源插座标准：如果库和调用方对"结构体长什么样"的理解不一致，就会像把美标插头插进欧标插座——轻则不工作，重则烧毁。`contrib/nccl_ep` 用了一个巧妙的设计：每个跨边界结构体都以 `size` 字段开头。
+ABI (Application Binary Interface) is like a power socket standard: if the library and the caller have inconsistent understanding of "what the struct looks like," it's like plugging a US-standard plug into a European-standard socket—at best it won't work, at worst it burns out.`contrib/nccl_ep`uses a clever design: every cross-boundary struct starts with a`size`field.
 
-### 数据结构：size + magic 双重校验
+## Data structure: size + magic dual validation
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:70-76](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L70-L76)
+[FACT:contrib/nccl_ep/nccl_ep.cc:70-76]
 
 ```cpp
 // Size-based ABI versioning: every cross-boundary struct starts with a `size`
@@ -473,15 +478,15 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 // to catch unininitialized structures.
 ```
 
-设计要点：
+Design points:
 
-- `size` 字段由调用方填 `sizeof(struct)`，库检查它是否等于自己认识的 size。
-- `magic` 字段由 `NCCL_EP_*_INIT` 宏预填，用来捕获"未初始化"的结构体。
-- 当前是严格相等，未来计划支持"尾部全零则允许 size 更小"的宽松模式。
+- `size`The field is filled in by the caller with`sizeof(struct)`, and the library checks whether it equals the size it recognizes.
+- `magic`The field is pre-filled by the`NCCL_EP_*_INIT`macro, used to catch "uninitialized" structs.
+- Currently it's strict equality; in the future there are plans to support a lenient mode where "if the tail is all zeros, a smaller size is allowed."
 
-### Step-by-Step：EP_REQUIRE_STRUCT 的校验流程
+## Step-by-Step: EP_REQUIRE_STRUCT's validation flow
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:77-80](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L77-L80)
+[FACT:contrib/nccl_ep/nccl_ep.cc:77-80]
 
 ```cpp
 #define EP_REQUIRE_STRUCT(ptr) \
@@ -490,9 +495,9 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
             (ptr) != nullptr && (ptr)->size == sizeof(*(ptr)) && \
 ```
 
-这个宏在 `ncclEpDispatch`、`ncclEpCombine` 等入口处调用：
+This macro is called at entry points such as`ncclEpDispatch`、`ncclEpCombine`:
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:2827-2830](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L2827-L2830)
+[FACT:contrib/nccl_ep/nccl_ep.cc:2827-2830]
 
 ```cpp
     EP_REQUIRE_STRUCT(inputs);
@@ -501,13 +506,13 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
     EP_OPTIONAL_STRUCT(config);
 ```
 
-`inputs` 和 `outputs` 是必需参数，用 `EP_REQUIRE_STRUCT`；`layout_info` 和 `config` 是可选参数，用 `EP_OPTIONAL_*`。
+`inputs`and`outputs`are required parameters, using`EP_REQUIRE_STRUCT`；`layout_info`and`config`are optional parameters, using`EP_OPTIONAL_*`。
 
-### 版本安全的字段读取：layoutInfoRecvTopkIdxKind
+## Version-safe field reading: layoutInfoRecvTopkIdxKind
 
-这是最精妙的部分——如何在"调用方结构体可能更小"的情况下安全读取字段。
+This is the most ingenious part—how to safely read a field when "the caller's struct may be smaller."
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:139-144](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L139-L144)
+[FACT:contrib/nccl_ep/nccl_ep.cc:139-144]
 
 ```cpp
 // Safe field reader for ncclEpLayoutInfo_t::recv_topk_idx_kind. Returns AUTO
@@ -516,18 +521,18 @@ ABI（应用二进制接口）就像电源插座标准：如果库和调用方�
 static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutInfo_t* lip) {
     if (lip == nullptr) return NCCL_EP_EXPERT_ID_AUTO;
     constexpr size_t field_end = offsetof(ncclEpLayoutInfo_t, recv_topk_idx_kind) + sizeof(ncclEpExpertIdKind_t);
-    if (lip->size < field_end) return NCCL_EP_EXPERT_ID_AUTO;
-    return lip->recv_topk_idx_kind;
+    if (lip->size recv_topk_idx_kind;
 }
 ```
 
-逻辑是：如果调用方的 `size` 小于"该字段结束的偏移"，说明调用方用的是旧版本结构体，这个字段不存在，返回默认值 `AUTO`。否则正常读取。
+The logic is: if the caller's`size`is less than "the offset where this field ends," it means the caller is using an older version of the struct, this field doesn't exist, and the default value`AUTO`is returned. Otherwise, read normally.
 
-[INFERENCE] 这是 ABI 兼容的标准手法：新字段只能加在结构体末尾，读取时用 `size` 判断字段是否存在。这样旧调用方用旧结构体，新库也能正确处理。
+> **[Design Inference & Architectural Trade-offs]**
+> This is the standard technique for ABI compatibility: new fields can only be added at the end of the struct, and when reading, use`size`to determine whether the field exists. This way, old callers use the old struct, and the new library can still handle it correctly.
 
-### 版本号检查：软警告而非硬拒绝
+## Version number check: soft warning rather than hard rejection
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1393-1400](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1393-L1400)
+[FACT:contrib/nccl_ep/nccl_ep.cc:1393-1400]
 
 ```cpp
     if (in_config->version != NCCL_EP_API_VERSION) {
@@ -540,20 +545,20 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
     }
 ```
 
-注意这里是 `WARN` 而非 `return error`。版本号不匹配只是警告，因为 `size` 检查已经保证了内存布局安全。版本号更多是"行为可能不同"的提示。
+Note that here it's`WARN`rather than`return error`. A version number mismatch is only a warning, because the`size`check already guarantees memory layout safety. The version number is more of a hint that "behavior may differ."
 
-### 生产踩坑
+## Production pitfalls
 
-**坑一：忘记用 INIT 宏初始化。** 如果用户手动 `memset` 结构体为 0，`magic` 就是 0，`EP_REQUIRE_STRUCT` 会失败。必须用 `NCCL_EP_*_INIT` 宏。
+**Pitfall 1: Forgetting to initialize with the INIT macro.**If the user manually`memset`the struct to 0,`magic`will be 0,`EP_REQUIRE_STRUCT`will fail. Must use the`NCCL_EP_*_INIT`macro.
 
-**坑二：跨版本混用动态库。** 如果应用链接的是新版 `libnccl_ep.so`，但头文件是旧版，`sizeof(struct)` 会不一致，`EP_REQUIRE_STRUCT` 会立刻报错。这是设计意图——快速失败优于静默错误。
+**Pitfall 2: Mixing dynamic libraries across versions.**If the application links against a new version of`libnccl_ep.so`, but the header file is an old version,`sizeof(struct)`will be inconsistent,`EP_REQUIRE_STRUCT`will immediately report an error. This is by design—failing fast is better than silent errors.
 
-**坑三：`EP_OPTIONAL_LAYOUT_INFO` 的范围检查。** 看这段：
+**Pitfall 3:`EP_OPTIONAL_LAYOUT_INFO`range check.**Look at this:
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:114-123](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L114-L123)
+[FACT:contrib/nccl_ep/nccl_ep.cc:114-123]
 
 ```cpp
-            if ((ptr)->size < kNcclEpLayoutInfoMinSize || (ptr)->size > sizeof(*(ptr))) { \
+            if ((ptr)->size size > sizeof(*(ptr))) { \
                 fprintf( \
                     stderr, \
                     "NCCL EP: ncclEpLayoutInfo_t size out of supported range: " \
@@ -565,36 +570,35 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
             } \
 ```
 
-`layout_info` 允许 size 在 `[min, sizeof]` 范围内，这比 `EP_REQUIRE_STRUCT` 的严格相等更宽松。原因是 `layout_info` 是可选参数，且历史上字段有增减。
+`layout_info`allows size within the`[min, sizeof]`range, which is more lenient than`EP_REQUIRE_STRUCT`'s strict equality. The reason is that`layout_info`is an optional parameter, and historically fields have been added and removed.
 
 ```mermaid
 flowchart TD
-    entry["ncclEpDispatch(inputs, outputs, layout_info, config)"] --> req_inputs{"EP_REQUIRE_STRUCT(inputs)<br/>size == sizeof?"}
+    entry["ncclEpDispatch(inputs, outputs, layout_info, config)"] --> req_inputs{"EP_REQUIRE_STRUCT(inputs)size == sizeof?"}
     req_inputs -->|否| err_size["assert 失败 / 返回错误"]
     req_inputs -->|是| req_outputs{"EP_REQUIRE_STRUCT(outputs)"}
     req_outputs -->|否| err_size
     req_outputs -->|是| opt_layout{"layout_info != nullptr?"}
     opt_layout -->|否| skip_layout["跳过 layout 校验"]
     opt_layout -->|是| range_check{"size in [min, sizeof]?"}
-    range_check -->|否| err_range["fprintf size out of range<br/>return ncclInvalidArgument"]
+    range_check -->|否| err_range["fprintf size out of rangereturn ncclInvalidArgument"]
     range_check -->|是| magic_check{"magic == NCCL_EP_MAGIC?"}
-    magic_check -->|否| err_magic["fprintf magic mismatch<br/>return ncclInvalidArgument"]
-    magic_check -->|是| read_field["layoutInfoRecvTopkIdxKind<br/>size < field_end ? AUTO : 实际值"]
-    skip_layout --> read_field
+    magic_check -->|否| err_magic["fprintf magic mismatchreturn ncclInvalidArgument"]
+    magic_check -->|是| read_field["layoutInfoRecvTopkIdxKindsize  read_field
     read_field --> proceed["继续执行 dispatch 逻辑"]
 ```
 
-## 超时、重试与中止：从 NCCLWAIT 到 nccl_ep 的 timeout_cycles
+# Timeout, retry, and abort: from NCCLWAIT to nccl_ep's timeout_cycles
 
-### Intuitive Architectural Model：超时是"保险丝"
+## Intuitive model: timeout is a "fuse"
 
-分布式通信里，一个 rank 卡住会导致所有 rank 死等。超时机制就像保险丝：正常情况下不动作，一旦电流异常就熔断，避免整个系统烧毁。
+In distributed communication, one stuck rank causes all ranks to wait forever. The timeout mechanism is like a fuse: under normal conditions it doesn't act, but once the current is abnormal it blows, preventing the entire system from burning out.
 
-### 数据结构：abortFlag 与 timeout_cycles
+## Data structure: abortFlag and timeout_cycles
 
-NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传递：
+The NCCL core uses`abortFlag`to propagate the abort signal. Look at the propagation in`ncclAsyncLaunch`:
 
-[FACT:src/group.cc:49-52](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L49-L52)
+[FACT:src/group.cc:49-52]
 
 ```cpp
     job->abortFlag = comm->abortFlag;
@@ -603,9 +607,9 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
     job->childAbortFlagDev = comm->childAbortFlagDev;
 ```
 
-每个 job 持有 comm 的 abortFlag 指针。当 group 检测到错误时：
+Each job holds a pointer to the comm's abortFlag. When the group detects an error:
 
-[FACT:src/group.cc:118-126](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L118-L126)
+[FACT:src/group.cc:118-126]
 
 ```cpp
         if (!job->destroyFlag &&
@@ -619,13 +623,13 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
         }
 ```
 
-一旦 `groupAbortFlag` 或 `errorJobAbortFlag` 为真，所有 job 的 abortFlag 都被置 1。`memory_order_release` 保证之前的写操作对其他线程可见。
+Once`groupAbortFlag`or`errorJobAbortFlag`is true, all jobs' abortFlag are set to 1.`memory_order_release`ensures that previous write operations are visible to other threads.
 
-### nccl_ep 的超时设计：GPU 时钟周期
+## nccl_ep's timeout design: GPU clock cycles
 
-`nccl_ep` 用了更精细的超时——以 GPU 时钟周期为单位。
+`nccl_ep`uses a more refined timeout—in units of GPU clock cycles.
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1558-1591](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1558-L1591)
+[FACT:contrib/nccl_ep/nccl_ep.cc:1558-1591]
 
 ```cpp
     // Resolve timeout_cycles: env var > config field > compile-time default
@@ -634,11 +638,11 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
         int clock_khz_int;
         CUDA_CHECK(cudaGetDevice(&dev));
         CUDA_CHECK(cudaDeviceGetAttribute(&clock_khz_int, cudaDevAttrClockRate, dev));
-        uint64_t clock_khz = static_cast<uint64_t>(clock_khz_int);
+        uint64_t clock_khz = static_cast(clock_khz_int);
 
         uint64_t resolved = NUM_TIMEOUT_CYCLES;
         const char* source = "compile-time default";
-        const uint64_t env_ms = static_cast<uint64_t>(ep_group->env.timeout_ms.value.ul);
+        const uint64_t env_ms = static_cast(ep_group->env.timeout_ms.value.ul);
         // Only a positive timeout overrides the default.
         const bool have_env_ms = ep_group->env.timeout_ms.is_set && env_ms > 0;
 
@@ -654,34 +658,35 @@ NCCL 核心用 `abortFlag` 传播中止信号。看 `ncclAsyncLaunch` 里的传�
         ep_group->timeout_cycles = resolved;
 ```
 
-优先级是：环境变量 `NCCL_EP_TIMEOUT_MS` > 配置字段 `timeout_ns` > 编译期默认值。转换公式是 `clock_khz * 1000 * ms / 1000`，即把毫秒转成时钟周期。
+The priority is: environment variable`NCCL_EP_TIMEOUT_MS`> config field`timeout_ns`> compile-time default. The conversion formula is`clock_khz * 1000 * ms / 1000`, i.e., converting milliseconds to clock cycles.
 
-[INFERENCE] 为什么用时钟周期而非毫秒？因为 GPU kernel 里的等待循环无法调用系统时间 API，只能读 `clock64()` 寄存器。用时钟周期做超时判断，kernel 里可以直接比较，无需 host 介入。
+> **[Design Inference & Architectural Trade-offs]**
+> Why use clock cycles instead of milliseconds? Because the wait loop inside a GPU kernel cannot call system time APIs, it can only read the`clock64()`register. Using clock cycles for timeout determination allows direct comparison inside the kernel, with no host involvement.
 
-### 异步错误标志：host-pinned 内存
+## Asynchronous error flag: host-pinned memory
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:1767-1778](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L1767-L1778)
+[FACT:contrib/nccl_ep/nccl_ep.cc:1767-1778]
 
 ```cpp
     // Allocate mask buffer and async error flag for active-mask support
     if (ep_group->config.enable_mask && ep_group->config.algorithm == NCCL_EP_ALGO_LOW_LATENCY) {
         size_t mask_bytes = ep_group->nRanks * sizeof(int);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&ep_group->mask_buffer), mask_bytes));
+        CUDA_CHECK(cudaMalloc(reinterpret_cast(&ep_group->mask_buffer), mask_bytes));
         // Initialize all ranks as active (1 = active, 0 = masked/failed)
-        std::vector<int> all_active(ep_group->nRanks, 1);
+        std::vector all_active(ep_group->nRanks, 1);
         CUDA_CHECK(
             cudaMemcpyAsync(ep_group->mask_buffer, all_active.data(), mask_bytes, cudaMemcpyHostToDevice, stream));
         CUDA_CHECK(
-            cudaHostAlloc(reinterpret_cast<void**>(&ep_group->async_error_flag), sizeof(int), cudaHostAllocMapped));
+            cudaHostAlloc(reinterpret_cast(&ep_group->async_error_flag), sizeof(int), cudaHostAllocMapped));
         *ep_group->async_error_flag = 0;
     }
 ```
 
-`async_error_flag` 用 `cudaHostAllocMapped` 分配，这是 host-pinned 且映射到设备地址空间的内存。GPU kernel 可以写它，host 可以读它，无需显式拷贝。
+`async_error_flag`uses`cudaHostAllocMapped`for allocation, which is host-pinned memory mapped into the device address space. The GPU kernel can write to it, and the host can read it, with no explicit copy needed.
 
-### 读取异步错误：原子加载
+## Reading asynchronous errors: atomic load
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:4312-4321](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L4312-L4321)
+[FACT:contrib/nccl_ep/nccl_ep.cc:4312-4321]
 
 ```cpp
 ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
@@ -696,17 +701,17 @@ ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
 }
 ```
 
-用 `__atomic_load_n` 加 `__ATOMIC_ACQUIRE`，保证读到的是 GPU 写入的最新值，而不是缓存的旧值。
+uses`__atomic_load_n`plus`__ATOMIC_ACQUIRE`, ensuring that what's read is the latest value written by the GPU, not a stale cached value.
 
-### 生产踩坑
+## Production pitfalls
 
-**坑一：超时设置过短导致误报。** 如果 `NCCL_EP_TIMEOUT_MS` 设得太小，正常的网络抖动会被误判为超时。建议根据实际网络 RTT 设置，一般不小于 10 秒。
+**Pitfall 1: Timeout set too short causing false positives.**If`NCCL_EP_TIMEOUT_MS`is set too small, normal network jitter will be misjudged as a timeout. It's recommended to set it based on the actual network RTT, generally no less than 10 seconds.
 
-**坑二：abortFlag 设置后未清理。** 一旦 abortFlag 被置 1，comm 就进入"中止"状态。如果用户想继续用这个 comm，必须先清理 abortFlag。NCCL 的 `ncclCommAbort` 会做这个清理。
+**Pitfall 2: abortFlag not cleared after being set.**Once abortFlag is set to 1, the comm enters an "aborted" state. If the user wants to continue using this comm, abortFlag must first be cleared. NCCL's`ncclCommAbort`does this cleanup.
 
-**坑三：`ncclEpMaskClean` 的前置条件。** 看这段：
+**Pitfall 3:`ncclEpMaskClean`'s precondition.**Look at this:
 
-[FACT:contrib/nccl_ep/nccl_ep.cc:4262-4266](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L4262-L4266)
+[FACT:contrib/nccl_ep/nccl_ep.cc:4262-4266]
 
 ```cpp
     EP_HOST_ASSERT(ep_group->config.algorithm == NCCL_EP_ALGO_LOW_LATENCY);
@@ -716,31 +721,35 @@ ncclResult_t ncclEpGetAsyncError(ncclEpGroup_t ep_group, int* error_out) {
     EP_HOST_ASSERT(ep_group->sync_buffer != nullptr && ep_group->sync_window != nullptr);
 ```
 
-`ncclEpMaskClean` 要求 `rdma_buffer` 已分配。如果用户创建了 group 但还没创建任何 LL handle，`rdma_buffer` 是 nullptr（因为 LL 是懒分配），这里会 assert 失败。
+`ncclEpMaskClean`requires`rdma_buffer`to already be allocated. If the user has created a group but hasn't created any LL handle yet,`rdma_buffer`is nullptr (because LL is lazily allocated), and this will fail the assert.
 
-## 本章Summary
+# Chapter summary
 
-本章串起了四类生产踩坑：
+This chapter ties together four types of production pitfalls:
 
-1. **Group 语义误用**：`ncclGroupDepth` 是 thread_local，漏掉 `ncclGroupEnd` 会导致永久挂死；阻塞与非阻塞通信域不能混用；CUDA graph capture 必须全有或全无。
-2. **参数校验**：`ArgsCheck` 分模式校验，默认模式只做零成本检查；`CudaPtrCheck` 三层防线挡住无效指针、错误设备、损坏的 comm；`registrationCheck` 做跨 rank 的对称内存一致性检查。
-3. **错误传播**：`NCCLCHECK` 家族保证错误不丢；`ncclInProgress` 不是错误；`NCCLCHECKIGNORE` 用于清理路径保留首个错误；`NCCLWAIT` 在轮询中检查 abortFlag。
-4. **ABI 版本**：`nccl_ep` 用 size-based 设计，每个跨边界结构体以 `size` 开头，配合 `magic` 捕获未初始化；新字段只能加在末尾，读取时用 `size` 判断是否存在。
-5. **超时与中止**：核心用 `abortFlag` 传播中止；`nccl_ep` 用 GPU 时钟周期做超时，`async_error_flag` 用 host-pinned 内存实现 GPU→host 异步通知。
+1. **Group semantics misuse**：`ncclGroupDepth`is thread_local, missing`ncclGroupEnd`will cause a permanent hang; blocking and non-blocking communication domains cannot be mixed; CUDA graph capture must be all-or-nothing.
 
-## 本章思考与自测
+2. **Parameter validation**：`ArgsCheck`Mode-specific validation; default mode performs only zero-cost checks;`CudaPtrCheck`Three layers of defense block invalid pointers, wrong devices, and corrupted comms;`registrationCheck`Perform cross-rank symmetric memory consistency checks.
 
-<details><summary>Q1: 如果把 `ncclGroupEndInternal` 中 `if ((--ncclGroupDepth) > 0) goto exit;`（[FACT:src/group.cc:1061](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/group.cc#L1061)）改成 `if (ncclGroupDepth > 0) goto exit;`（不递减），会发生什么？在嵌套 group 场景下会有什么后果？</summary>
+3. **Error propagation**：`NCCLCHECK`The family guarantees errors are not lost;`ncclInProgress`is not an error;`NCCLCHECKIGNORE`Used in cleanup paths to preserve the first error;`NCCLWAIT`Check abortFlag during polling.
 
-**参考解析**：
+4. **ABI versioning**：`nccl_ep`Uses a size-based design; every cross-boundary struct begins with`size`, paired with`magic`to catch uninitialized fields; new fields can only be appended at the end, and reads use`size`to determine whether they exist.
 
-原代码 `--ncclGroupDepth` 先递减再判断。如果改成不递减：
+5. **Timeout and abort**: The core uses`abortFlag`to propagate aborts;`nccl_ep`Uses GPU clock cycles for timeouts,`async_error_flag`Uses host-pinned memory to implement GPU→host asynchronous notification.
+
+# Chapter Review and Self-Test
+
+Q1: If in`ncclGroupEndInternal`the`if ((--ncclGroupDepth) > 0) goto exit;`（[FACT:src/group.cc:1061]) is changed to`if (ncclGroupDepth > 0) goto exit;`(no decrement), what happens? What are the consequences in nested group scenarios?
+
+**Reference Analysis**：
+
+The original code`--ncclGroupDepth`decrements first, then checks. If changed to not decrement:
 
 ```cpp
 if (ncclGroupDepth > 0) goto exit;  // 错误版本
 ```
 
-那么每次 `ncclGroupEnd` 都不会减少深度。假设用户写了：
+Then each time`ncclGroupEnd`the depth will not decrease. Suppose the user writes:
 
 ```cpp
 ncclGroupStart();  // depth = 1
@@ -750,39 +759,35 @@ ncclGroupEnd();    // 原版: depth = 1, 返回; 错误版: depth = 2, 返回
 ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返回
 ```
 
-错误版本下，第二次 `ncclGroupEnd` 时 `ncclGroupDepth` 仍是 2，`> 0` 成立，直接 `goto exit`，永远不触发下发。所有通信调用都停留在"攒单"状态，进程挂死。
+In the buggy version, on the second`ncclGroupEnd`,`ncclGroupDepth`is still 2,`> 0`holds, directly`goto exit`, and the dispatch is never triggered. All communication calls remain in the "batching" state, and the process hangs.
 
-更隐蔽的是：`ncclGroupDepth` 是 thread_local，不会因为函数返回而重置。即使后续代码不再调用 group API，这个线程上的所有通信都会失效。
+What is more insidious:`ncclGroupDepth`is thread_local and will not be reset when the function returns. Even if subsequent code no longer calls the group API, all communication on this thread will fail.
 
-这个改动还会破坏 `ncclGroupStart` 的配对语义——`ncclGroupStart` 递增、`ncclGroupEnd` 不递减，深度只增不减，最终溢出（虽然 int 溢出需要 20 亿次调用，实际更可能是逻辑挂死）。
+This change also breaks the pairing semantics of`ncclGroupStart`—`ncclGroupStart`increments,`ncclGroupEnd`does not decrement, so the depth only grows and eventually overflows (although int overflow requires 2 billion calls, in practice it is more likely to be a logical hang).
 
-</details>
+Q2: `CudaPtrCheck`In`attr.type == cudaMemoryTypeDevice && attr.device != comm->cudaDev`（[FACT:src/misc/argcheck.cc:20]), if the`attr.type == cudaMemoryTypeDevice`condition is removed, what problems arise? In what scenarios would it produce false positives?
 
-<details><summary>Q2: `CudaPtrCheck` 中 `attr.type == cudaMemoryTypeDevice && attr.device != comm->cudaDev`（[FACT:src/misc/argcheck.cc:20](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/src/misc/argcheck.cc#L20)）这个检查，如果去掉 `attr.type == cudaMemoryTypeDevice` 这个条件，会有什么问题？在什么场景下会误报？</summary>
+**Reference Answer**：
 
-**参考答案**：
+`cudaPointerAttributes.type`has three possible values:`cudaMemoryTypeDevice`(device memory),`cudaMemoryTypeHost`(host memory),`cudaMemoryTypeManaged`(unified memory).
 
-`cudaPointerAttributes.type` 有三个可能值：`cudaMemoryTypeDevice`（设备内存）、`cudaMemoryTypeHost`（主机内存）、`cudaMemoryTypeManaged`（统一内存）。
-
-如果去掉 `attr.type == cudaMemoryTypeDevice` 条件，变成：
+If the`attr.type == cudaMemoryTypeDevice`condition is removed, it becomes:
 
 ```cpp
 if (attr.device != comm->cudaDev) {  // 错误版本
 ```
 
-那么对于 host 内存或 managed 内存，`attr.device` 可能是 -1 或 0，与 `comm->cudaDev` 不匹配，会误报"设备不匹配"。
+Then for host memory or managed memory,`attr.device`may be -1 or 0, which does not match`comm->cudaDev`, causing a false "device mismatch" report.
 
-具体场景：用户传入一个 `cudaMallocManaged` 分配的指针。managed 内存的 `attr.device` 通常是分配时的设备，但如果内存被迁移到其他设备，`attr.device` 可能变化。更常见的是 host 内存（比如 `cudaHostAlloc` 分配的 pinned 内存），`attr.device` 为 -1，与任何 `cudaDev` 都不等，会误报。
+Specific scenario: the user passes a pointer allocated by`cudaMallocManaged`. The`attr.device`of managed memory is usually the device at allocation time, but if the memory is migrated to another device,`attr.device`may change. More commonly, for host memory (such as`cudaHostAlloc`allocated pinned memory),`attr.device`is -1, which is unequal to any`cudaDev`, causing a false positive.
 
-NCCL 允许 host 内存作为通信缓冲区（通过 `cudaMemcpy` 中转），所以必须区分"设备内存但设备不对"和"非设备内存"。前者是错误，后者是合法的。
+NCCL allows host memory as a communication buffer (relayed through`cudaMemcpy`), so it is necessary to distinguish "device memory but wrong device" from "non-device memory." The former is an error; the latter is legal.
 
-</details>
+Q3: `layoutInfoRecvTopkIdxKind`（[FACT:contrib/nccl_ep/nccl_ep.cc:139-144]) uses`lip->size < field_end`to determine whether a field exists. If a new version inserts a field in the middle of the struct (rather than at the end), how does this check fail? Why does ABI design require that new fields can only be added at the end?
 
-<details><summary>Q3: `layoutInfoRecvTopkIdxKind`（[FACT:contrib/nccl_ep/nccl_ep.cc:139-144](https://github.com/NVIDIA/nccl/blob/12df1a11afad322be5a204a2db890161cbf8131d/contrib/nccl_ep/nccl_ep.cc#L139-L144)）用 `lip->size < field_end` 判断字段是否存在。如果新版本在结构体中间插入了一个字段（而非末尾），这个判断会怎样失效？为什么 ABI 设计规定新字段只能加在末尾？</summary>
+**Reference Analysis**：
 
-**参考解析**：
-
-假设原结构体是：
+Suppose the original struct is:
 
 ```c
 struct ncclEpLayoutInfo_t {
@@ -794,7 +799,7 @@ struct ncclEpLayoutInfo_t {
 
 `field_end = offsetof(recv_topk_idx_kind) + sizeof(...) = 8 + 4 = 12`。
 
-如果新版本在 `magic` 和 `recv_topk_idx_kind` 之间插入一个字段：
+If the new version inserts a field between`magic`and`recv_topk_idx_kind`:
 
 ```c
 struct ncclEpLayoutInfo_t {
@@ -805,12 +810,10 @@ struct ncclEpLayoutInfo_t {
 };
 ```
 
-此时 `field_end = 12 + 4 = 16`。旧调用方的 `size` 是 12（旧结构体大小），`12 < 16` 成立，函数返回 `AUTO`——但旧调用方其实是有 `recv_topk_idx_kind` 字段的，只是偏移不同。这会导致旧调用方设置的 `recv_topk_idx_kind` 被忽略。
+At this point`field_end = 12 + 4 = 16`. The old caller's`size`is 12 (the old struct size),`12 < 16`holds, and the function returns`AUTO`—but the old caller actually has the`recv_topk_idx_kind`field, just at a different offset. This causes the`recv_topk_idx_kind`set by the old caller to be ignored.
 
-更糟的是，如果旧调用方按旧偏移（8）写入了 `recv_topk_idx_kind`，新库按新偏移（12）读取，会读到 `new_field` 的值，完全错乱。
+Worse, if the old caller writes`recv_topk_idx_kind`at the old offset (8), the new library reads at the new offset (12) and will read the value of`new_field`, causing complete corruption.
 
-所以 ABI 设计的铁律是：**新字段只能加在结构体末尾**。这样旧调用方的 `size` 小于新字段的 `field_end`，函数正确返回默认值；新调用方的 `size` 覆盖新字段，正常读取。中间插入字段会破坏所有基于 `offsetof` 的版本判断。
+So the iron rule of ABI design is:**New fields can only be added at the end of the struct**. In this way, the old caller's`size`is smaller than the new field's`field_end`, and the function correctly returns the default value; the new caller's`size`covers the new field and reads it normally. Inserting fields in the middle breaks all`offsetof`-based version checks.
 
-</details>
-
-本章剖析了生产环境中四类典型踩坑及其内部防御机制，这些边界条件提醒我们，NCCL 的稳定运行不仅依赖核心实现，也离不开周边生态的适配与扩展。下一章我们将转向生态与扩展，看看 nccl4py、nccl4rust、nccl_ep、nccl_ubx 这些周边项目如何把 NCCL 的能力带给更广泛的用户。
+This chapter analyzed four typical pitfalls in production environments and their internal defense mechanisms. These boundary conditions remind us that the stable operation of NCCL depends not only on the core implementation, but also on the adaptation and extension of the surrounding ecosystem. In the next chapter, we will turn to the ecosystem and extensions to see how peripheral projects such as nccl4py, nccl4rust, nccl_ep, and nccl_ubx bring NCCL's capabilities to a broader set of users.
