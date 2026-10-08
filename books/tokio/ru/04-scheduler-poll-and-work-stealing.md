@@ -185,14 +185,14 @@ sequenceDiagram
     participant Inject as "InjectQueue"
     participant Parker as "Unparker"
 
-    Future->>Waker: "返回 Pending, 注册 waker"
-    Note over Future: "事件就绪(如 epoll)"
+    Future->>Waker: "возвращает Pending, регистрирует waker"
+    Note over Future: "событие готово (например, epoll)"
     Waker->>RawTask: "raw.wake_by_ref()"
     RawTask->>RawTask: "state: PENDING -> SCHEDULED"
     RawTask->>Handle: "schedule(Notified)"
-    alt 当前线程是同一 worker 且持有 core
-        Handle->>Core: "schedule_local: 放入 lifo_slot"
-    else 外部线程或 core 被偷走
+    alt текущий поток — тот же worker и владеет core
+        Handle->>Core: "schedule_local: поместить в lifo_slot"
+    else внешний поток или core украден
         Handle->>Inject: "push_remote_task"
         Handle->>Parker: "notify_parked_remote().unpark()"
     end
@@ -247,11 +247,11 @@ stateDiagram-v2
 
 — это необработанный указатель плюс статическая vtable,`Context::run`через переход состояния запускает`run_task`, в зависимости от того, является ли текущий поток тем же worker, решает идти в локальную очередь или глобальную.`run_task`Использует четырёхсостоянийную атомарную машину плюс condvar как запасной вариант, решая классическую гонку потери пробуждения.`Waker`В следующей главе мы покинем планировщик и войдём в мир I/O: как Reactor переводит события epoll в`wake_by_ref`пробуждение, превращая`schedule`в`park`/`unpark`Вопросы для размышления и самопроверки в этой главе
 
-Q1: Если изменить`Waker`так, чтобы сначала брать`AsyncFd` 的 `Pending` 变成 `Ready`。
+Q1: Если изменить`Waker`так, чтобы сначала брать`AsyncFd`из`Pending`превращается в`Ready`。
 
-# 本章思考与自测
+# Вопросы для размышления и самопроверки к этой главе
 
-Q1: 如果把 `next_local_task` 改成先取 `run_queue`Затем берём`lifo_slot`, какие последствия будут в сценариях с интенсивной передачей сообщений?
+Q1: Если`next_local_task`изменить на сначала взять`run_queue`Затем берём`lifo_slot`, какие последствия будут в сценариях с интенсивной передачей сообщений?
 
 **Справочный разбор**：`next_local_task`Текущая реализация —`self.lifo_slot.take().or_else(|| self.run_queue.pop())` [FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:1158-1160], сначала берётся LIFO-слот. Если наоборот сначала брать`run_queue`, то только что разбуженные задачи, данные которых ещё горячие, будут поставлены в очередь на выполнение после других задач. В режиме передачи сообщений A→B→A, после пробуждения B не запустится немедленно, а будет ждать завершения других задач в очереди; к этому моменту данные, записанные A, могут быть вытеснены из кэша CPU, и выгода от локальности теряется. Что ещё серьёзнее,`lifo_slot`задачи внутри будут ждать, пока`run_queue`не опустеет, прежде чем выполняться, и задержка заметно возрастёт. Комментарий в исходном коде[FACT:tokio/src/runtime/scheduler/multi_thread/worker.rs:117-121]явно указывает, что этот порядок нужен для «улучшения локальности, использования преимуществ шаблона передачи сообщений и снижения задержки».
 

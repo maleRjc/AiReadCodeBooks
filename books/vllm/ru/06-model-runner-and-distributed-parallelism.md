@@ -1,4 +1,4 @@
-# Статус проверки: строки FACT реально привязаны
+# Глава 6: ModelRunner и распределенный параллелизм: планирование и исполнение
 
 В предыдущей главе мы увидели, как GPUModelRunner преобразует результаты планирования в физические тензоры, такие как input_ids, slot_mapping и block_table, и внедряет их в каждый слой через forward_context. Но основная часть, потребляющая время GPU — вычисление внимания — всё ещё остаётся нераскрытой. Кто именно потребляет те тензоры в attn_metadata? Почему реализации FlashAttention, FlashInfer и Triton могут быть взаимозаменяемы в одном и том же коде модели? Ответ кроется в слое абстракции AttentionBackend. Он разделяет «как вычисляется внимание» и «как его вызывает модель»: слой модели хранит только ссылку на AttentionImpl и вызывает унифицированный forward(query, key, value, kv_cache, attn_metadata, output); а конкретный бэкенд отвечает за преобразование block_table, slot_mapping, seq_lens в параметры, которые может принимать его собственное ядро. В этой главе основное внимание уделяется FlashAttentionBackend, поскольку он охватывает наиболее богатый набор ветвей: семантику gather в PagedAttention, совместимость с CUDA Graph, каскадное внимание, распределённый контекст DCP и другие. Разобравшись в нём, вы поймёте, что остальные бэкенды — лишь вариации отображения параметров. Мотивация дизайна «регистрация бэкендов + унифицированный интерфейс» вполне очевидна: ядра внимания развиваются чрезвычайно быстро (FA2→FA3→FA4, итерации FlashInfer, собственные разработки на Triton), и если бы слой модели напрямую зависел от конкретного ядра, при каждом обновлении ядра приходилось бы менять код модели. Слой абстракции изолирует изменения за единственным фабричным методом get_impl_cls().
 
@@ -122,26 +122,26 @@ mask_mod у R-SWA аналогичен, но семантика —`causal & (in
 
 ```mermaid
 sequenceDiagram
-    participant Model as 模型层 Attention
+    participant Model as Слой модели Attention
     participant Impl as FlashAttentionImpl
-    participant KVC as kv_cache 张量
+    participant KVC as тензор kv_cache
     participant Kernel as flash_attn_varlen_func
     Model->>Impl: forward(query, key, value, kv_cache, attn_metadata, output)
-    Impl->>Impl: output_scale 非空? 抛 NotImplementedError
-    Impl->>Impl: attn_metadata is None? 返回 output.fill_(0)
+    Impl->>Impl: output_scale не пусто? выбросить NotImplementedError
+    Impl->>Impl: attn_metadata is None? вернуть output.fill_(0)
     Impl->>KVC: transpose(1,2).split(head_size)
     KVC-->>Impl: key_cache, value_cache
     Impl->>Impl: canonicalize_singleton_dim_strides(key_cache)
     Impl->>Impl: use_cascade?
-    alt 非级联
-        Impl->>Impl: 映射 cu_seqlens_q / seqused_k / block_table
+    alt не каскадное
+        Impl->>Impl: отобразить cu_seqlens_q / seqused_k / block_table
         Impl->>Impl: _maybe_symmetrize_window
-        Impl->>Impl: mm_prefix 或 R-SWA? 构造 mask_mod
+        Impl->>Impl: mm_prefix или R-SWA? построить mask_mod
         Impl->>Kernel: _FA4_DENSE_ATTENTION_KERNEL(q, k, v, out, ...)
-        Kernel-->>Impl: output 就地写入
-    else 级联
-        Impl->>Kernel: cascade_attention(prefix + suffix 两次调用)
-        Kernel-->>Impl: merge_attn_states 合并
+        Kernel-->>Impl: output записывается на месте
+    else каскадное
+        Impl->>Kernel: cascade_attention(prefix + suffix два вызова)
+        Kernel-->>Impl: merge_attn_states объединяет
     end
     Impl-->>Model: output
 ```
@@ -153,7 +153,7 @@ sequenceDiagram
 > **[Design Inference & Architectural Trade-offs]**
 > **Разделение объявления возможностей и реализации**。`supports_combination`Возвращает строку причины, а не bool — это сделано для того, чтобы верхний уровень при откате к другим бэкендам мог зафиксировать, «почему не использовался FA», что значительно снижает стоимость диагностики в production. По сравнению с молчаливым откатом такой дизайн делает основание для решения явным.
 
-**Совместимость с CUDA Graph — неявное ограничение дизайна метаданных**。`_store_scheduler_metadata`Режим «копирование внутрь + обнуление хвоста»[FACT:vllm/v1/attention/backends/flash_attn.py:671-684]неоднократно встречается в持久ном буфере R-SWA[FACT:vllm/v1/attention/backends/flash_attn.py:787-798]и временной области mm_prefix[FACT:vllm/v1/attention/backends/flash_attn.py:800-813]. Общий паттерн: в`__init__`предварительно выделяется持久ный буфер максимального размера,`build()`выполняет только копирование, без выделения. Причина указана в комментарии — во время захвата CUDA graph не должно быть операций выделения[FACT:vllm/v1/attention/backends/flash_attn.py:1044-1046]。
+**Совместимость с CUDA Graph — неявное ограничение дизайна метаданных**。`_store_scheduler_metadata`Режим «копирование внутрь + обнуление хвоста»[FACT:vllm/v1/attention/backends/flash_attn.py:671-684]неоднократно встречается в持久ном буфере R-SWA[FACT:vllm/v1/attention/backends/flash_attn.py:787-798]и временной области mm_prefix[FACT:vllm/v1/attention/backends/flash_attn.py:800-813]. Общий паттерн: в`__init__`Предварительно выделяется постоянный буфер максимального размера,`build()`выполняет только копирование, без выделения. Причина указана в комментарии — во время захвата CUDA graph не должно быть операций выделения[FACT:vllm/v1/attention/backends/flash_attn.py:1044-1046]。
 
 **Взаимоисключение DCP и fused draft decode**。`supports_draft_decode_metadata_update = self.dcp_world_size == 1` [FACT:vllm/v1/attention/backends/flash_attn.py:742-742]. В комментарии объясняется: fused draft decode повторно использует захваченные объекты метаданных между шагами draft, но решения DCP на стороне хоста во время сборки (например,`skip_dcp_context_attention()`) изменяют форму метаданных, и эти поля Python не обновляются на месте между replay графа[FACT:vllm/v1/attention/backends/flash_attn.py:736-741]. Это типичный компромисс «при конфликте производительности и корректности выбирается корректность».
 
@@ -165,7 +165,7 @@ sequenceDiagram
 
 # Итоги главы
 
-Эта глава прошла по`FlashAttentionBackend`полный жизненный цикл бэкенда внимания: объявление возможностей (`supports_*`серия) → построение метаданных (`build()`переводит`CommonAttentionMetadata`в`FlashAttentionMetadata`) → вызов ядра (`forward()`преобразует布局 KV cache, строит маску, выполняет диспетчеризацию в ядро FA). Ключевые механизмы включают: преобразование`transpose+split`布局 KV cache, нормализацию вырожденного stride, режим持久ного буфера под CUDA graph, построение маски CuTE-DSL для mm_prefix/R-SWA, а также эвристические решения каскадного внимания.
+Эта глава прошла по`FlashAttentionBackend`полный жизненный цикл бэкенда внимания: объявление возможностей (`supports_*`серия) → построение метаданных (`build()`переводит`CommonAttentionMetadata`в`FlashAttentionMetadata`) → вызов ядра (`forward()`преобразует компоновку KV-кэша, строит маску, выполняет диспетчеризацию в ядро FA). Ключевые механизмы включают: преобразование`transpose+split`布局 KV cache、退化 stride 的归一化、CUDA graph 下的持久缓冲区模式、为 mm_prefix/R-SWA 构建 CuTE-DSL 掩码，以及级联注意力的启发式决策。
 
 Ключевые проектные принципы: разделение объявления возможностей и реализации, предварительное выделение метаданных, обусловленное совместимостью с CUDA graph, приоритет корректности при конфликте производительности и корректности (DCP отключает fused draft decode).
 

@@ -1,4 +1,4 @@
-# Следующая глава: Глава 15 →
+# Глава 15: RMA и GIN: архитектура удаленной коммуникации между GPU следующего поколения
 
 # Прогресс по книге: Глава 15 / 25
 
@@ -10,7 +10,7 @@
 
 Представьте систему международной курьерской доставки: городская доставка (ранги, достижимые через LSA) может быть выполнена непосредственно местным курьером, тогда как междугородняя доставка (ранги, недостижимые через LSA) должна быть передана авиационному грузовому агенту. RMA в NCCL — это именно такая модель: одна и та же операция put, в зависимости от того, находится ли целевой ранг в команде LSA (Load-Store Accessible), маршрутизируется по двум совершенно разным путям выполнения: путь CE (Copy Engine, движок копирования) и путь Proxy (прокси-поток).
 
-Без этого механизма разделения все операции RMA шли бы через прокси-поток, и тогда put внутри одного узла также проходил бы через промежуточный хост-поток, что добавляло бы лишнюю задержку на往返 между хостом и устройством. И наоборот, если бы все операции шли через CE, межмашинные операции не могли бы использовать асинхронные возможности сетевого плагина.
+如果没有这个分离机制，所有RMA操作都会走代理线程，那么同一节点内的put也会经过中间主机线程，从而在主机与设备之间的往返上增加额外延迟。反过来，如果所有操作都走CE，跨机操作就无法利用网络插件的异步能力。
 
 ## Структуры данных и разметка памяти
 
@@ -42,49 +42,49 @@
 ```mermaid
 flowchart TD
     start["scheduleRmaTasksToPlan(comm, plan)"]
-    find_ctx{"找到非空 ctx 队列?"}
-    no_task["返回 ncclSuccess"]
-    dequeue["取出 firstTask"]
+    find_ctx{"Найдена непустая очередь ctx?"}
+    no_task["Возврат ncclSuccess"]
+    dequeue["Извлечение firstTask"]
     check_func{"firstTask->func == WaitSignal?"}
-    ws_split["按 isLsaAccessible 拆分 peers"]
+    ws_split["Разделение peers по isLsaAccessible"]
     ws_ce{"npeersCe > 0?"}
     ws_proxy{"npeersProxy > 0?"}
-    ws_ce_task["创建 CE WaitSignal 任务"]
-    ws_proxy_task["创建 Proxy WaitSignal 任务"]
-    ws_free["释放原始 firstTask"]
-    put_check{"firstTask 的 peer LSA 可达?"}
-    put_ce["入队 rmaTaskQueueCe"]
-    put_proxy["入队 rmaTaskQueueProxy"]
-    batch_loop["遍历所有 ctx 队列, 拉取连续 put/signal"]
+    ws_ce_task["Создание задачи CE WaitSignal"]
+    ws_proxy_task["Создание задачи Proxy WaitSignal"]
+    ws_free["Освобождение исходного firstTask"]
+    put_check{"peer у firstTask доступен через LSA?"}
+    put_ce["Постановка в очередь rmaTaskQueueCe"]
+    put_proxy["Постановка в очередь rmaTaskQueueProxy"]
+    batch_loop["Обход всех очередей ctx, выборка последовательных put/signal"]
     batch_check{"isRmaPutOrSignal(task->func)?"}
     batch_route{"isLsaAccessible(comm, task->peer)?"}
-    batch_ce["入队 CE, nRmaTasksCe++"]
-    batch_proxy["入队 Proxy, nRmaTasksProxy++"]
-    done["记录 INFO 日志, 返回"]
+    batch_ce["Постановка в CE, nRmaTasksCe++"]
+    batch_proxy["Постановка в Proxy, nRmaTasksProxy++"]
+    done["Запись в лог INFO, возврат"]
 
     start --> find_ctx
-    find_ctx -->|否| no_task
-    find_ctx -->|是| dequeue
+    find_ctx -->|Нет| no_task
+    find_ctx -->|Да| dequeue
     dequeue --> check_func
-    check_func -->|是| ws_split
+    check_func -->|Да| ws_split
     ws_split --> ws_ce
-    ws_ce -->|是| ws_ce_task
-    ws_ce -->|否| ws_proxy
+    ws_ce -->|Да| ws_ce_task
+    ws_ce -->|Нет| ws_proxy
     ws_ce_task --> ws_proxy
-    ws_proxy -->|是| ws_proxy_task
-    ws_proxy -->|否| ws_free
+    ws_proxy -->|Да| ws_proxy_task
+    ws_proxy -->|Нет| ws_free
     ws_proxy_task --> ws_free
     ws_free --> done
-    check_func -->|否| put_check
-    put_check -->|是| put_ce
-    put_check -->|否| put_proxy
+    check_func -->|Нет| put_check
+    put_check -->|Да| put_ce
+    put_check -->|Нет| put_proxy
     put_ce --> batch_loop
     put_proxy --> batch_loop
     batch_loop --> batch_check
-    batch_check -->|否, 遇到 WaitSignal| done
-    batch_check -->|是| batch_route
-    batch_route -->|是| batch_ce
-    batch_route -->|否| batch_proxy
+    batch_check -->|Нет, встречен WaitSignal| done
+    batch_check -->|Да| batch_route
+    batch_route -->|Да| batch_ce
+    batch_route -->|Нет| batch_proxy
     batch_ce --> batch_loop
     batch_proxy --> batch_loop
 ```
@@ -103,7 +103,7 @@ flowchart TD
 
 **Ловушка вторая: гарантия FIFO при пакетном объединении.**Логика пакетного объединения извлекает только последовательные задачи put/signal и останавливается при встрече с WaitSignal.[FACT:src/rma/rma.cc:283]Это гарантирует порядок FIFO внутри каждого контекста, но задачи из разных контекстов могут быть объединены в один план. Если приложение зависит от порядка операций между контекстами, необходимо явно использовать WaitSignal для установки барьера.
 
-**Ловушка третья: путь утечки памяти.**В ветке WaitSignal, если`npeersProxy == 0`, код освобождает`peersProxy`、`nsignalsProxy`、`signalIdxsProxy`три массива.[FACT:src/rma/rma.cc:239-244]Но если`npeersCe == 0`и`npeersProxy > 0`，`peersCe`и другие массивы были выделены через`ncclMemoryStackAlloc`, их не нужно освобождать вручную (стековый аллокатор回收 их统一).[FACT:src/rma/rma.cc:176-178]Эта асимметрия может сбивать читателя с толку, но на самом деле она корректна — память, выделенная в стеке, управляется`comm->memScoped`единообразно.
+**Ловушка третья: путь утечки памяти.**В ветке WaitSignal, если`npeersProxy == 0`, код освобождает`peersProxy`、`nsignalsProxy`、`signalIdxsProxy`три массива.[FACT:src/rma/rma.cc:239-244]Но если`npeersCe == 0`и`npeersProxy > 0`，`peersCe`и другие массивы были выделены через`ncclMemoryStackAlloc`их не нужно освобождать вручную (стековый аллокатор回收 их统一).[FACT:src/rma/rma.cc:176-178]Эта асимметрия может сбивать читателя с толку, но на самом деле она корректна — память, выделенная в стеке, управляется`comm->memScoped`единообразно.
 
 # Контекст RMA Proxy: сигналы, очереди и неблокирующий кольцевой буфер
 
@@ -152,55 +152,55 @@ flowchart TD
 
 **Ловушка вторая: цепочка откатов при неудачной регистрации DMA-BUF.** `ncclRmaProxyRegMrSym`Для регистрации памяти CUDA существует три уровня отката: сначала попытка DMA-BUF в режиме DataDirect, при неудаче — DMA-BUF без DataDirect, и только при повторной неудаче — откат к обычному`regMrSym`。[FACT:src/rma/rma_proxy.cc:76-108]В комментариях особо предупреждается: если один MR перешёл на путь без DataDirect, все остальные MR также должны это сделать, смешанное использование нарушит гарантии порядка GIN.[FACT:src/gin/gin_host_proxy.cc:429-430]Это ограничение явно не проверяется в пути RMA и является потенциальной скрытой проблемой.
 
-**Ловушка третья: задержка распространения ошибки потока прогресса.**Когда`ncclRmaProxyProgress`возвращает ошибку, поток устанавливает`asyncResult`и завершается.[FACT:src/rma/rma_proxy.cc:366-369]但主线程可能正在执行一个长时间的 kernel，不会立即检查`asyncResult`。在这段时间内，后续的 RMA 操作会继续入队但不会被处理，直到主线程发现错误。这是异步错误传播的固有延迟，应用需要定期调用`ncclCommGetAsyncError`来缩短这个窗口。
+**Ловушка третья: задержка распространения ошибки потока прогресса.**Когда`ncclRmaProxyProgress`возвращает ошибку, поток устанавливает`asyncResult`и завершается.[FACT:src/rma/rma_proxy.cc:366-369]Но основной поток может в данный момент выполнять длительное ядро и не проверять немедленно`asyncResult`. В течение этого времени последующие операции RMA продолжат ставиться в очередь, но не будут обрабатываться, пока основной поток не обнаружит ошибку. Это присущая асинхронному распространению ошибок задержка; приложению необходимо периодически вызывать`ncclCommGetAsyncError`, чтобы сократить это окно.
 
-# GIN 架构：GPU 直接发起网络请求
+# Архитектура GIN: GPU напрямую инициирует сетевые запросы
 
-## 直觉模型
+## Интуитивная модель
 
-传统模式下，GPU 要发送网络数据，必须经过"GPU → host 内存 → proxy 线程 → 网卡"的路径。GIN（GPU-Initiated Networking）的目标是让 GPU 直接写网卡的发送队列，就像 CPU 直接写网卡的 MMIO 寄存器一样。这需要网卡支持 GPU 发起的 doorbell 写入，以及一套 GPU 和 proxy 线程之间的通信协议。
+В традиционной модели для отправки сетевых данных GPU должен пройти путь «GPU → память хоста → прокси-поток → сетевая карта». Цель GIN (GPU-Initiated Networking) — позволить GPU напрямую записывать в очередь отправки сетевой карты, подобно тому как CPU напрямую записывает в MMIO-регистры сетевой карты. Это требует поддержки сетевой картой doorbell-записей, инициируемых GPU, а также набора протокола связи между GPU и прокси-потоком.
 
-## 数据结构与内存布局
+## Структуры данных и разметка памяти
 
-GIN 的核心数据结构是`ginProxyHostGpuCtx`，它代表一个 GPU-host 通信上下文：
+Ключевой структурой данных GIN является`ginProxyHostGpuCtx`, представляющая контекст связи GPU-хост:
 
-| 字段 | 类型 | 含义 |
+| Поле | Тип | Значение |
 | --- | --- | --- |
-| `queues` | `ncclGinProxyGfd_t*` | GFD 队列，大小`nRanks * queueSize` |
-| `pis` | `uint32_t*` | 生产者索引（GPU 写） |
-| `cis` | `uint32_t*` | 消费者索引（proxy 写） |
-| `cisShadow` | `uint32_t*` | CI 的影子副本（proxy 本地） |
-| `sis` | `uint32_t*` | 已见索引（proxy 本地） |
-| `states` | `ginProxyGfdState*` | 每个 GFD 槽的状态 |
-| `inlines` | `uint64_t*` | 内联数据缓冲区 |
+| `queues` | `ncclGinProxyGfd_t*` | Очередь GFD, размер`nRanks * queueSize` |
+| `pis` | `uint32_t*` | Индекс производителя (запись GPU) |
+| `cis` | `uint32_t*` | Индекс потребителя (запись прокси) |
+| `cisShadow` | `uint32_t*` | Теневая копия CI (локальная для proxy) |
+| `sis` | `uint32_t*` | Просмотренный индекс (локальный для proxy) |
+| `states` | `ginProxyGfdState*` | Состояние каждого слота GFD |
+| `inlines` | `uint64_t*` | Буфер встроенных данных |
 
-GFD（GIN Forwarding Descriptor）是 GPU 写给 proxy 的请求描述符。每个 GFD 由多个 qword 组成，包含操作类型、源地址、目标地址、大小、信号信息等。[FACT:src/gin/gin_host_proxy.cc:158-163]
+GFD (GIN Forwarding Descriptor) — это дескриптор запроса, записываемый GPU для proxy. Каждый GFD состоит из нескольких qword и содержит тип операции, исходный адрес, целевой адрес, размер, информацию о сигнале и т. д.[FACT:src/gin/gin_host_proxy.cc:158-163]
 
-`queues`数组的内存分配有一个关键细节：它通过`allocMemCPUAccessible`分配，但传入了`forceHost=true`参数。[FACT:src/gin/gin_host_proxy.cc:564]这意味着队列本身在 host 内存中，GPU 通过 PCIe 写入。而`cis`数组则分配在 GPU 可访问内存中（可能是 GDR），因为 proxy 需要频繁更新它。[FACT:src/gin/gin_host_proxy.cc:565-566]
+`queues`В выделении памяти для массива есть одна ключевая деталь: оно выполняется через`allocMemCPUAccessible`но передаётся`forceHost=true`параметр.[FACT:src/gin/gin_host_proxy.cc:564]Это означает, что сама очередь находится в памяти host, и GPU записывает в неё через PCIe. А`cis`массив выделяется в памяти, доступной для GPU (возможно, GDR), поскольку proxy должен часто его обновлять.[FACT:src/gin/gin_host_proxy.cc:565-566]
 
-`cisShadow`和`sis`是 proxy 线程的本地副本，避免每次都读取可能位于 GPU 内存的`cis`。[FACT:src/gin/gin_host_proxy.cc:44-47]只有当`cisShadow`前进时，才批量更新`cis`。
+`cisShadow`и`sis`— это локальные копии для потока proxy, позволяющие избежать чтения при каждом обращении к`cis`。[FACT:src/gin/gin_host_proxy.cc:44-47]которое может находиться в памяти GPU. Только когда`cisShadow`продвигается вперёд, выполняется пакетное обновление`cis`。
 
-## Step-by-Step：GFD 的轮询与处理
+## Пошагово: опрос и обработка GFD
 
-`ncclGinProxyProgress`是 GIN proxy 的主循环。[FACT:src/gin/gin_host_proxy.cc:648-669]
+`ncclGinProxyProgress`Это основной цикл GIN proxy.[FACT:src/gin/gin_host_proxy.cc:648-669]
 
-第一步：对每个 context，先调用`proxyGinPollCompletions`检查已提交请求的完成状态。[FACT:src/gin/gin_host_proxy.cc:653]
+Первый шаг: для каждого context сначала вызвать`proxyGinPollCompletions`Проверить статус завершения отправленных запросов.[FACT:src/gin/gin_host_proxy.cc:653]
 
-第二步：对每个 target rank，批量轮询 GFD。`pollBatch`控制每次最多处理多少个 GFD。[FACT:src/gin/gin_host_proxy.cc:654-655]
+Второй шаг: для каждого target rank пакетно опросить GFD.`pollBatch`Управляет максимальным количеством GFD, обрабатываемых за один раз.[FACT:src/gin/gin_host_proxy.cc:654-655]
 
-第三步：`proxyGinPollGfd`检查队列头部是否有新的 GFD。判断依据是 GFD 头部的 flag 位是否非零。[FACT:src/gin/gin_host_proxy.cc:176-182]如果有，先拷贝第一个 qword（头部），然后等待其余 qword 就绪。[FACT:src/gin/gin_host_proxy.cc:194-202]拷贝完成后，把队列中的 GFD 清零，防止重复处理。[FACT:src/gin/gin_host_proxy.cc:206-208]
+Третий шаг:`proxyGinPollGfd`Проверить, есть ли новый GFD в голове очереди. Критерий — ненулевой флаг в заголовке GFD.[FACT:src/gin/gin_host_proxy.cc:176-182]Если есть, сначала скопировать первый qword (заголовок), затем дождаться готовности остальных qword.[FACT:src/gin/gin_host_proxy.cc:194-202]После завершения копирования обнулить GFD в очереди, чтобы предотвратить повторную обработку.[FACT:src/gin/gin_host_proxy.cc:206-208]
 
-第四步：`proxyGinProcessGfd`根据操作类型分发到不同的处理路径。[FACT:src/gin/gin_host_proxy.cc:246-340]
+Четвёртый шаг:`proxyGinProcessGfd`В зависимости от типа операции распределить по различным путям обработки.[FACT:src/gin/gin_host_proxy.cc:246-340]
 
 ```mermaid
 flowchart TD
     poll_start["proxyGinPollGfd(ctx, hostGpuCtx, targetRank)"]
     check_avail{"isGfdAvailable?"}
-    no_gfd["返回 0, 跳出批量循环"]
-    copy_header["拷贝 GFD header qword"]
-    copy_rest["循环等待并拷贝其余 qword"]
-    reset_gfd["清零队列中的 GFD"]
-    set_state["设置 state->op, counterId, done=0"]
+    no_gfd["вернуть 0, выйти из пакетного цикла"]
+    copy_header["скопировать GFD header qword"]
+    copy_rest["циклически ожидать и копировать остальные qword"]
+    reset_gfd["обнулить GFD в очереди"]
+    set_state["установить state->op, counterId, done=0"]
     inc_sis["sis[targetRank]++"]
     process["proxyGinProcessGfd(ctx, hostGpuCtx, targetRank, gfd, state, isLastInBatch)"]
     check_va{"op & ncclGinProxyOpVASignal?"}
@@ -210,58 +210,58 @@ flowchart TD
     va_signal["rmaBackend->iputSignal(...)"]
     get_op["rmaBackend->iget(...)"]
     flush_op["rmaBackend->iflush(...)"]
-    inline_src["从 inlines 缓冲区取源地址"]
-    normal_src["从 GFD 取源地址"]
+    inline_src["взять исходный адрес из буфера inlines"]
+    normal_src["взять исходный адрес из GFD"]
     put_signal["rmaBackend->iputSignal(...)"]
     put_only["rmaBackend->iput(...)"]
 
     poll_start --> check_avail
-    check_avail -->|否| no_gfd
-    check_avail -->|是| copy_header
+    check_avail -->|нет| no_gfd
+    check_avail -->|да| copy_header
     copy_header --> copy_rest
     copy_rest --> reset_gfd
     reset_gfd --> set_state
     set_state --> inc_sis
     inc_sis --> process
     process --> check_va
-    check_va -->|是| va_signal
-    check_va -->|否| check_get
-    check_get -->|是| get_op
-    check_get -->|否| check_flush
-    check_flush -->|是| flush_op
-    check_flush -->|否| check_inline
-    check_inline -->|是| inline_src
-    check_inline -->|否| normal_src
+    check_va -->|да| va_signal
+    check_va -->|нет| check_get
+    check_get -->|да| get_op
+    check_get -->|нет| check_flush
+    check_flush -->|да| flush_op
+    check_flush -->|нет| check_inline
+    check_inline -->|да| inline_src
+    check_inline -->|нет| normal_src
     inline_src --> put_signal
     normal_src --> put_signal
     put_signal --> put_only
 ```
 
-## 完成轮询与计数器更新
+## Завершить опрос и обновление счётчиков
 
-`proxyGinPollCompletions`负责检查已提交请求的完成状态。[FACT:src/gin/gin_host_proxy.cc:113-156]
+`proxyGinPollCompletions`Отвечает за проверку статуса завершения отправленных запросов.[FACT:src/gin/gin_host_proxy.cc:113-156]
 
-对每个 target rank，从`cisShadow`到`sis`遍历所有已见但未消费的 GFD 状态。[FACT:src/gin/gin_host_proxy.cc:117]如果状态未完成，调用`rmaBackend->test`检查。[FACT:src/gin/gin_host_proxy.cc:122]如果完成且操作带有计数器标志，更新计数器值。[FACT:src/gin/gin_host_proxy.cc:132-141]
+Для каждого target rank, из`cisShadow`в`sis`перебрать все увиденные, но не использованные состояния GFD.[FACT:src/gin/gin_host_proxy.cc:117]Если состояние не завершено, вызвать`rmaBackend->test`проверку.[FACT:src/gin/gin_host_proxy.cc:122]Если завершено и операция имеет флаг счётчика, обновить значение счётчика.[FACT:src/gin/gin_host_proxy.cc:132-141]
 
-计数器更新使用原子加载和原子存储，但注释解释了为什么不需要原子加法：GPU kernel 不允许在有未完成操作时重置计数器，因此不存在竞争。[FACT:src/gin/gin_host_proxy.cc:133-135]
+Обновление счётчика использует атомарную загрузку и атомарное сохранение, но в комментарии объясняется, почему атомарное сложение не требуется: GPU kernel не позволяет сбросить счётчик при наличии незавершённых операций, поэтому гонки не возникает.[FACT:src/gin/gin_host_proxy.cc:133-135]
 
-CI 的更新有一个"允许空洞"的机制：只有当`state->done && i == cisShadow[targetRank]`时才推进 CI。[FACT:src/gin/gin_host_proxy.cc:145-151]这确保了 CI 是单调递增的，即使某些 GFD 先完成，也不会跳过未完成的 GFD。
+Обновление CI имеет механизм "допускающий дыры": CI продвигается только когда`state->done && i == cisShadow[targetRank]`.[FACT:src/gin/gin_host_proxy.cc:145-151]Это гарантирует, что CI монотонно возрастает, и даже если некоторые GFD завершаются раньше, незавершённые GFD не будут пропущены.
 
-## 并发控制与内存屏障
+## Управление конкурентностью и барьеры памяти
 
-GIN proxy 的并发模型比 RMA proxy 更复杂，因为存在多个 proxy 线程（由`GIN_PROXY_NTHREADS`控制）。[FACT:src/gin/gin_host.cc:90]
+Модель конкурентности GIN proxy сложнее, чем у RMA proxy, поскольку существует несколько proxy-потоков (управляемых`GIN_PROXY_NTHREADS`).[FACT:src/gin/gin_host.cc:90]
 
-`ncclGinProgress`中，每个线程负责一组连接：线程 t 处理连接 t, t+proxyNthreads, t+2*proxyNthreads, ...。[FACT:src/gin/gin_host.cc:72]这个分配方式确保了每个连接只被一个线程处理，避免了连接级别的竞争。
+`ncclGinProgress`, каждый поток отвечает за группу соединений: поток t обрабатывает соединения t, t+proxyNthreads, t+2*proxyNthreads, ....[FACT:src/gin/gin_host.cc:72]Такое распределение гарантирует, что каждое соединение обрабатывается только одним потоком, что позволяет избежать гонок на уровне соединений.
 
-devComms 链表的修改需要写锁保护。`ginProgressWriteLock`先设置`writePending`标志，然后获取写锁。[FACT:src/gin/gin_host.cc:43-47]进度线程在每次循环开始时检查`writePending`，如果为真则让出 CPU。[FACT:src/gin/gin_host.cc:63-66]这个设计避免了进度线程在持有读锁时被写锁阻塞。
+Изменение связного списка devComms требует защиты блокировкой записи.`ginProgressWriteLock`Сначала установить`writePending`флаг, затем получить блокировку записи.[FACT:src/gin/gin_host.cc:43-47]Поток прогресса проверяет в начале каждой итерации цикла`writePending`, и если истина, уступает CPU.[FACT:src/gin/gin_host.cc:63-66]Эта архитектура предотвращает блокировку потока прогресса блокировкой записи при удержании блокировки чтения.
 
-`writePending`使用`std::atomic<bool>`，但注释指出这个逻辑假设只有一个写者。[FACT:src/gin/gin_host.cc:43-47]在 NCCL 的使用场景中，只有主线程会修改 devComms 链表，所以这个假设成立。
+`writePending`Используется`std::atomic<bool>`, но в комментарии указано, что эта логика предполагает наличие только одного писателя.[FACT:src/gin/gin_host.cc:43-47]В сценарии использования NCCL только главный поток изменяет связный список devComms, поэтому это предположение справедливо.
 
-## 生产陷阱
+## Производственные подводные камни
 
-**陷阱一：GFD 队列的内存位置。** `queues`被强制分配在 host 内存中（`forceHost=true`），[FACT:src/gin/gin_host_proxy.cc:564]这意味着 GPU 写入 GFD 需要经过 PCIe 总线。如果 GFD 写入频率很高（小消息场景），PCIe 带宽可能成为瓶颈。相比之下，`cis`分配在 GPU 可访问内存中，因为 proxy 需要频繁更新它。[FACT:src/gin/gin_host_proxy.cc:565-566]
+**Подводный камень первый: расположение памяти очереди GFD.** `queues`Принудительно размещена в памяти хоста (`forceHost=true`），[FACT:src/gin/gin_host_proxy.cc:564]Это означает, что запись GPU в GFD должна проходить через шину PCIe. Если частота записи в GFD высока (сценарий с малыми сообщениями), пропускная способность PCIe может стать узким местом. Для сравнения,`cis`размещена в памяти, доступной для GPU, поскольку proxy требуется часто её обновлять.[FACT:src/gin/gin_host_proxy.cc:565-566]
 
-**陷阱二：内联数据的重建。**当 GFD 带有内联数据时，proxy 需要从多个 qword 中重建内联值。[FACT:src/gin/gin_host_proxy.cc:298-305]Логика восстановления определяет, какие qword читать, в зависимости от size: при size ≤ 4 читается только младшие 32 бита, при size > 4 читаются младшие 64 бита, при size > 6 дополнительно читаются старшие 16 бит. Эта логика сегментации должна строго соответствовать логике записи на стороне GPU; любое несоответствие приведёт к повреждению данных.
+**Подводный камень второй: восстановление встроенных данных.**Когда GFD содержит встроенные данные, прокси должен восстановить встроенное значение из нескольких qword.[FACT:src/gin/gin_host_proxy.cc:298-305]Логика восстановления определяет, какие qword читать, в зависимости от size: при size ≤ 4 читается только младшие 32 бита, при size > 4 читаются младшие 64 бита, при size > 6 дополнительно читаются старшие 16 бит. Эта логика сегментации должна строго соответствовать логике записи на стороне GPU; любое несоответствие приведёт к повреждению данных.
 
 **Ловушка третья: многопоточный прогресс и распределение соединений.**Если для разных rank заданы разные`GIN_PROXY_NTHREADS`, после AllGather с взятием минимума некоторые потоки могут не получить ни одного соединения.[FACT:src/gin/gin_host.cc:181-183]В комментарии указано, что эти потоки будут простаивать в цикле stride, что не вызовет проблем с корректностью, но приведёт к бесполезному расходу ресурсов CPU.
 

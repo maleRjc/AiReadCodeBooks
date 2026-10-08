@@ -1,4 +1,4 @@
-# Глава 14: Архитектурные компромиссы, производственные подводные камни и будущая эволюция
+# Глава 14: Архитектурная эволюция vLLM V1 и перспективы развития
 
 В предыдущей главе мы разобрали механизм плагинного расширения vLLM и увидели, как платформенные плагины, плагины IO processor и endpoint-плагины позволяют адаптировать движок к новому оборудованию, новым модальностям и новым API без изменения ядра кода. Эта расширяемость позволяет vLLM быстро принимать изменения, но чем больше точек расширения, тем сложнее пути взаимодействия в production-среде. Когда фрагментация видеопамяти, сбой рукопожатия NCCL, инвалидация кэша компиляции и сетевой джиттер возникают одновременно, механизмы, описанные в предыдущих тринадцати главах, начинают тянуть друг друга в разные стороны, обнажая напряжения, невидимые в идеальных условиях. Эта глава не вводит новых ключевых механизмов, а собирает эти механизмы вместе, опираясь на официальную документацию troubleshooting и учитывая дизайн инструмента bench для Rust-фронтенда, рассматривает компромиссы между производительностью и эксплуатационной пригодностью и даёт практический путь диагностики.
 
@@ -95,19 +95,19 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    start["运行诊断脚本"] --> nccl_test["测试 PyTorch NCCLdist.all_reduce"]
+    start["Запустить диагностический скрипт"] --> nccl_test["Тест PyTorch NCCLdist.all_reduce"]
     nccl_test --> nccl_ok{"value == world_size?"}
-    nccl_ok -->|否| hw_broken["硬件/驱动故障联系系统管理员"]
-    nccl_ok -->|是| gloo_test["测试 PyTorch GLOOCPU 通信"]
+    nccl_ok -->|Нет| hw_broken["Аппаратная/драйверная неисправностьОбратитесь к системному администратору"]
+    nccl_ok -->|Да| gloo_test["Тест PyTorch GLOOCPU-коммуникация"]
     gloo_test --> gloo_ok{"value == world_size?"}
-    gloo_ok -->|否| gloo_fail["GLOO 配置问题检查网络接口"]
-    gloo_ok -->|是| pynccl_test["测试 vLLM PyNcclCommunicator"]
-    pynccl_test --> pynccl_ok{"all_reduce 正确?"}
-    pynccl_ok -->|否| pynccl_fail["vLLM NCCL 封装问题"]
-    pynccl_ok -->|是| graph_test["测试 CUDA Graph 内 all_reduce"]
-    graph_test --> graph_ok{"g.replay() 后正确?"}
-    graph_ok -->|否| graph_fail["CUDA Graph 捕获问题检查 stream 语义"]
-    graph_ok -->|是| success["sanity check 成功"]
+    gloo_ok -->|Нет| gloo_fail["Проблема конфигурации GLOOПроверьте сетевые интерфейсы"]
+    gloo_ok -->|Да| pynccl_test["Тест vLLM PyNcclCommunicator"]
+    pynccl_test --> pynccl_ok{"all_reduce корректен?"}
+    pynccl_ok -->|Нет| pynccl_fail["Проблема обёртки vLLM NCCL"]
+    pynccl_ok -->|Да| graph_test["Тест all_reduce внутри CUDA Graph"]
+    graph_test --> graph_ok{"Корректно после g.replay()?"}
+    graph_ok -->|Нет| graph_fail["Проблема захвата CUDA GraphПроверьте семантику stream"]
+    graph_ok -->|Да| success["sanity check успешен"]
 ```
 
 Изящество этого скрипта в том, что он послойно изолирует: сначала проверяет самый нижний уровень PyTorch NCCL, затем GLOO на стороне CPU, затем собственную обёртку vLLM PyNcclCommunicator, и наконец коммуникацию внутри CUDA Graph[FACT:docs/usage/troubleshooting.md:90-146]. Сбой на каждом уровне указывает на разные первопричины.
@@ -153,11 +153,11 @@ flowchart TD
 Как данные перемещаются при отправке нагрузочного запроса? Диаграмма потока данных ниже показывает преобразование от входа к выходу:
 
 ```mermaid
-flowchart LR
-    input["RequestFuncInputArc<str> prompt"] --> build["build_headers+ payload 拼接"]
+блок-схема LR
+    input["RequestFuncInputArc<str> prompt"] --> build["build_headers+ сборка payload"]
     build --> send["reqwest::Clientsend_request"]
-    send --> sse["SSE 流式响应字节流"]
-    sse --> parse["CompletionChunk类型化反序列化"]
+    send --> sse["SSE потоковый ответпоток байтов"]
+    sse --> parse["CompletionChunkтипизированная десериализация"]
     parse --> output["RequestFuncOutputttft/itl/tpot"]
 ```
 

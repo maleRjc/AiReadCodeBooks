@@ -1,4 +1,4 @@
-# Следующая глава: Глава 12 →
+# Глава 12: Прокси-потоки и асинхронный I/O: координация сетевых операций на хосте
 
 # Прогресс книги: Глава 12 / 25
 
@@ -29,15 +29,15 @@ NCCL запускает на стороне хоста два типа proxy-п�
 ```mermaid
 flowchart TD
     create["ncclProxyCreate(comm)"] --> check_ref{"proxyState->refCount == 1?"}
-    check_ref -->|否| skip["复用已有线程，直接返回"]
-    check_ref -->|是| copy["拷贝 comm 字段到 proxyState"]
+    check_ref -->|Нет| skip["Переиспользовать существующий поток, вернуть напрямую"]
+    check_ref -->|Да| copy["Копировать поля comm в proxyState"]
     copy --> start_svc["std::thread(ncclProxyService)"]
     start_svc --> start_uds["std::thread(ncclProxyServiceUDS)"]
-    start_uds --> wait["等待连接建立请求"]
-    wait --> conn_init{"proxyConnInit 发现tcomm->proxyProgress != NULL?"}
-    conn_init -->|是| prog_init["proxyProgressInit()"]
-    conn_init -->|否| no_prog["不启动 Progress 线程"]
-    prog_init --> shm["ncclShmOpen 创建 opsPool 共享内存"]
+    start_uds --> wait["Ожидание запроса на установление соединения"]
+    wait --> conn_init{"proxyConnInit обнаружилtcomm->proxyProgress != NULL?"}
+    conn_init -->|Да| prog_init["proxyProgressInit()"]
+    conn_init -->|Нет| no_prog["Не запускать поток Progress"]
+    prog_init --> shm["ncclShmOpen создаёт разделяемую память opsPool"]
     shm --> start_prog["std::thread(ncclProxyProgress)"]
 ```
 
@@ -190,22 +190,22 @@ if (op->type == ncclProxyMsgSetup) {
 
 ```mermaid
 sequenceDiagram
-    participant Main as 主线程 (ncclSend)
-    participant Svc as Service 线程
-    participant Net as 网络插件 (ncclNet)
+    participant Main as Главный поток (ncclSend)
+    participant Svc as Поток Service
+    participant Net as Сетевой плагин (ncclNet)
     Main->>Svc: ncclProxyCallAsync(ncclProxyMsgConnect)
     Note over Main: expectedProxyResponseEnqueue(opId)
-    Svc->>Svc: proxyServiceInitOp 读取请求
-    Svc->>Net: proxyConnect() 调用 ncclNet->connect
-    alt connect 未完成
+    Svc->>Svc: proxyServiceInitOp читает запрос
+    Svc->>Net: proxyConnect() вызывает ncclNet->connect
+    alt connect не завершён
         Net-->>Svc: netSendComm == NULL, done=0
-        Svc->>Svc: 返回 ncclInProgress，下次 poll 重试
-    else connect 完成
+        Svc->>Svc: Возврат ncclInProgress, повтор при следующем poll
+    else connect завершён
         Net-->>Svc: netSendComm != NULL, done=1
         Svc->>Main: ncclSocketSend(resp header + connectMap)
     end
-    Main->>Main: ncclPollProxyResponse 轮询
-    Main->>Main: expectedProxyResponseDequeue 取回结果
+    Main->>Main: ncclPollProxyResponse опрос
+    Main->>Main: expectedProxyResponseDequeue извлекает результат
 ```
 
 Эта диаграмма последовательности фиксирует`sendProxyConnect`в`*done = 0; return ncclInProgress`реальную ветвь[FACT:src/transport/net.cc:913-916]。
@@ -431,31 +431,31 @@ if (sub->transmitted > sub->done) {
 
 ```mermaid
 flowchart LR
-    subgraph GPU["GPU Kernel"]
-        gpu_write["写入数据到 buff"]
-        gpu_fifo["更新 connFifo.size和 recvTail"]
+    subgraph GPU["Ядро GPU"]
+        gpu_write["Запись данных в buff"]
+        gpu_fifo["Обновление connFifo.sizeи recvTail"]
     end
-    subgraph SHM["共享内存 FIFO"]
+    subgraph SHM["Разделяемая память FIFO"]
         fifo["ncclConnFifosize / offset"]
         head["sendMem->head"]
         tail["recvMem->tail"]
     end
-    subgraph PROXY["Progress 线程"]
-        check["检查 size != -1且 recvTail > tail"]
+    subgraph PROXY["Поток Progress"]
+        check["Проверка size != -1и recvTail > tail"]
         isend["ncclNet->isend()"]
         test["ncclNet->test()"]
-        update["更新 sendHead"]
+        update["Обновление sendHead"]
     end
     gpu_write --> gpu_fifo
     gpu_fifo --> fifo
     gpu_fifo --> tail
     fifo --> check
     tail --> check
-    check -->|数据就绪| isend
+    check -->|Данные готовы| isend
     isend --> test
-    test -->|发送完成| update
+    test -->|Отправка завершена| update
     update --> head
-    head -->|GPU 可复用 slot| gpu_write
+    head -->|GPU может переиспользовать slot| gpu_write
 ```
 
 Эта диаграмма потока данных показывает замкнутый контур GPU и proxy через FIFO и указатели head/tail: GPU пишет данные → обновляет tail → proxy обнаруживает и инициирует isend → test подтверждает завершение → обновляет head → GPU переиспользует slot.
@@ -585,7 +585,7 @@ if (resources->shared == 0) {
 }
 ```
 
-, в не-shared — 0). GPU kernel при`-NCCL_STEPS`проверяет`waitSend`и только тогда считает, что есть credit для записи. Если head не продвигается, GPU, заполнив`head + NCCL_STEPS > step`slot, навсегда заблокируется в ожидании credit, а proxy, в свою очередь, ждёт новых данных от GPU для isend — классическая взаимоблокировка производителя-потребителя. В shared-режиме это ещё серьёзнее, так как начальный head отрицательный, и у GPU изначально нет credit.`NCCL_STEPS` 个 slot 后就永远阻塞在等待 credit 上，而 proxy 又在等 GPU 写新数据才能 isend——经典的生产者-消费者死锁。在 shared 模式下更严重，因为初始 head 是负值，GPU 一开始就没有 credit。
+, в не-shared — 0). GPU kernel при`-NCCL_STEPS`проверяет`waitSend`и только тогда считает, что есть credit для записи. Если head не продвигается, GPU, заполнив`head + NCCL_STEPS > step`slot, навсегда заблокируется в ожидании credit, а proxy, в свою очередь, ждёт новых данных от GPU для isend — классическая взаимоблокировка производителя-потребителя. В shared-режиме это ещё серьёзнее, так как начальный head отрицательный, и у GPU изначально нет credit.`NCCL_STEPS`слотов, после чего навсегда блокируется в ожидании credit, а proxy в свою очередь ждёт, пока GPU запишет новые данные, чтобы выполнить isend — классическая взаимоблокировка производителя-потребителя. В режиме shared это ещё серьёзнее, поскольку начальное значение head отрицательное, и у GPU изначально нет credit.
 
 Q2: `ncclLocalOpAppend`При накоплении op достигает`MAX_OPS_PER_PEER`запускается пакетная отправка, но код намеренно «не отправляет все op последнего opCount». Если изменить на простую отправку всех op, какой механизм будет нарушен?
 

@@ -1,4 +1,4 @@
-# Следующая глава: Глава 8 →
+# Глава 8: Передача KV Cache и раздельное развертывание: разделение фаз Prefill и Decode
 
 Статус проверки: FACT — номера строк реально привязаны
 
@@ -6,23 +6,23 @@
 
 ## 8.1 Топология групп процессов: как из сетки rank'ов вырезаются TP/PP/DP/EP
 
-Интуитивная модель`new_group`，就会出现"我以为你在 TP 组里，其实你在 DP 组里"的通信错位——集合通信一旦有 rank 缺席，NCCL 会直接挂死而非报错。
+Интуитивная модель`new_group`, возникнет коммуникационное рассогласование типа «я думал, что ты в группе TP, а ты на самом деле в группе DP» — как только в коллективной коммуникации отсутствует хотя бы один rank, NCCL просто зависнет, а не выдаст ошибку.
 
-## 数据结构与内存布局
+## Структуры данных и компоновка памяти
 
-`GroupCoordinator`是这一切的载体。它的字段设计直接对应"一个进程在多个并行维度上的多重身份"：
+`GroupCoordinator`является носителем всего этого. Дизайн его полей напрямую отражает «множественную идентичность одного процесса в нескольких измерениях параллелизма»:
 
-- `rank`是全局 rank，`ranks`是本组成员全局 rank 列表，`world_size`是组大小[FACT:vllm/distributed/parallel_state.py:434-436]。
-- `local_rank`用于绑定设备，`rank_in_group`是组内序号——源码用一张表精确区分二者：跨两节点的 4 卡组里，rank 2 的`local_rank`是 0（它在节点 1 上是第一张卡），但`rank_in_group`是 2[FACT:vllm/distributed/parallel_state.py:437-445]。
-- `cpu_group`与`device_group`成对存在：前者走 gloo 做元数据/对象通信，后者走 NCCL 做张量通信[FACT:vllm/distributed/parallel_state.py:446-447]。
+- `rank`— это глобальный rank,`ranks`— список глобальных rank'ов членов данной группы,`world_size`— размер группы,[FACT:vllm/distributed/parallel_state.py:434-436]。
+- `local_rank`используется для привязки устройства,`rank_in_group`— порядковый номер внутри группы — в исходном коде эти два понятия точно различаются с помощью таблицы: в группе из 4 карт на двух узлах у rank 2`local_rank`равно 0 (на узле 1 это первая карта), но`rank_in_group`равно 2[FACT:vllm/distributed/parallel_state.py:437-445]。
+- `cpu_group`и`device_group`существуют в паре: первый использует gloo для передачи метаданных/объектов, второй использует NCCL для передачи тензоров[FACT:vllm/distributed/parallel_state.py:446-447]。
 
-这里有个关键设计：**为什么每个组都要维护一个 CPU 组？**因为`broadcast_object`、`send_object`这类操作传输的是 Python 对象（序列化后的字节），走 NCCL 既浪费显存又可能污染当前 CUDA 设备。`barrier()`的注释把这一点说得很直白：NCCL 的 barrier 内部是一次 broadcast，会偷偷创建 GPU 张量，容易搞乱当前设备，所以必须用 CPU 组[FACT:vllm/distributed/parallel_state.py:1355-1362]。
+Здесь есть один ключевой момент проектирования:**Почему каждая группа должна поддерживать отдельную группу CPU?**Потому что`broadcast_object`、`send_object`Такие операции передают объекты Python (сериализованные байты), и использование NCCL приводит к бесполезному расходу видеопамяти и может загрязнить текущее устройство CUDA.`barrier()`В комментариях к этому прямо указано: barrier внутри NCCL по сути является broadcast, который незаметно создаёт тензоры на GPU и может нарушить работу текущего устройства, поэтому необходимо использовать группу CPU.[FACT:vllm/distributed/parallel_state.py:1355-1362]。
 
-## Step-by-Step：`initialize_model_parallel`如何切网格
+## Step-by-Step：`initialize_model_parallel`Как разбивать сетку
 
-代入一个具体场景：8 卡、TP=2、PP=4、DP=1。核心是把一维 rank 序列 reshape 成多维网格，再沿每个维度切分。
+Рассмотрим конкретный сценарий: 8 GPU, TP=2, PP=4, DP=1. Суть в том, чтобы преобразовать одномерную последовательность rank в многомерную сетку, а затем разбить её по каждому измерению.
 
-第一步，构造 rank 网格。布局顺序被明确定义为`ExternalDP x DP x PP x PCP x TP` [FACT:vllm/distributed/parallel_state.py:2045-2060]：
+Первый шаг — построение сетки rank. Порядок размещения явно определён как`ExternalDP x DP x PP x PCP x TP` [FACT:vllm/distributed/parallel_state.py:2045-2060]：
 
 ```python
 all_ranks = torch.arange(world_size).reshape(
@@ -31,13 +31,13 @@ all_ranks = torch.arange(world_size).reshape(
 )
 ```
 
-第二步，切 TP 组：把网格 view 成`(-1, tp_size)`后 unbind，得到`[g0,g1],[g2,g3],...` [FACT:vllm/distributed/parallel_state.py:2065-2077]。注意 TP 组额外传了`use_message_queue_broadcaster=True`，因为 TP 组需要共享内存广播来分发元数据。
+Второй шаг — разбиение группы TP: преобразуем сетку в представление`(-1, tp_size)`затем выполняем unbind и получаем`[g0,g1],[g2,g3],...` [FACT:vllm/distributed/parallel_state.py:2065-2077]. Обратите внимание, что для группы TP дополнительно передаётся`use_message_queue_broadcaster=True`, поскольку группе TP требуется широковещательная передача через разделяемую память для распространения метаданных.
 
-第三步，切 PP 组：`all_ranks.transpose(2, 4)`把 PP 维换到最后一维再切，得到`[g0,g2,g4,g6],[g1,g3,g5,g7]` [FACT:vllm/distributed/parallel_state.py:2175-2188]。这正是文档字符串里给出的例子[FACT:vllm/distributed/parallel_state.py:1997-1997]。
+Третий шаг — разбиение группы PP:`all_ranks.transpose(2, 4)`Переставляем измерение PP в последнее измерение и выполняем разбиение, получая`[g0,g2,g4,g6],[g1,g3,g5,g7]` [FACT:vllm/distributed/parallel_state.py:2175-2188]. Именно этот пример приведён в строке документации.[FACT:vllm/distributed/parallel_state.py:1997-1997]。
 
-第四步，切 DP 组：`transpose(1, 4)`后切[FACT:vllm/distributed/parallel_state.py:2195-2202]。
+Четвёртый шаг — разделение группы DP:`transpose(1, 4)`Разделение после[FACT:vllm/distributed/parallel_state.py:2195-2202]。
 
-第五步，切 EP 组——这里有个容易忽略的细节：EP 组只在 MoE 模型下创建，dense 模型直接跳过[FACT:vllm/distributed/parallel_state.py:2210-2241]。EP 组的 rank 集合是`DP x PCP x TP`的乘积，意味着 EP 复用了 DP 和 TP 的物理卡，而不是独立维度。
+Пятый шаг — разделение группы EP. Здесь есть легко упускаемая деталь: группа EP создаётся только для MoE-моделей, для dense-моделей она пропускается.[FACT:vllm/distributed/parallel_state.py:2210-2241]. Набор рангов группы EP — это`DP x PCP x TP`произведение, что означает, что EP переиспользует физические карты DP и TP, а не является независимым измерением.
 
 ```mermaid
 flowchart TD
@@ -46,12 +46,12 @@ flowchart TD
     grid --> pp["PP: transpose(2,4).reshape(-1, pp_size)"]
     grid --> dp["DP: transpose(1,4).reshape(-1, dp_size)"]
     grid --> ep_check{"model_config.is_moe?"}
-    ep_check -->|是| ep["EP: transpose(1,2).reshape(-1, DP*PCP*TP)"]
-    ep_check -->|否| skip["_EP 保持 None"]
+    ep_check -->|да| ep["EP: transpose(1,2).reshape(-1, DP*PCP*TP)"]
+    ep_check -->|нет| skip["_EP остаётся None"]
     ep --> eplb_check{"enable_eplb?"}
-    eplb_check -->|是| eplb["EPLB: 与 EP 同 rank 集，独立 PG"]
-    eplb_check -->|否| no_eplb["_EPLB 保持 None"]
-    tp --> done["logger.info_once 打印各维度 rank"]
+    eplb_check -->|да| eplb["EPLB: тот же набор рангов, что и EP, независимая PG"]
+    eplb_check -->|нет| no_eplb["_EPLB остаётся None"]
+    tp --> done["logger.info_once выводит ранги по каждому измерению"]
     pp --> done
     dp --> done
     ep --> done
@@ -60,38 +60,38 @@ flowchart TD
     no_eplb --> done
 ```
 
-## 设计思考与踩坑
+## Проектные соображения и подводные камни
 
-**EPLB 为什么要独立进程组？**注释给出了答案：把 EPLB 通信与 MoE 前向的集合通信隔离，防止"执行期的 torch.distributed"与"EPLB 的 torch.distributed"互相死锁[FACT:vllm/distributed/parallel_state.py:2243-2246]。这是一个典型的"用独立通信域换确定性"的权衡——多一个 PG 的显存开销，换来的是不会在权重搬运时卡死前向。
+**Почему для EPLB нужна независимая группа процессов?**Комментарий даёт ответ: изолировать коммуникацию EPLB от коллективной коммуникации прямого прохода MoE, чтобы предотвратить взаимную блокировку между "torch.distributed во время выполнения" и "torch.distributed в EPLB"[FACT:vllm/distributed/parallel_state.py:2243-2246]. Это типичный компромисс "независимый домен коммуникации в обмен на детерминированность" — дополнительный расход видеопамяти на одну PG в обмен на то, что прямой проход не зависнет при переносе весов.
 
-**DP 组的同步约束**是生产环境最常踩的坑：同一 DP 组内所有 rank 必须同时调用`generate`，否则死锁[FACT:vllm/distributed/parallel_state.py:2048-2051]。因为 DP 组内会做梯度/采样结果的 all-reduce，任何 rank 缺席都会让集合通信永久阻塞。
+**Ограничение синхронизации группы DP**— это самый частый подводный камень в производственной среде: все ранги внутри одной группы DP должны одновременно вызвать`generate`, иначе возникнет взаимоблокировка[FACT:vllm/distributed/parallel_state.py:2048-2051]. Поскольку внутри группы DP выполняется all-reduce градиентов/результатов сэмплирования, отсутствие любого ранга приведёт к бессрочной блокировке коллективной коммуникации.
 
-**销毁顺序**同样有讲究。`destroy()`先销毁 device communicator，再销毁 device_group 和 cpu_group[FACT:vllm/distributed/parallel_state.py:1380-1393]。注释解释了原因：device communicator 可能持有依赖这些 PG 的集合通信工作区（如 FlashInfer PCIe IPC barrier），必须先释放[FACT:vllm/distributed/parallel_state.py:1377-1377]。
+**Порядок уничтожения**Также имеет свои тонкости.`destroy()`Сначала уничтожается device communicator, затем device_group и cpu_group[FACT:vllm/distributed/parallel_state.py:1380-1393]. В комментариях объясняется причина: device communicator может содержать рабочие области коллективных коммуникаций, зависящие от этих PG (например, FlashInfer PCIe IPC barrier), которые должны быть освобождены первыми[FACT:vllm/distributed/parallel_state.py:1377-1377]。
 
-# 8.2 通信原语：自定义 all-reduce 如何绕过 NCCL
+# 8.2 Коммуникационные примитивы: как пользовательский all-reduce обходит NCCL
 
-## 直觉模型
+## Интуитивная модель
 
-NCCL 的 all-reduce 是"通用货车"，能拉任何货、走任何路，但启动开销和协议开销固定。当你要在 8 卡 NVLink 全互联的机器上反复做小张量 all-reduce（TP 的每个 attention/MLP 层都要做），通用货车的"过路费"就变得不可忽视。自定义 all-reduce 是"专用小推车"：只在同机、NVLink 全互联、张量大小合适的场景下启用，用一次`cudaMemcpy`换掉 NCCL 的握手与协议开销。
+All-reduce в NCCL — это «универсальный грузовик», способный перевезти любой груз по любой дороге, но с фиксированными накладными расходами на запуск и протокол. Когда вам нужно многократно выполнять all-reduce небольших тензоров на машине с 8 GPU, полностью соединёнными через NVLink (на каждом слое attention/MLP в TP), «плата за проезд» универсального грузовика становится недопустимо высокой. Пользовательский all-reduce — это «специализированная тележка»: он активируется только в сценариях с одной машиной, полносвязным NVLink и подходящим размером тензора, позволяя за один раз`cudaMemcpy`устранить накладные расходы NCCL на рукопожатие и протокол.
 
-## 数据结构与内存布局
+## Структуры данных и компоновка памяти
 
-`CustomAllreduce`的初始化是一场"能力探测 + 资源预分配"的组合。关键字段：
+`CustomAllreduce`Инициализация представляет собой комбинацию «зондирования возможностей + предварительного выделения ресурсов». Ключевые поля:
 
-- `_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8, 16]`：只支持这些组大小[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:113-129]。
-- `meta_ptrs`：同步元数据 + 中间结果缓冲区，大小`ops.meta_size() + max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:291-294]。
-- `buffer_ptrs`：预注册的 IPC 缓冲区，eager 模式下输入张量先拷进来再算[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:298-305]。
-- `rank_data`：8MB 的 uint8 张量，存放所有 rank 的 IPC 缓冲区指针元组[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:309-315]。
+- `_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8, 16]`: поддерживаются только эти размеры групп[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:113-129]。
+- `meta_ptrs`: буфер для синхронизации метаданных и промежуточных результатов, размер`ops.meta_size() + max_size` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:291-294]。
+- `buffer_ptrs`: предварительно зарегистрированный IPC-буфер; в eager-режиме входной тензор сначала копируется сюда, затем вычисляется[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:298-305]。
+- `rank_data`: тензор uint8 размером 8 МБ, хранящий кортежи указателей IPC-буферов всех рангов[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:309-315]。
 
-**为什么缓冲区要预注册？**因为 CUDA Graph 捕获要求所有地址在捕获时固定。`register_graph_buffers`在捕获结束时把所有用到的缓冲区地址广播给所有 rank 并注册[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:474-491]。
+**Почему буферы должны быть предварительно зарегистрированы?**Поскольку захват CUDA Graph требует, чтобы все адреса были фиксированы на момент захвата.`register_graph_buffers`В конце захвата транслировать адреса всех используемых буферов всем рангам и зарегистрировать их[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:474-491]。
 
-## Step-by-Step：一次 all-reduce 的决策流
+## Пошагово: поток принятия решений для одного all-reduce
 
-代入场景：TP 组内某层 MLP 输出需要 all-reduce，输入是 4MB 的 bf16 张量。
+Рассмотрим сценарий: выход некоторого слоя MLP внутри TP-группы требует all-reduce, вход — тензор bf16 размером 4 МБ.
 
-第一步，`custom_all_reduce`检查是否禁用、是否满足`should_custom_ar` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-533]。
+Первый шаг,`custom_all_reduce`проверить, отключено ли, выполнено ли условие`should_custom_ar` [FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-533]。
 
-第二步，`should_custom_ar`Поэлементная фильтрация: world_size > 8 — отклонить; dtype должен быть fp32/fp16/bf16; число байт должно быть кратно 16; должна быть слабая непрерывность; продолжить только если world_size==2 или полносвязная топология[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508]。
+Второй шаг,`should_custom_ar`Поэлементная фильтрация: world_size > 8 — отклонить; dtype должен быть fp32/fp16/bf16; число байт должно быть кратно 16; должна быть слабая непрерывность; продолжить только если world_size==2 или полносвязная топология[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:493-508]。
 
 Третий шаг — ветвление в зависимости от того, находимся ли мы в захвате CUDA Graph: при захвате используется`registered=True`(адрес уже зафиксирован), иначе`registered=False`(требуется сначала memcpy в предварительно зарегистрированный буфер)[FACT:vllm/distributed/device_communicators/custom_all_reduce.py:529-545]。
 
@@ -100,15 +100,15 @@ NCCL 的 all-reduce 是"通用货车"，能拉任何货、走任何路，但启�
 ```mermaid
 flowchart TD
     call["custom_all_reduce(input)"] --> disabled{"self.disabled?"}
-    disabled -->|是| ret_none["return None → 回退 NCCL"]
-    disabled -->|否| should{"should_custom_ar(input)?"}
-    should -->|否| ret_none
-    should -->|是| capturing{"self._IS_CAPTURING?"}
-    capturing -->|是| stream_cap{"is_current_stream_capturing()?"}
-    stream_cap -->|是| reg["all_reduce(registered=True)"]
-    stream_cap -->|否| mimic["return empty_like(input) 模拟分配"]
-    capturing -->|否| eager["all_reduce(registered=False) 先 memcpy"]
-    reg --> out["返回 out 张量"]
+    disabled -->|"да"| ret_none["return None → откат к NCCL"]
+    disabled -->|"нет"| should{"should_custom_ar(input)?"}
+    should -->|"нет"| ret_none
+    should -->|"да"| capturing{"self._IS_CAPTURING?"}
+    capturing -->|"да"| stream_cap{"is_current_stream_capturing()?"}
+    stream_cap -->|"да"| reg["all_reduce(registered=True)"]
+    stream_cap -->|"нет"| mimic["return empty_like(input) имитация выделения"]
+    capturing -->|"нет"| eager["all_reduce(registered=False) сначала memcpy"]
+    reg --> out["вернуть тензор out"]
     eager --> out
 ```
 
@@ -152,25 +152,25 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant Main as 主线程 step()
+    participant Main as Главный поток step()
     participant Policy as DefaultEplbPolicy
     participant Comm as EplbCommunicator
-    participant Async as async_worker 线程
+    participant Async as Поток async_worker
     Main->>Main: expert_rearrangement_step >= interval
-    Main->>Main: scatter_add_ 物理负载→逻辑负载
-    Main->>Main: _allreduce_list 跨 rank 聚合
+    Main->>Main: scatter_add_ физическая нагрузка→логическая нагрузка
+    Main->>Main: _allreduce_list агрегация между рангами
     Main->>Policy: rebalance_experts(load, replicas, groups, nodes, gpus, map)
     Policy-->>Main: new_physical_to_logical_map
-    alt 同步模式
+    alt Синхронный режим
         Main->>Comm: rearrange_expert_weights_inplace()
-        Comm-->>Main: 权重搬运完成
+        Comm-->>Main: Перемещение весов завершено
         Main->>Main: _commit_eplb_maps()
-    else 异步模式
+    else Асинхронный режим
         Main->>Main: eplb_stats = EplbStats(...); rebalanced = True
         Main->>Async: rearrange_event.record()
-        Async->>Comm: 后台搬运权重到 expert_buffer
-        Async-->>Main: pending_result 就绪
-        Main->>Main: _move_to_workspace() 提交
+        Async->>Comm: Фоновое перемещение весов в expert_buffer
+        Async-->>Main: pending_result готов
+        Main->>Main: _move_to_workspace() фиксация
     end
 ```
 

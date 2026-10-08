@@ -29,18 +29,18 @@
 
 ```mermaid
 flowchart LR
-    subgraph entry["入口层"]
-        http["HTTP 请求体ChatCompletionRequest"]
-        cli["CLI 参数vllm serve / vllm chat"]
-        offline["Python 调用LLM.chat(messages)"]
+    subgraph entry["Уровень входа"]
+        http["Тело HTTP-запросаChatCompletionRequest"]
+        cli["Аргументы CLIvllm serve / vllm chat"]
+        offline["Вызов из PythonLLM.chat(messages)"]
     end
 
-    subgraph parse["解析层"]
+    subgraph parse["Уровень разбора"]
         chat_utils["chat_utils.parse_chat_messages-> ConversationMessage + mm_data"]
         renderer["rendererapply_chat_template -> token_ids"]
     end
 
-    subgraph engine["引擎层"]
+    subgraph engine["Уровень движка"]
         async_llm["AsyncLLMadd_request()"]
         llm_engine["LLMEngineadd_request()"]
         core["EngineCoreinput_queue"]

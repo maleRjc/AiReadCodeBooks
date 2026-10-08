@@ -1,4 +1,4 @@
-# Глава 9: Передача KV Cache и раздельное развёртывание (PD-разделение)
+# Глава 9: Реализация спекулятивного декодирования: параллельная верификация кандидатов
 
 В предыдущей главе мы сосредоточились на внутреннем устройстве одного экземпляра инференса: как формируются группы процессов TP/PP/DP/EP, как тензоры разделяются между картами, как EPLB выполняет перебалансировку экспертов на уровне MoE. Но все эти механизмы основаны на одном предположении — prefill и decode работают в одном экземпляре, а KV Cache от начала до конца находится в локальной видеопамяти. Раздельное развёртывание (Prefill-Decode Disaggregation, сокращённо PD-разделение) разрушает это предположение. Оно разделяет prefill и decode на два независимых экземпляра vLLM: экземпляр prefill выполняет только прямой проход по промпту, создаёт KV Cache и передаёт его экземпляру decode; экземпляр decode использует этот KV Cache для продолжения авторегрессионной генерации. Преимущество такого подхода в том, что ресурсы можно независимо конфигурировать в соответствии с характеристиками этапов — prefill является вычислительно-интенсивным, подходит для большого TP и большого batch; decode является интенсивным по доступу к памяти, подходит для малого batch и планирования с низкой задержкой. Они больше не мешают друг другу. Цена этого — необходимость передачи KV Cache между экземплярами. Это и есть главный герой данной главы — KV Connector. Комментарий в заголовке файла vllm/distributed/kv_transfer/kv_connector/v1/base.py уже перечисляет основные примитивы всей абстракции: сторона Scheduler отвечает за привязку метаданных, запрос попаданий в удалённый кэш и решение об асинхронном освобождении блоков; сторона Worker отвечает за фактическую загрузку и сохранение KV. Цель проектирования этого интерфейса — полностью развязать логику планирования верхнего уровня и транспортные бэкенды нижнего уровня (NIXL, Mooncake, MoRIIO). С инженерной точки зрения наибольший риск PD-разделения — не медленная передача, а несогласованность состояний: экземпляр prefill считает, что KV уже отправлен, а экземпляр decode его не получил; или экземпляр decode освободил блок раньше времени, а prefill всё ещё пишет в него. В данной главе мы выясним, как именно эта система коннекторов использует протокол рукопожатия, аренду (lease), heartbeat и механизмы восстановления после сбоев, чтобы закрыть эти граничные случаи.
 
@@ -409,22 +409,22 @@ idle. A peer that has lost its NIC holds one indefinitely.
 sequenceDiagram
     participant Sched as Scheduler
     participant Worker as NixlWorker
-    participant BgThread as 握手后台线程
-    participant Remote as 远程 NIXL Agent
+    participant BgThread as Фоновый поток рукопожатия
+    participant Remote as Удалённый NIXL Agent
 
     Sched->>Worker: build_connector_meta()
     Worker->>Worker: _ensure_handshake(engine_id)
-    alt 已握手
-        Worker->>Worker: 直接返回 None
-    else 握手中
-        Worker->>BgThread: 返回已有 Future
-    else 新握手
+    alt Рукопожатие выполнено
+        Worker->>Worker: Немедленный возврат None
+    else Рукопожатие в процессе
+        Worker->>BgThread: Вернуть существующий Future
+    else Новое рукопожатие
         Worker->>BgThread: submit(_nixl_handshake)
         BgThread->>Remote: ZMQ GET_META_MSG
         Remote-->>BgThread: NixlHandshakePayload
-        BgThread->>BgThread: 校验 compat_hash
+        BgThread->>BgThread: Проверка compat_hash
         BgThread->>Remote: add_remote_agent()
-        BgThread-->>Worker: done_callback 注册 _remote_agents
+        BgThread-->>Worker: done_callback регистрирует _remote_agents
     end
     Worker->>Remote: prep_xfer_dlist + make_xfer_req
     Worker->>Worker: _recving_transfers[req_id] = handles
@@ -434,8 +434,8 @@ sequenceDiagram
         Worker->>Remote: release_xfer_handle
         Worker-->>Sched: finished_recving
     else xfer_state == PROC
-        Worker->>Worker: 保留 handle 等待下一轮
-    else 失败
+        Worker->>Worker: Сохранить handle до следующего раунда
+    else Ошибка
         Worker->>Worker: _handle_failed_transfer
         Worker-->>Sched: failed_recving + invalid_block_ids
     end
@@ -503,7 +503,7 @@ Q1: Если убрать обработку исключений в`_try_releas
 
 Q2: `_reap_expired_send_leases`В комментариях к сказано: «нельзя останавливать сканирование при обнаружении первого непросроченного запроса». Если изменить на break при обнаружении непросроченного, в каких сценариях это вызовет утечку block?
 
-**Справочный анализ**：`_reqs_to_send`— это обычный dict, а не приоритетная очередь, отсортированная по времени истечения. Обработка heartbeat`_handle_heartbeat` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034]обновляет время истечения на месте:`self._reqs_to_send[req_id] = max(old, new_expiry)`. Это означает, что запрос, добавленный раньше, может иметь очень позднее время истечения из-за постоянного получения heartbeat, а запросы, стоящие после него, могут уже истечь. Если сделать break при обнаружении первого непросроченного, то уже просроченные запросы после него никогда не будут回收, и их block будут постоянно занимать видеопамять. В сценариях длительной работы со смешанными шаблонами запросов (некоторые запросы часто продлеваются heartbeat, а экземпляры decode некоторых запросов уже упали) это накопится в серьёзную утечку видеопамяти.
+**Справочный анализ**：`_reqs_to_send`— это обычный dict, а не приоритетная очередь, отсортированная по времени истечения. Обработка heartbeat`_handle_heartbeat` [FACT:vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3014-3034]обновляет время истечения на месте:`self._reqs_to_send[req_id] = max(old, new_expiry)`这意味着，先前添加的请求由于持续收到心跳而可能具有非常晚的过期时间，而排在其后的请求可能已经过期。如果在遇到第一个未过期请求时就 break，那么其后已经过期的请求将永远不会被回收，它们的 block 将持续占用显存。在长时间运行且请求模式混合的场景中（一些请求经常被心跳续期，而另一些请求的 decode 实例已经挂掉），这会累积成严重的显存泄漏。
 
 Q3: `_evict_stale_engines`использует`_engines_with_inflight_transfers`для защиты движков с активными передачами. Если убрать эту защиту, в каких сценариях сетевых сбоев это приведёт к сбою передачи?
 

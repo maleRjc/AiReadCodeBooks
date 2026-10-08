@@ -1,3 +1,5 @@
+# Глава 3: Вход в инициализацию: как ncclCommInitRank формирует коммуникационный домен
+
 # Глава 3: Вход в инициализацию: как ncclCommInitRank превращает группу изолированных процессов в коммуникационный домен
 
 В предыдущей главе мы установили пять ключевых абстракций, проходящих через всю книгу: ncclComm, channel, algorithm, protocol и transport, которые вместе образуют общий словарь «одна коммуникация = несколько channel × один algorithm × один protocol × несколько transport». Теперь мы ответим на более фундаментальный вопрос: как этот объект ncclComm вообще создаётся с нуля? Когда вы вызываете ncclCommInitRank, NCCL должен за несколько сотен миллисекунд выполнить ряд сложных операций: убедиться, что все rank на месте, обменяться информацией об устройствах, исследовать топологию машины, вычислить пути передачи данных, выделить память GPU и хоста и, наконец, упаковать всё это в объект ncclComm. В этой главе мы пройдём по этой цепочке вызовов от точки входа API вплоть до последнего капилляра initTransportsRank.
@@ -55,6 +57,7 @@
 Ключевая идея дизайна здесь — «синхронный API + асинхронная реализация». Почему бы не заставить`ncclCommInitRank`напрямую синхронно выполнять всю инициализацию? Потому что NCCL должен поддерживать неблокирующий режим`ncclCommInitRankConfig`, а неблокирующий режим требует выполнения инициализации в фоновом потоке. Если бы синхронный и асинхронный пути были двумя наборами кода, затраты на сопровождение удвоились бы. Всё идёт через асинхронный путь, а синхронный путь — это просто «запустить и сразу ждать», код существует в одном экземпляре.
 
 ```mermaid
+```mermaid
 flowchart TD
     api["ncclCommInitRank(newcomm, nranks, commId, myrank)"]
     env["ncclInitEnv() 加载环境变量插件"]
@@ -76,6 +79,7 @@ flowchart TD
     check -->|是| alloc --> parse --> job --> copyid --> enq
     enq -->|是| mgmt --> func
     enq -->|否| async --> func
+```
 ```
 
 # 3.2 Bootstrap: первый канал управления между rank
@@ -202,21 +206,21 @@ sequenceDiagram
     R0->>Root: sendToRoot(extInfo{rank=0, listenAddr})
     R1->>Root: sendToRoot(extInfo{rank=1, listenAddr})
     R2->>Root: sendToRoot(extInfo{rank=2, listenAddr})
-    Note over Root: 收集所有 rank 的监听地址
-    Root-->>R0: rootSend(rank2.addr) 下一个邻居
-    Root-->>R1: rootSend(rank0.addr) 下一个邻居
-    Root-->>R2: rootSend(rank1.addr) 下一个邻居
+    Note over Root: Сбор адресов прослушивания всех рангов
+    Root-->>R0: rootSend(rank2.addr) следующий сосед
+    Root-->>R1: rootSend(rank0.addr) следующий сосед
+    Root-->>R2: rootSend(rank1.addr) следующий сосед
     R0->>R1: socketRingConnect(connect to next)
     R1->>R2: socketRingConnect(connect to next)
     R2->>R0: socketRingConnect(connect to next)
-    Note over R0,R2: Ring 建立完成
-    R0->>R1: socketRingAllGather 双向交换
-    R1->>R2: socketRingAllGather 双向交换
-    R2->>R0: socketRingAllGather 双向交换
-    Note over R0,R2: 所有地址交换完成
+    Note over R0,R2: Кольцо построено
+    R0->>R1: socketRingAllGather двусторонний обмен
+    R1->>R2: socketRingAllGather двусторонний обмен
+    R2->>R0: socketRingAllGather двусторонний обмен
+    Note over R0,R2: Обмен всеми адресами завершён
 ```
 
-# 3.3 commAlloc:内存骨架 коммуникационного домена
+# 3.3 commAlloc: каркас памяти коммуникационного домена
 
 ## Интуитивная модель
 
@@ -430,28 +434,28 @@ NCCL привязывает текущий поток к ядрам CPU, бли�
 flowchart TD
     start["initTransportsRank(comm, parent, timers)"]
     ag1["AllGather1: fillInfo + bootstrapAllGather"]
-    check_ver{"版本匹配?"}
-    fail_ver["返回 ncclInvalidUsage"]
+    check_ver{"Версии совпадают?"}
+    fail_ver["Возврат ncclInvalidUsage"]
     topo["ncclTopoGetSystem + ComputePaths + TrimSystem"]
-    graphs["计算 ring/tree/collnet/nvls 图"]
-    ag3["AllGather3: 交换图信息"]
-    align["对齐 nChannels/bwIntra/bwInter"]
-    setup["setupChannel 初始化所有通道"]
+    graphs["Вычисление графов ring/tree/collnet/nvls"]
+    ag3["AllGather3: обмен информацией о графах"]
+    align["Выравнивание nChannels/bwIntra/bwInter"]
+    setup["setupChannel инициализация всех каналов"]
     conn_ring["ncclTransportRingConnect"]
     conn_tree["ncclTransportTreeConnect"]
     conn_nvls["ncclNvlsSetup + ncclNvlsBufferSetup"]
     conn_collnet{"collnetEnable?"}
     conn_collnet_yes["ncclCollNetSetup + BufferSetup"]
-    devcomm["devCommSetup 映射到设备"]
+    devcomm["devCommSetup отображение на устройство"]
     barrier["bootstrapIntraNodeBarrier"]
-    done["初始化完成"]
+    done["Инициализация завершена"]
 
     start --> ag1 --> check_ver
-    check_ver -->|否| fail_ver
-    check_ver -->|是| topo --> graphs --> ag3 --> align --> setup
+    check_ver -->|Нет| fail_ver
+    check_ver -->|Да| topo --> graphs --> ag3 --> align --> setup
     setup --> conn_ring --> conn_tree --> conn_nvls --> conn_collnet
-    conn_collnet -->|是| conn_collnet_yes --> devcomm
-    conn_collnet -->|否| devcomm
+    conn_collnet -->|Да| conn_collnet_yes --> devcomm
+    conn_collnet -->|Нет| devcomm
     devcomm --> barrier --> done
 ```
 

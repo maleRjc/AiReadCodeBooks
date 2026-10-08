@@ -84,33 +84,33 @@ if metrics.num_idle_threads() == 0 {
 ```mermaid
 flowchart TD
     call["Spawner::spawn_blocking(func)"] --> box{"AutoBox::SHOULD_BOX?"}
-    box -->|是| boxed["Box::new(func)"]
-    box -->|否| raw["func"]
+    box -->|да| boxed["Box::new(func)"]
+    box -->|нет| raw["func"]
     boxed --> inner["spawn_blocking_inner"]
     raw --> inner
     inner --> unowned["task::unowned -> Task + JoinHandle"]
     unowned --> spawn_task["InnerImpl::spawn_task"]
     spawn_task --> lock["LockedImpl: mutex.lock()"]
     lock --> shutting{"thread_mgmt_state.shutdown?"}
-    shutting -->|是| discard["task.task.shutdown()"]
+    shutting -->|да| discard["task.task.shutdown()"]
     discard --> err_sd["Err(ShuttingDown)"]
-    shutting -->|否| push["queue.push_back(task)"]
+    shutting -->|нет| push["queue.push_back(task)"]
     push --> idle{"num_idle_threads == 0?"}
-    idle -->|是| on_no_idle["on_no_idle(thread_mgmt_state)"]
+    idle -->|да| on_no_idle["on_no_idle(thread_mgmt_state)"]
     on_no_idle --> cap{"num_threads == thread_cap?"}
-    cap -->|是| backpressure["返回 Ok, 任务留队列"]
-    cap -->|否| spawn_th["spawn_thread(shutdown_tx, rt, id)"]
-    spawn_th --> th_ok{"spawn 成功?"}
-    th_ok -->|是| reg["inc_num_threads, 注册 JoinHandle"]
-    th_ok -->|否| tmp{"WouldBlock 且已有线程?"}
-    tmp -->|是| ignore["忽略, 等忙碌线程取走"]
-    tmp -->|否| err_nt["Err(NoThreads)"]
-    idle -->|否| notify["dec_num_idle_threads, num_notify+=1, notify_one"]
-    err_sd --> ret["返回 JoinHandle"]
+    cap -->|да| backpressure["возврат Ok, задача остаётся в очереди"]
+    cap -->|нет| spawn_th["spawn_thread(shutdown_tx, rt, id)"]
+    spawn_th --> th_ok{"spawn успешен?"}
+    th_ok -->|да| reg["inc_num_threads, регистрация JoinHandle"]
+    th_ok -->|нет| tmp{"WouldBlock и есть потоки?"}
+    tmp -->|да| ignore["игнорировать, ждать пока занятый поток заберёт"]
+    tmp -->|нет| err_nt["Err(NoThreads)"]
+    idle -->|нет| notify["dec_num_idle_threads, num_notify+=1, notify_one"]
+    err_sd --> ret["возврат JoinHandle"]
     backpressure --> ret
     reg --> ret
     ignore --> ret
-    err_nt --> panic_os["panic: OS can't spawn worker thread"]
+    err_nt --> panic_os["panic: OS не может создать рабочий поток"]
 ```
 
 # Интуитивная модель
@@ -143,25 +143,25 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant App as "应用线程 (drop Runtime)"
+    participant App as "Поток приложения (drop Runtime)"
     participant Pool as "BlockingPool::shutdown"
     participant Locked as "LockedImpl"
-    participant Worker as "阻塞 worker 线程"
+    participant Worker as "Поток блокирующего worker"
     participant Rx as "shutdown::Receiver"
 
     App->>Pool: shutdown(timeout)
     Pool->>Locked: begin_shutdown()
-    Locked->>Locked: thread_mgmt_state.begin_shutdown() 设 shutdown=true, shutdown_tx=None
+    Locked->>Locked: thread_mgmt_state.begin_shutdown() устанавливает shutdown=true, shutdown_tx=None
     Locked->>Worker: condvar.notify_all()
     Locked-->>Pool: Some((last_exited_thread, workers))
     Pool->>Rx: wait(timeout)
-    Worker->>Worker: 从 wait_timeout 醒来, 见 shutdown=true
-    Worker->>Worker: 排空队列 shutdown_or_run_if_mandatory()
-    Worker->>Worker: dec_num_threads, 退出 run_worker
-    Worker->>Worker: drop(shutdown_tx) 克隆
-    Worker-->>Rx: 最后一个 Sender drop, oneshot 完成
-    Rx-->>Pool: 返回 true
-    Pool->>Worker: join 所有 worker 句柄
+    Worker->>Worker: просыпается из wait_timeout, видит shutdown=true
+    Worker->>Worker: опустошает очередь shutdown_or_run_if_mandatory()
+    Worker->>Worker: dec_num_threads, выход из run_worker
+    Worker->>Worker: drop(shutdown_tx) клона
+    Worker-->>Rx: последний Sender уничтожен, oneshot завершён
+    Rx-->>Pool: возврат true
+    Pool->>Worker: join всех дескрипторов worker
 ```
 
 # 8.4 block_on: управление Future в неасинхронном контексте

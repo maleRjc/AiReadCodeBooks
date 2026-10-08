@@ -1,3 +1,5 @@
+# Глава 18: Аллокатор памяти и кэш регистрации: устранение накладных расходов CUDA
+
 # Глава 18: Распределение памяти и управление видеопамятью: allocator, кэш регистрации и оптимизация пользовательской регистрации памяти
 
 В предыдущей главе мы увидели, как подсистема RAS работает на плоскости управления независимо от плоскости данных, используя хеши для версионирования и подсчёт ссылок для защиты жизненного цикла. В этой главе мы переходим к третьей опоре NCCL — управлению памятью. Верхний предел производительности связи часто зависит не от самого алгоритма, а от того, «может ли сетевой адаптер напрямую читать и записывать данные». Для этого NCCL построил трёхуровневый механизм: на нижнем уровне с помощью`ncclSpace`и`ncclShadowPool`управляют адресным пространством и теневыми объектами, на среднем уровне с помощью`ncclMemManager`отслеживают импорт-экспорт динамической памяти и приостановку-возобновление, на верхнем уровне с помощью`ncclCommRegister`регистрируют пользовательские буферы в кэше, чтобы избежать повторного pin-а памяти при каждой связи. В этой главе мы пошагово разберём эти три механизма и ответим на вопросы «почему перед связью NCCL необходимо регистрировать память» и «как кэш регистрации влияет на производительность».
@@ -202,22 +204,22 @@ struct ncclShadowPool {
 ```mermaid
 flowchart TD
     start["ncclCommMemSuspend(comm)"] --> check{"manager->released?"}
-    check -->|"是"| err1["返回 ncclInvalidUsage"]
-    check -->|"否"| sync["cudaDeviceSynchronize()"]
+    check -->|"да"| err1["вернуть ncclInvalidUsage"]
+    check -->|"нет"| sync["cudaDeviceSynchronize()"]
     sync --> barrier1["bootstrapBarrier(tag=0xBEEF)"]
-    barrier1 --> pass1["第一遍: 遍历 entries"]
+    barrier1 --> pass1["первый проход: обход entries"]
     pass1 --> cond1{"isImportedFromPeer && Active?"}
-    cond1 -->|"是"| unmap1["cuMemUnmap + cuMemRelease"]
-    cond1 -->|"否"| skip1["跳过"]
-    unmap1 --> pass2["第二遍: 遍历 entries"]
+    cond1 -->|"да"| unmap1["cuMemUnmap + cuMemRelease"]
+    cond1 -->|"нет"| skip1["пропустить"]
+    unmap1 --> pass2["второй проход: обход entries"]
     skip1 --> pass2
     pass2 --> cond2{"memType == Offload?"}
-    cond2 -->|"是"| backup["ncclCudaHostCalloc + cudaMemcpy D2H"]
-    cond2 -->|"否"| scratch["累加 releasedScratch"]
+    cond2 -->|"да"| backup["ncclCudaHostCalloc + cudaMemcpy D2H"]
+    cond2 -->|"нет"| scratch["накопить releasedScratch"]
     backup --> unmap2["cuMemUnmap + cuMemRelease"]
     scratch --> unmap2
     unmap2 --> mark["manager->released = 1"]
-    mark --> done["返回 ncclSuccess"]
+    mark --> done["вернуть ncclSuccess"]
     err1 --> done
 ```
 
@@ -306,19 +308,19 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph input["输入"]
+    subgraph input["входные данные"]
         task["ncclTaskCollalgorithm=RINGprotocol=SIMPLE"]
     end
-    subgraph ipc["IPC 注册路径"]
-        find["ncclRegFind查找缓存"]
-        collect["遍历 channel收集 peerRanks"]
-        ipcReg["ncclIpcLocalRegisterBuffer或 GraphRegister"]
+    subgraph ipc["путь регистрации IPC"]
+        find["ncclRegFindпоиск в кэше"]
+        collect["обход channelсбор peerRanks"]
+        ipcReg["ncclIpcLocalRegisterBufferили GraphRegister"]
     end
-    subgraph net["网络注册路径"]
+    subgraph net["путь сетевой регистрации"]
         checkGdr{"useGdr &&!useNetPXN?"}
-        netReg["ncclNetLocalRegisterBuffer或 GraphRegister"]
+        netReg["ncclNetLocalRegisterBufferили GraphRegister"]
     end
-    subgraph output["输出"]
+    subgraph output["выходные данные"]
         regType["info->regBufTypeNCCL_IPC_REG_BUFFERNCCL_NET_REG_BUFFER"]
         handles["info->sendNetHandlesinfo->recvNetHandles"]
     end
@@ -327,8 +329,8 @@ flowchart LR
     collect --> ipcReg
     ipcReg --> regType
     find --> checkGdr
-    checkGdr -->|"是"| netReg
-    checkGdr -->|"否"| regType
+    checkGdr -->|"да"| netReg
+    checkGdr -->|"нет"| regType
     netReg --> regType
     netReg --> handles
 ```
@@ -355,28 +357,28 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant App as 应用层
+    participant App as Приложение
     participant Reg as ncclRegister
     participant Cache as ncclRegCache
     participant Net as ncclNetLocalRegisterBuffer
-    participant GPU as CUDA Driver
+    participant GPU as Драйвер CUDA
 
     App->>Reg: ncclCommRegister(comm, buff, size, &handle)
     Reg->>Reg: begAddr = data & -pageSize
-    Reg->>Cache: 遍历 slots 查找包含范围
-    alt 缓存命中
-        Cache-->>Reg: 返回已有 ncclReg*
+    Reg->>Cache: обход slots для поиска содержащего диапазона
+    alt попадание в кэш
+        Cache-->>Reg: вернуть существующий ncclReg*
         Reg->>Reg: localRefs++
-    else 缓存未命中
-        Reg->>Cache: memmove 腾出插入位置
-        Reg->>Cache: ncclCalloc 新条目
+    else промах кэша
+        Reg->>Cache: memmove для освобождения места вставки
+        Reg->>Cache: ncclCalloc новой записи
         Reg->>Reg: localRefs = 1
     end
-    Reg-->>App: 返回 handle
-    App->>Net: 首次注册时调用
+    Reg-->>App: вернуть handle
+    App->>Net: вызов при первой регистрации
     Net->>GPU: cuMemExportToShareableHandle
-    GPU-->>Net: 返回 handle
-    Net-->>App: 注册完成
+    GPU-->>Net: вернуть handle
+    Net-->>App: регистрация завершена
 ```
 
 # Копировать

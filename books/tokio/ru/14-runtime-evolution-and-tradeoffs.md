@@ -219,20 +219,20 @@ function could deadlock. This happens because the readiness event is received,
 
 ```mermaid
 flowchart TD
-    start["readiness(interest).await"] --> check_ready{"已知 readiness与 interest 有交集?"}
-    check_ready -->|是| ret_event["返回 ReadyEvent携带当前 tick"]
-    check_ready -->|否| wait["注册 Waiter 到ScheduledIo.waiters"]
-    wait --> mio_poll["mio.poll() 收到事件tick 递增"]
-    mio_poll --> notify["遍历 waitersinterest 匹配者唤醒"]
+    start["readiness(interest).await"] --> check_ready{"известная readinessпересекается с interest?"}
+    check_ready -->|да| ret_event["вернуть ReadyEventс текущим tick"]
+    check_ready -->|нет| wait["зарегистрировать Waiter вScheduledIo.waiters"]
+    wait --> mio_poll["mio.poll() получает событиеtick инкрементируется"]
+    mio_poll --> notify["обход waitersпробуждение совпадающих по interest"]
     notify --> ret_event
     ret_event --> do_read["mio_socket.read(buf)"]
-    do_read --> read_ok{"read 结果?"}
-    read_ok -->|Ok| done["返回 Ok(v)"]
+    do_read --> read_ok{"результат read?"}
+    read_ok -->|Ok| done["вернуть Ok(v)"]
     read_ok -->|WouldBlock| clear["clear_readiness(event)"]
-    read_ok -->|其他 Err| err["返回 Err(e)"]
-    clear --> tick_match{"event.tick ==当前 readiness.tick?"}
-    tick_match -->|是| clear_ok["清除 readiness 位"]
-    tick_match -->|否| skip["跳过清除保留新事件"]
+    read_ok -->|другая Err| err["вернуть Err(e)"]
+    clear --> tick_match{"event.tick ==текущий readiness.tick?"}
+    tick_match -->|да| clear_ok["сбросить биты readiness"]
+    tick_match -->|нет| skip["пропустить сброссохранить новое событие"]
     clear_ok --> start
     skip --> start
 ```
@@ -342,22 +342,22 @@ static EXECUTOR: Lazy = Lazy::new(|| {
 
 ```mermaid
 sequenceDiagram
-    participant App as "应用 (main)"
+    participant App as "Приложение (main)"
     participant FE as "futures::ThreadPool"
     participant TC as "TokioContext"
-    participant TR as "tokio::Runtime (后台线程)"
-    participant IO as "I/O 驱动 (mio)"
+    participant TR as "tokio::Runtime (фоновый поток)"
+    participant IO as "Драйвер I/O (mio)"
 
     App->>FE: spawn_ok(TokioContext::new(f, handle))
     FE->>TC: poll(cx)
-    TC->>TC: enter(handle) 设置线程局部上下文
-    TC->>TC: f.poll(cx) 执行 TcpListener::bind
-    TC->>TR: 通过 Handle 访问 I/O 驱动
-    TR->>IO: Registration::new 注册 fd
-    IO-->>TR: 注册完成
-    TR-->>TC: 返回 Pending 或 Ready
-    TC-->>FE: 返回 poll 结果
-    Note over FE,TR: I/O 就绪时，Tokio 驱动唤醒 wakerFE 重新调度该任务
+    TC->>TC: enter(handle) устанавливает локальный контекст потока
+    TC->>TC: f.poll(cx) выполняет TcpListener::bind
+    TC->>TR: доступ к драйверу I/O через Handle
+    TR->>IO: Registration::new регистрирует fd
+    IO-->>TR: регистрация завершена
+    TR-->>TC: возврат Pending или Ready
+    TC-->>FE: возврат результата poll
+    Note over FE,TR: при готовности I/O драйвер Tokio пробуждает wakerFE перепланирует эту задачу
 ```
 
 Ключевой момент этой диаграммы последовательности:**poll задачи происходит в пуле потоков futures, но ожидание событий I/O происходит в фоновом потоке Tokio**. Оба соединяются через`Handle`и waker.

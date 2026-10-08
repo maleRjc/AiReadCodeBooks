@@ -1,4 +1,4 @@
-# Глава 9: Магия макросов: генерация кода за #[tokio::main], select! и join!
+# Глава 9: Магия макросов: кодогенерация за #[tokio::main], select! и join!
 
 В предыдущей главе мы увидели,`block_on`и как блокирующий пул потоков определяет границы возможностей асинхронного runtime, причём пользователи почти никогда не пишут эти границы вручную — они пишут`#[tokio::main]`、`select!`、`join!`, позволяя макросу развернуть этот шаблонный код на этапе компиляции. Макросы — первый слой синтаксического сахара, который Tokio даёт пользователю, и именно там на этапе компиляции действительно генерируется runtime-код. Эта глава сосредоточена на`tokio-macros`crate и`tokio/src/macros/select.rs`, разбирает три наиболее часто используемых пути раскрытия макросов и отвечает главным образом на один вопрос: как выглядит реальная цепочка вызовов после раскрытия макроса и почему`select!`семантику cancel safety необходимо отдельно учитывать.
 
@@ -30,16 +30,16 @@
 
 ```mermaid
 flowchart TD
-    entry["main(args, item)"] --> parse_item{"syn::parse2(item) 成功?"}
-    parse_item -->|否| err_ret["token_stream_with_error 返回原始 item + 编译错误"]
-    parse_item -->|是| check_main{"ident == main 且有参数?"}
-    check_main -->|是| err_args["报错: main 不能接受参数"]
-    check_main -->|否| parse_args["AttributeArgs::parse_terminated"]
-    parse_args --> build_cfg["build_config 校验 async 与各字段"]
-    build_cfg --> cfg_ok{"config 构建成功?"}
-    cfg_ok -->|否| fallback["parse_knobs(DEFAULT_ERROR_CONFIG) + 错误"]
-    cfg_ok -->|是| knobs["parse_knobs 生成 Builder 链 + block_on"]
-    knobs --> out["输出同步 fn main"]
+    entry["main(args, item)"] --> parse_item{"syn::parse2(item) успешен?"}
+    parse_item -->|нет| err_ret["token_stream_with_error возвращает исходный item + ошибка компиляции"]
+    parse_item -->|да| check_main{"ident == main и есть параметры?"}
+    check_main -->|да| err_args["ошибка: main не может принимать параметры"]
+    check_main -->|нет| parse_args["AttributeArgs::parse_terminated"]
+    parse_args --> build_cfg["build_config проверяет async и поля"]
+    build_cfg --> cfg_ok{"config собран успешно?"}
+    cfg_ok -->|нет| fallback["parse_knobs(DEFAULT_ERROR_CONFIG) + ошибка"]
+    cfg_ok -->|да| knobs["parse_knobs генерирует цепочку Builder + block_on"]
+    knobs --> out["вывод синхронной fn main"]
 ```
 
 ## Размышления о дизайне и подводные камни в продакшене
@@ -80,22 +80,22 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    start["poll_fn 闭包被调用"] --> budget{"poll_budget_available(cx)?"}
-    budget -->|否| pending_budget["返回 Pending"]
-    budget -->|是| init["is_pending = false; start = $start"]
-    init --> loop{"i |否| check_pending{"is_pending?"}
-    check_pending -->|是| pending["返回 Pending"]
-    check_pending -->|否| disabled_out["返回 Out::Disabled"]
-    loop -->|是| branch["branch = (start+i) % BRANCHES"]
+    start["замыкание poll_fn вызвано"] --> budget{"poll_budget_available(cx)?"}
+    budget -->|нет| pending_budget["возврат Pending"]
+    budget -->|да| init["is_pending = false; start = $start"]
+    init --> loop{"i |нет| check_pending{"is_pending?"}
+    check_pending -->|да| pending["возврат Pending"]
+    check_pending -->|нет| disabled_out["возврат Out::Disabled"]
+    loop -->|да| branch["branch = (start+i) % BRANCHES"]
     branch --> is_disabled{"disabled & mask == mask?"}
-    is_disabled -->|是| next_i["i += 1"]
-    is_disabled -->|否| poll_fut["Pin::new_unchecked(fut).poll(cx)"]
-    poll_fut --> poll_res{"Poll 结果?"}
+    is_disabled -->|да| next_i["i += 1"]
+    is_disabled -->|нет| poll_fut["Pin::new_unchecked(fut).poll(cx)"]
+    poll_fut --> poll_res{"результат Poll?"}
     poll_res -->|Pending| set_pending["is_pending = true; i += 1"]
     poll_res -->|Ready| disable["disabled |= mask"]
-    disable --> pat_match{"out 匹配 $bind?"}
-    pat_match -->|否| next_i
-    pat_match -->|是| ready_out["返回 Out::_i(out)"]
+    disable --> pat_match{"out соответствует $bind?"}
+    pat_match -->|нет| next_i
+    pat_match -->|да| ready_out["возврат Out::_i(out)"]
     next_i --> loop
     set_pending --> loop
 ```
@@ -126,24 +126,24 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph input["输入"]
+    subgraph input["Вход"]
         f1["Future A"]
         f2["Future B"]
         f3["Future C"]
     end
-    subgraph poll["poll_fn 驱动"]
-        tuple["元组 (A, B, C)"]
-        state["完成状态元组"]
+    subgraph poll["управление poll_fn"]
+        tuple["кортеж (A, B, C)"]
+        state["кортеж состояний завершения"]
     end
-    subgraph output["输出"]
+    subgraph output["Выход"]
         result["(A::Output, B::Output, C::Output)"]
     end
     f1 --> tuple
     f2 --> tuple
     f3 --> tuple
     tuple --> state
-    state -->|"全部 Ready"| result
-    state -->|"任一 Pending"| pending["返回 Pending"]
+    state -->|"все Ready"| result
+    state -->|"любой Pending"| pending["возврат Pending"]
 ```
 
 ## Размышления о дизайне и подводные камни в продакшене

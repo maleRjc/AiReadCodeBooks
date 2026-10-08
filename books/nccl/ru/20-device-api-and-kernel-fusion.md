@@ -1,3 +1,5 @@
+# Глава 20: Нативные API устройств и слияние ядер: вызов коммуникаций из CUDA-ядер
+
 # Глава 20: Нативные API на стороне устройства и слияние операторов: практика nccl_device и kernel fusion
 
 В предыдущей главе мы увидели, как devcomm версионированно отображает метаданные host-стороннего ncclComm на устройство, позволяя ядру читать rank, адреса и состояние соединений. Но «иметь возможность читать метаданные» и «иметь возможность инициировать коммуникацию» — это две разные вещи. Если есть только метаданные, пользовательское ядро в лучшем случае сможет само вычислить адреса и записать флаги; как только дело доходит до синхронизации между rank'ами или передачи сигналов между машинами, всё равно придётся возвращаться на host-сторону и вызывать коллективные API вроде ncclAllReduce — а каждый такой вызов означает запуск ядра и往返 между host и устройством. Каталог src/nccl_device, который мы разбираем в этой главе, — это как раз ключевой шаг NCCL от «библиотеки, которую вызывают» к «модели, которую можно программировать». Он предоставляет не новые алгоритмы коллективной коммуникации, а набор примитивов на стороне устройства: позволяя пользовательскому ядру изнутри вызывать такие операции синхронизации, как ncclBarrier, ncclLsaBarrier, ncclGinBarrier, тем самым упаковывая «коммуникацию» и «вычисления» в одно ядро и устраняя промежуточные накладные расходы на запуск. Исходные материалы этой главы сосредоточены на объявлении требований на host-стороне (CreateRequirement) и абстракции команды (Team) для этой группы примитивов — это и есть вход в API на стороне устройства. Ключевая предпосылка для понимания этой главы: философия дизайна API на стороне устройства — «host-сторона объявляет требования к ресурсам, device-сторона потребляет ресурсы». Host-сторона не создаёт барьер напрямую, а сообщает NCCL: «мне нужно nBarriers барьеров, в команде team.nRanks участников», NCCL на основе этого вычисляет, сколько нужно буферов и сколько GIN-сигналов, а затем на device-стороне инстанцирует эти ресурсы. Такое разделение «объявление-потребление» — фундаментальная причина, по которой код на стороне устройства может работать без указателей host.
@@ -40,11 +42,11 @@
 
 ```mermaid
 flowchart TD
-    start["用户调用 ncclTeamRail(comm)"] --> init{"ncclDevrInitOnce(comm)成功?"}
-    init -->|"否"| empty["返回 ncclTeam_t{}空团队"]
-    init -->|"是"| calc["计算 nRanks = comm->nRanks / lsaSizerank = comm->rank / lsaSizestride = lsaSize"]
-    calc --> ret["返回 ncclTeam_t"]
-    empty --> caller["调用方继续下一个 API 会报错"]
+    start["Пользователь вызывает ncclTeamRail(comm)"] --> init{"ncclDevrInitOnce(comm)успешно?"}
+    init -->|"нет"| empty["Возвращает ncclTeam_t{}пустая команда"]
+    init -->|"да"| calc["Вычисляет nRanks = comm->nRanks / lsaSizerank = comm->rank / lsaSizestride = lsaSize"]
+    calc --> ret["Возвращает ncclTeam_t"]
+    empty --> caller["Вызывающий продолжаетследующий API выдаст ошибку"]
     ret --> caller
 ```
 
@@ -105,17 +107,17 @@ GIN Barrier же полностью отличается:
 
 ```mermaid
 flowchart LR
-    subgraph host["host 侧声明阶段"]
+    subgraph host["этап объявления на host-стороне"]
         req["ncclLsaBarrierCreateRequirementteam, nBarriers=2"]
         calc["bufferSize = (3*2 + 2*4)*4 = 56bufferAlign = 4"]
         handle["outHandle->nBarriers = 2outReq->outBufferHandle = &handle->bufHandle"]
     end
-    subgraph dev["device 侧消费阶段"]
-        buf["缓冲区 56 字节3 控制字段 + 4 到达槽位"]
-        bar["ncclLsaBarrier 实例"]
+    subgraph dev["этап потребления на device-стороне"]
+        buf["буфер 56 байт3 управляющих поля + 4 слота прибытия"]
+        bar["экземпляр ncclLsaBarrier"]
     end
     req --> calc --> handle
-    handle -.->|"NCCL 分配后回填"| buf
+    handle -.->|"заполняется после выделения NCCL"| buf
     buf --> bar
 ```
 
@@ -183,19 +185,19 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant K as "用户 Kernel"
-    participant LSA as "LSA 共享内存"
-    participant CFT as "CFT 多播内存"
-    participant NIC as "网卡 GIN 信号"
-    K->>LSA: "原子写到达槽位"
-    LSA-->>K: "轮询所有槽位"
-    Note over K,LSA: LSA barrier 完成
-    K->>CFT: "多播写控制字段"
-    CFT-->>K: "读多播状态"
-    Note over K,CFT: CFT barrier 完成
-    K->>NIC: "发送 GIN 信号"
-    NIC-->>K: "轮询信号槽位"
-    Note over K,NIC: GIN barrier 完成
+    participant K as "Пользовательский Kernel"
+    participant LSA as "разделяемая память LSA"
+    participant CFT as "многоадресная память CFT"
+    participant NIC as "сигнал GIN сетевой карты"
+    K->>LSA: "атомарная запись в слот прибытия"
+    LSA-->>K: "опрос всех слотов"
+    Note over K,LSA: барьер LSA завершён
+    K->>CFT: "многоадресная запись управляющего поля"
+    CFT-->>K: "чтение многоадресного состояния"
+    Note over K,CFT: барьер CFT завершён
+    K->>NIC: "отправка сигнала GIN"
+    NIC-->>K: "опрос слота сигнала"
+    Note over K,NIC: барьер GIN завершён
 ```
 
 Эта временная диаграмма показывает уровни взаимодействия с оборудованием для трёх типов barrier: от чисто внутри-GPU синхронизации к многоадресной памяти и далее к сигналам сетевого адаптера; задержка последовательно возрастает, а охват также последовательно расширяется.
@@ -240,16 +242,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    a["ncclLsaBarrierCreateRequirement算出 bufferSize=56"] --> b["ncclDevCommCreate分配 56 字节缓冲区"]
-    b --> c{"分配成功?"}
-    c -->|"否"| err["返回 ncclSystemError句柄无效"]
-    c -->|"是"| d["回填 handle.bufHandle指向实际缓冲区"]
-    d --> e["用户 kernel 启动从 DevComm 取 handle"]
-    e --> f["ncclLsaBarrier(handle, idx)写到达槽位 + 轮询"]
-    f --> g{"所有 rank 到达?"}
-    g -->|"否"| f
-    g -->|"是"| h["barrier 返回kernel 继续"]
-    err --> i["用户需检查返回值不可使用无效句柄"]
+    a["ncclLsaBarrierCreateRequirementвычисляет bufferSize=56"] --> b["ncclDevCommCreateвыделяет буфер 56 байт"]
+    b --> c{"выделение успешно?"}
+    c -->|"нет"| err["возвращает ncclSystemErrorдескриптор недействителен"]
+    c -->|"да"| d["заполняет handle.bufHandleуказывает на реальный буфер"]
+    d --> e["запуск пользовательского kernelполучает handle из DevComm"]
+    e --> f["ncclLsaBarrier(handle, idx)запись в слот прибытия + опрос"]
+    f --> g{"все rank прибыли?"}
+    g -->|"нет"| f
+    g -->|"да"| h["barrier возвращает управлениеkernel продолжает"]
+    err --> i["пользователь должен проверить возвращаемое значениенельзя использовать недействительный дескриптор"]
 ```
 
 Эта диаграмма решений показывает полный путь от объявления до использования, а также ветвь ошибки при сбое выделения. Обратите внимание, что`ncclLsaBarrierCreateRequirement`сам по себе всегда возвращает`ncclSuccess`（[FACT:src/nccl_device/lsa_barrier.cc:14-22]), реальный сбой происходит на последующем этапе выделения ресурсов.
@@ -310,15 +312,15 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph old["传统模式：两个 kernel"]
-        k1["通信 kernelAllReduce"] --> sync["隐式全局同步kernel 边界"]
-        sync --> k2["计算 kernelReLU"]
+    subgraph old["традиционный режим: два kernel"]
+        k1["коммуникационный kernelAllReduce"] --> sync["неявная глобальная синхронизацияграница kernel"]
+        sync --> k2["вычислительный kernelReLU"]
     end
-    subgraph fused["融合模式：一个 kernel"]
-        f1["通信阶段ncclLsaBarrier + 数据交换"]
-        f1 --> f2["计算阶段ReLU"]
+    subgraph fused["режим слияния: один kernel"]
+        f1["этап коммуникацииncclLsaBarrier + обмен данными"]
+        f1 --> f2["этап вычисленийReLU"]
     end
-    old -.->|"融合后省掉"| fused
+    old -.->|"после слияния исключается"| fused
 ```
 
 Копировать

@@ -1,3 +1,5 @@
+# Глава 21: Практика тюнинга производительности: методология бенчмаркинга и анализ узких мест
+
 # Глава 21: Практика тюнинга производительности: практические приёмы tuning, инструменты benchmark и методология тюнинга
 
 В предыдущей главе мы увидели, как пользовательское ядро через API на стороне устройства взаимодействует с коммуникационными примитивами NCCL и даже объединяет коммуникацию и вычисления в одном ядре. Это открывает возможность использования NCCL как модели программирования, но также порождает практический вопрос: когда производительность коммуникации ниже ожидаемой, с чего начать? NCCL предоставляет сотни NCCL_PARAM, но реально определяют, по какому пути пойдёт коллективная коммуникация, всего три регулятора: алгоритм (Algo), протокол (Proto) и число каналов (nChannels). В этой главе механизмы первых 20 глав объединяются в практический путь диагностики — сначала посмотреть отчёт о производительности, чтобы локализовать симптом, затем прочитать модель стоимости, чтобы понять, как выбирает сам NCCL, и наконец с помощью переменных окружения и benchmark проверить вашу гипотезу.
@@ -243,26 +245,26 @@ static ncclResult_t ncclTuningSelectBestTuning(struct ncclTuningResultList_t* tu
 
 ```mermaid
 flowchart TD
-    start["ncclTuningCompute(input, result)"] --> check_ranks{"comm->nRanks |是| single["bestTuning = Ring/SimplenChannels = 0"]
-    check_ranks -->|否| all["ncclTuningComputeAllTunings()"]
-    all --> loop{"遍历 i in NCCL_TUNING_COUNT"}
-    loop -->|mask 未命中| skip["tuning.valid = 0continue"]
-    loop -->|mask 命中| expand["ncclTuningExpandId(i, ...)"]
+    start["ncclTuningCompute(input, result)"] --> check_ranks{"comm->nRanks |да| single["bestTuning = Ring/SimplenChannels = 0"]
+    check_ranks -->|нет| all["ncclTuningComputeAllTunings()"]
+    all --> loop{"перебор i in NCCL_TUNING_COUNT"}
+    loop -->|mask не совпал| skip["tuning.valid = 0continue"]
+    loop -->|mask совпал| expand["ncclTuningExpandId(i, ...)"]
     expand --> sim["ncclTuningComputeTuning()→ ncclTuningCostModelSimModel()"]
-    sim --> sim_check{"enabled[id][func] != 0且 model->model != nullptr?"}
-    sim_check -->|否| invalid["timeUs = NCCL_TUNING_IGNOREvalid = 0"]
-    sim_check -->|是| push["ncclTuningResultListPushFront()"]
+    sim --> sim_check{"enabled[id][func] != 0и model->model != nullptr?"}
+    sim_check -->|нет| invalid["timeUs = NCCL_TUNING_IGNOREvalid = 0"]
+    sim_check -->|да| push["ncclTuningResultListPushFront()"]
     skip --> loop
     invalid --> loop
     push --> loop
-    loop -->|遍历结束| tuner_check{"comm->tuner != NULL?"}
-    tuner_check -->|是| plugin["tuner->getCollInfo()覆盖 generalTable"]
-    tuner_check -->|否| select["ncclTuningSelectBestTuning()"]
+    loop -->|перебор завершён| tuner_check{"comm->tuner != NULL?"}
+    tuner_check -->|да| plugin["tuner->getCollInfo()переопределяет generalTable"]
+    tuner_check -->|нет| select["ncclTuningSelectBestTuning()"]
     plugin --> select
     select --> channels["ncclTuningGetChannels()"]
-    channels --> eff{"CTAPolicy & EFFICIENCY且 NCCL_ALGO/NCCL_PROTO 未设置?"}
-    eff -->|是| nvls["尝试 NVLS 覆盖ncclNvlsRegResourcesQuery()"]
-    eff -->|否| done["*result = bestTuning"]
+    channels --> eff{"CTAPolicy & EFFICIENCYи NCCL_ALGO/NCCL_PROTO не заданы?"}
+    eff -->|да| nvls["попытка переопределения NVLSncclNvlsRegResourcesQuery()"]
+    eff -->|нет| done["*result = bestTuning"]
     nvls --> done
     single --> done
 ```
@@ -673,24 +675,24 @@ static int isLL128Enabled(int minCompCap, int maxCompCap, int interType, int int
 
 ```mermaid
 flowchart TD
-    start["性能不达标"] --> baseline["跑 nccl-tests 对比官方报告"]
-    baseline --> diff{"差距 > 5%?"}
-    diff -->|否| app["检查应用层：通信频率、消息切分"]
-    diff -->|是| debug["设置 NCCL_DEBUG=INFO查看算法/协议选择"]
-    debug --> check_algo{"选择的算法合理?"}
-    check_algo -->|否| force_algo["尝试 NCCL_ALGO 强制对比不同算法"]
-    check_algo -->|是| check_proto{"协议合理?"}
-    check_proto -->|否| force_proto["尝试 NCCL_PROTO 强制小消息 LL，大消息 Simple"]
-    check_proto -->|是| check_chan{"通道数合理?"}
-    check_chan -->|否| tune_chan["调整 NCCL_NCHANNELS或检查显存限制"]
-    check_chan -->|是| check_topo["检查拓扑：NCCL_TOPO_DUMP 确认链路"]
-    force_algo --> verify["重新 benchmark 验证"]
+    start["производительность не соответствует требованиям"] --> baseline["запустить nccl-tests и сравнить с официальным отчётом"]
+    baseline --> diff{"разрыв > 5%?"}
+    diff -->|нет| app["проверить уровень приложения:частота коммуникации, разбиение сообщений"]
+    diff -->|да| debug["установить NCCL_DEBUG=INFOпосмотреть выбор алгоритма/протокола"]
+    debug --> check_algo{"выбранный алгоритм разумен?"}
+    check_algo -->|нет| force_algo["попробовать принудительно задать NCCL_ALGOсравнить разные алгоритмы"]
+    check_algo -->|да| check_proto{"протокол разумен?"}
+    check_proto -->|нет| force_proto["попробовать принудительно задать NCCL_PROTOмалые сообщения LL, большие Simple"]
+    check_proto -->|да| check_chan{"число каналов разумно?"}
+    check_chan -->|нет| tune_chan["настроить NCCL_NCHANNELSили проверить ограничения видеопамяти"]
+    check_chan -->|да| check_topo["проверить топологию:NCCL_TOPO_DUMP подтвердить линии связи"]
+    force_algo --> verify["повторный benchmark для проверки"]
     force_proto --> verify
     tune_chan --> verify
     check_topo --> verify
-    verify --> improved{"性能提升?"}
-    improved -->|是| done["固化配置"]
-    improved -->|否| escalate["提交 issue 或联系支持"]
+    verify --> improved{"производительность улучшилась?"}
+    improved -->|да| done["зафиксировать конфигурацию"]
+    improved -->|нет| escalate["отправить issue или обратиться в поддержку"]
 ```
 
 Основная идея этого процесса:**сначала локализовать, затем настроить параметры, и наконец проверить**. Не начинайте сразу беспорядочно устанавливать переменные окружения.

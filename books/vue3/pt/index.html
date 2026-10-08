@@ -129,7 +129,7 @@
           <li><a href="#ch-02" class="toc-link" data-target="ch-02"><span class="toc-num">02</span><span>Capítulo 2: Ciclo de vida do tronco principal: a jornada ponta a ponta de uma requisição de build</span></a></li>
           <li><a href="#ch-03" class="toc-link" data-target="ch-03"><span class="toc-num">03</span><span>Voltar ao topo ↑</span></a></li>
           <li><a href="#ch-04" class="toc-link" data-target="ch-04"><span class="toc-num">04</span><span>Capítulo 4: Magia do tempo de compilação: inline de enums e mecanismo de verificação de Tree-shaking</span></a></li>
-          <li><a href="#ch-05" class="toc-link" data-target="ch-05"><span class="toc-num">05</span><span>第 5 章：类型产物流水线：从源码 .d.ts 到发布级类型包</span></a></li>
+          <li><a href="#ch-05" class="toc-link" data-target="ch-05"><span class="toc-num">05</span><span>Capítulo 5: Pipeline de Teste de Tipos: Guardiões de Código-Fonte e Contratos de Tipos</span></a></li>
           <li><a href="#ch-06" class="toc-link" data-target="ch-06"><span class="toc-num">06</span><span>Capítulo 6: Testes de contrato de tipo: como o dts-test protege a superfície da API</span></a></li>
           <li><a href="#ch-07" class="toc-link" data-target="ch-07"><span class="toc-num">07</span><span>Capítulo 7: SFC Playground: subsistema de compilação e depuração em tempo real no navegador</span></a></li>
           <li><a href="#ch-08" class="toc-link" data-target="ch-08"><span class="toc-num">08</span><span>Projeto pertencente: vuejs/core</span></a></li>
@@ -1097,10 +1097,10 @@ Object.keys(replacements).forEach(key =&gt; {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-05" data-title="第 5 章：类型产物流水线：从源码 .d.ts 到发布级类型包">
+      <section class="reader-chapter-section" id="ch-05" data-title="Capítulo 5: Pipeline de Teste de Tipos: Guardiões de Código-Fonte e Contratos de Tipos">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 05</span>
-          <h2 class="reader-chapter-title">第 5 章：类型产物流水线：从源码 .d.ts 到发布级类型包</h2>
+          <h2 class="reader-chapter-title">Capítulo 5: Pipeline de Teste de Tipos: Guardiões de Código-Fonte e Contratos de Tipos</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: vuejs/core</span>
             <span>·</span>
@@ -1109,239 +1109,7 @@ Object.keys(replacements).forEach(key =&gt; {
             <span>Progresso: Capítulo 5 de 14</span>
           </div>
         </div>
-        <div class="chapter-body">
-<p>上一章我们拆解了<code>inline-enums.js</code>与<code>verify-treeshaking.js</code>：一个负责把 enum 引用替换成字面量、让枚举对象能被摇掉，另一个负责在构建后用字符串哨兵确认三类已知泄漏没有回归。两者共同守护了 Vue 的运行时体积承诺。但构建产物不止 JS。当用户<code>import { ref } from 'vue'</code>时，编辑器弹出的类型提示、<code>tsc</code>对用户代码的类型检查，全都依赖另一类产物——<code>.d.ts</code>声明文件。JS 产物错了，运行时报错；类型产物错了，用户侧编译期就报错，或者更糟：类型静默漂移，用户代码能编译通过，但类型形状与真实运行时行为不符。本章追踪 Vue 如何把散落在各子包<code>src</code>里的源码类型，聚合成发布级的类型包，并用<code>dts-built-test</code>在真实构建产物上做类型冒烟测试。</p>
-<h2>5.1 两阶段类型流水线：tsc 出料，rollup 聚合</h2>
-<h3>直觉模型</h3>
-<p>想象一条印刷流水线：第一阶段，每个子包各自把自己的手稿（<code>.ts</code>源码）排版成单页校样（<code>.d.ts</code>）；第二阶段，把几十张校样按目录顺序装订成一本书（发布级<code>.d.ts</code>），并统一页眉页脚（导出声明）。</p>
-<p>若没有这条流水线，Vue 就得手工维护一份发布类型文件，源码一改就得同步手改——这是类型漂移的温床。Vue 的做法是：<strong>类型产物完全由源码生成，绝不手写</strong>。</p>
-<h3>第一阶段：tsconfig.build.json 划定出料范围</h3>
-<p><code>tsconfig.build.json</code>是这条流水线的第一阶段配置。它继承根<code>tsconfig.json</code>，只覆盖构建相关选项。</p>
-<p><span class="fact-pill" data-file="tsconfig.build.json" data-lines="3-9" onclick="highlightFact('tsconfig.build.json', '3-9')" title="在右侧代码面板查看真实源码切片">📎 <code>tsconfig.build.json:3-9</code></span></p>
-<p>关键选项逐个拆解：</p>
-<ul class="reader-list">
-<li><code>declaration: true</code>：让 tsc 为每个源文件生成对应<code>.d.ts</code>。</li>
-<li><code>emitDeclarationOnly: true</code>：<strong>只出类型，不出 JS</strong>。JS 由 Rollup 负责，tsc 在这里纯粹是类型提取器。</li>
-<li><code>stripInternal: true</code>：凡是标注<code>@internal</code>的声明一律从<code>.d.ts</code>中剔除。这是 Vue 控制公开 API 表面的第一道闸门——内部实现细节即使被<code>export</code>，只要打了<code>@internal</code>就不会泄漏到发布类型里。</li>
-<li><code>composite: false</code>：关闭项目引用（project references）的增量构建模式。Vue 这里不需要跨包增量，关掉可避免<code>.tsbuildinfo</code>带来的额外状态。</li>
-</ul>
-<p><code>include</code>列表则精确划定了哪些目录参与出料：</p>
-<p><span class="fact-pill" data-file="tsconfig.build.json" data-lines="10-23" onclick="highlightFact('tsconfig.build.json', '10-23')" title="在右侧代码面板查看真实源码切片">📎 <code>tsconfig.build.json:10-23</code></span></p>
-<p>注意这里<strong>只列了 12 个目录</strong>，而不是整个<code>packages/</code>。<code>packages-private/</code>、<code>packages/dts-test/</code>、<code>packages/sfc-playground/</code>等都不在其中。这意味着：私有包和测试包的类型<strong>永远不会</strong>Entra nos artefatos de publicação. Este é um isolamento físico — não por convenção, mas por configuração.</p>
-<div class="inference-box"><span class="inference-tag">〔Inferência de design e trade-offs arquiteturais〕</span><p>Por que usar lista de permissões em vez de lista de bloqueio? Porque adicionar novos subpacotes em um monorepo é a norma. Se usar<code>exclude</code>lista de bloqueio, ao adicionar um novo pacote privado e esquecer de incluí-lo no exclude, seus tipos vazarão silenciosamente para os artefatos de publicação. A lista de permissões é o oposto: novos pacotes por padrão não participam da build, precisam ser explicitamente adicionados, seguindo o princípio de "padrões seguros".</p></div>
-<p>Após executar<code>tsc -p tsconfig.build.json --noCheck</code>os artefatos ficam em<code>temp/packages/&lt;pkg&gt;/src/*.d.ts</code>. Observe<code>--noCheck</code>: pula a verificação de tipos, apenas faz emit. A verificação de tipos é responsabilidade de um<code>tsc --noEmit</code>separado, a fase de build não repete a verificação, economizando tempo.</p>
-<h3>Segunda fase: agregação do rollup.dts.config.js</h3>
-<p>A segunda fase é impulsionada por<code>rollup.dts.config.js</code>. Seu entrypoint primeiro faz uma validação prévia:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="15-22" onclick="highlightFact('rollup.dts.config.js', '15-22')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:15-22</code></span></p>
-<p>Se<code>temp/packages</code>não existir, significa que a primeira fase não foi executada, o script diretamente<code>process.exit(1)</code>e avisa para executar<code>tsc</code>primeiro. Este é o<strong>contrato de ordem</strong>do pipeline: a fase do rollup depende fortemente dos artefatos da fase do tsc, ambos são indispensáveis.</p>
-<p>Em seguida, lê todos os diretórios de subpacotes e suporta a variável de ambiente<code>TARGETS</code>para build de subconjunto:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="15-22" onclick="highlightFact('rollup.dts.config.js', '15-22')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:15-22</code></span></p>
-<p><code>TARGETS</code>O mecanismo permite reconstruir apenas os tipos de alguns pacotes, encurtando significativamente o ciclo de feedback durante o desenvolvimento e depuração.</p>
-<p>O núcleo é<code>targetPackages.map(...)</code>gerar uma configuração Rollup para cada pacote:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="23-42" onclick="highlightFact('rollup.dts.config.js', '23-42')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:23-42</code></span></p>
-<p>Interpretação campo por campo:</p>
-<ul class="reader-list">
-<li><code>input: ./temp/packages/${pkg}/src/index.d.ts</code>: a entrada é o arquivo de tipos produzido na primeira fase, não o código-fonte<code>.ts</code>。</li>
-<li><code>output.file: packages/${pkg}/dist/${pkg}.d.ts</code>: os artefatos ficam no<code>dist</code>diretório de cada pacote, com nome de arquivo igual ao nome do pacote (como<code>vue.d.ts</code>）。</li>
-<li><code>format: 'es'</code>: arquivos de tipo usam uniformemente o formato ES module.</li>
-<li><code>plugins: [dts(), patchTypes(pkg), ...(pkg === 'vue' ? [copyMts()] : [])]</code>: três plugins, os dois primeiros se aplicam a todos os pacotes,<code>copyMts</code>se aplica apenas ao pacote<code>vue</code>.</li>
-</ul>
-<p><code>onwarn</code>O hook</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="23-42" onclick="highlightFact('rollup.dts.config.js', '23-42')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:23-42</code></span></p>
-<p>merece menção separada:<code>UNRESOLVED_IMPORT</code>Durante o processo de dts rollup, todos os imports de caminhos não relativos são externalizados por padrão. Isso faz o Rollup emitir<strong>avisos. Mas isso é</strong>comportamento esperado<code>import { X } from 'some-pkg'</code>— os<code>return</code>nos arquivos de tipo devem ser mantidos como referências externas, não devem ser empacotados. Então o script para "imports não resolvidos de caminhos não relativos" diretamente<code>warn</code>。</p>
-<div class="inference-box"><span class="inference-tag">suprime os avisos, deixando apenas imports não resolvidos de caminhos relativos passarem para o</span><p>padrão<code>!warning.exporter?.startsWith('.')</code>〔Inferência de design e trade-offs arquiteturais〕<code>.</code>Há uma sutileza aqui:</p></div>
-<h3>verifica se o exporter começa com</h3>
-<div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">. Se um import de caminho relativo não for resolvido, significa que os artefatos da primeira fase estão incompletos, é um problema real, deve alertar. Essa distinção minimiza o ruído de avisos, sem deixar passar erros reais.</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    src["packages/*/src/*.ts&lt;br/&gt;源码类型"] --&gt; tsc{"tsc -p tsconfig.build.json&lt;br/&gt;--noCheck"}
-    tsc --&gt;|"include 白名单命中"| temp["temp/packages/*/src/*.d.ts&lt;br/&gt;单包校样"]
-    tsc --&gt;|"不在 include 列表"| skip["不产出&lt;br/&gt;私有包/测试包被隔离"]
-    temp --&gt; check{"temp/packages 存在?"}
-    check --&gt;|"否"| exit["process.exit(1)&lt;br/&gt;提示先跑 tsc"]
-    check --&gt;|"是"| rollup["rollup-plugin-dts&lt;br/&gt;聚合为单文件"]
-    rollup --&gt; patch["patchTypes(pkg)&lt;br/&gt;内联导出 + 追加 types/"]
-    patch --&gt; vue{"pkg === 'vue'?"}
-    vue --&gt;|"是"| mts["copyMts()&lt;br/&gt;写 vue.d.mts"]
-    vue --&gt;|"否"| done["packages/pkg/dist/pkg.d.ts"]
-    mts --&gt; done</code></pre></div>
-<p>Visão geral do pipeline<code>tsc</code>Copiar<code>rollup</code>Este diagrama ancora o fluxo de controle das duas fases:<code>check</code>a lista de permissões de<code>patchTypes</code>determina quem pode entrar no pipeline,<code>copyMts</code>o<code>vue</code>de</p>
-<h2>determina se pode continuar,</h2>
-<h3>é uma etapa obrigatória,</h3>
-<p><code>rollup-plugin-dts</code>é o branch exclusivo do pacote<code>.d.ts</code>.<code>export { A, B, C, ... }</code>5.2 patchTypes: reescrever os artefatos agregados para o formato de nível de publicação<code>defineComponent</code>Modelo intuitivo</p>
-<p><code>patchTypes</code>Após<strong>mesclar dezenas de</strong>em um único arquivo, o formato resultante é "primeiro declarar um monte de tipos, no final usar um enorme</p>
-<h3>para exportar uniformemente". Isso não é amigável para leitura humana, e para algumas toolchains (como a chamada</h3>
-<p><code>patchTypes</code>do VitePress) ainda dispara o erro "tipo inferido não pode ser nomeado sem referência".<code>renderChunk</code>é este</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="87-88" onclick="highlightFact('rollup.dts.config.js', '87-88')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:87-88</code></span></p>
-<ul class="reader-list">
-<li><code>isExported</code>processo de pós-processamento e modelagem<strong>: mudar "exportação centralizada" para "exportação inline no local", depois anexar aprimoramentos de tipo específicos do pacote.</strong>Estrutura de dados: dois Sets e três passagens<code>export { ... }</code>retorna um plugin Rollup, a lógica central está no hook</li>
-<li><code>shouldRemoveExport</code>. Ele mantém duas coleções:<strong>: registra todos os</strong>nomes de tipos que</li>
-</ul>
-<p>já eram exportados originalmente</p>
-<h3>Step-by-Step Walkthrough</h3>
-<p><strong>(vindos de declarações</strong></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="90-100" onclick="highlightFact('rollup.dts.config.js', '90-100')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:90-100</code></span></p>
-<p>).<code>ExportNamedDeclaration</code>: registra todos os<strong>nomes de tipos que</strong>precisam ser removidos do bloco de exportação grande<code>export ... from '...'</code>(porque já foram exportados inline).<code>isExported</code>。</p>
-<p><strong>O fluxo de processamento é dividido em três passagens (pass 0 / pass 1 / pass 2), este é o padrão típico de "primeiro coletar, depois reescrever, por fim limpar".<code>export</code>Pass 0: coletar todos os nomes de tipos já exportados.</strong></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="102-125" onclick="highlightFact('rollup.dts.config.js', '102-125')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:102-125</code></span></p>
-<p>Percorre os nós de nível superior da AST, para todo<code>VariableDeclaration</code>、<code>TSTypeAliasDeclaration</code>、<code>TSInterfaceDeclaration</code>、<code>TSDeclareFunction</code>、<code>TSEnumDeclaration</code>、<code>ClassDeclaration</code>que<code>processDeclaration</code>。</p>
-<p><code>processDeclaration</code>não tem source</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="70-85" onclick="highlightFact('rollup.dts.config.js', '70-85')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:70-85</code></span></p>
-<p>(ou seja, não é</p>
-<p>reexportação), adiciona o local name do seu specifier em<code>id</code>Pass 1: adicionar o prefixo</p>
-<p>inline para nós de declaração.<code>_</code>Percorre os nós de nível superior, para<strong>seis tipos de declaração chama</strong>a lógica:</p>
-<p>Três passos:<code>shouldRemoveExport</code>1. Sem<code>isExported</code>retorna diretamente (como declarações anônimas).<code>prependLeft</code>2. Se o nome começa com<code>export </code>pula — esta é a</p>
-<p>convenção<code>VariableDeclaration</code>: tipos com prefixo de underscore são tipos auxiliares internos, não são exportados.</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="104-115" onclick="highlightFact('rollup.dts.config.js', '104-115')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:104-115</code></span></p>
-<p>3. Adiciona o nome em<code>declare const</code>; se o nome estiver em<code>declare const a, b</code>(ou seja, já era exportado originalmente), insere<code>processDeclaration</code>uma string<code>declarations[0]</code>na posição inicial da declaração.<strong>Observe que o branch</strong>tem uma asserção adicional:</p>
-<p><strong>Se um</strong></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="127-171" onclick="highlightFact('rollup.dts.config.js', '127-171')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:127-171</code></span></p>
-<p>declara múltiplos declarators (como<code>ExportNamedDeclaration</code>), lança erro diretamente. Porque</p>
-<ul class="reader-list">
-<li>só processa<code>shouldRemoveExport</code>, múltiplos declarators causariam processamento incompleto. Aqui escolhe-se<code>exported === local</code>falha rápida<code>export { Foo as Bar }</code>em vez de erro silencioso, é a manifestação de programação defensiva.</li>
-<li>Pass 2: remover tipos já inline do bloco de exportação grande.</li>
-<li>Percorre<code>ExportNamedDeclaration</code>, para cada specifier:</li>
-</ul>
-<p><strong>Se seu local name está em</strong></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="172-183" onclick="highlightFact('rollup.dts.config.js', '172-183')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:172-183</code></span></p>
-<p><code>code = s.toString()</code>, e<code>packages/${pkg}/types</code>(excluindo o caso de renomeação</p>
-<div class="inference-box"><span class="inference-tag">〔Inferência de design e trade-offs de arquitetura〕</span><p>Este<code>types/</code>diretório é<strong>um ponto de entrada de aprimoramento de tipos mantido manualmente</strong>, usado para armazenar tipos que não podem ser gerados automaticamente a partir do código-fonte (como aprimoramentos globais de JSX, declarações de tipos de macros). Ele é mesclado no mesmo arquivo que os tipos gerados automaticamente, mas as origens são claramente separadas — os gerados automaticamente ficam em cima, os aprimoramentos manuais embaixo.</p></div>
-<h3>Por que a exportação inline é obrigatória?</h3>
-<p>O comentário fornece a razão direta:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="45-51" onclick="highlightFact('rollup.dts.config.js', '45-51')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:45-51</code></span></p>
-<p>O texto original diz: altere todos os tipos para exportação inline e remova-os do bloco de exportação grande, caso contrário, no VitePress<code>defineComponent</code>a chamada reportará "the inferred type cannot be named without a reference".</p>
-<div class="inference-box"><span class="inference-tag">〔Inferência de design e trade-offs de arquitetura〕</span><p>A essência desse erro é: quando o TypeScript gera tipos, se um tipo só pode ser nomeado por meio de "referenciar a exportação de outro módulo", e essa referência não é visível no lado do consumidor, ocorre um erro. O bloco de exportação centralizado separa o nome do tipo da localização da declaração, agravando esse problema. A exportação inline torna cada tipo visível no local da declaração, eliminando essa camada indireta.</p></div>
-<h3>copyMts: fornece tipos para o modo duplo Node ESM/CJS</h3>
-<p><code>copyMts</code>O plugin só tem efeito para o pacote<code>vue</code>:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="196-204" onclick="highlightFact('rollup.dts.config.js', '196-204')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:196-204</code></span></p>
-<p>Ele, no hook<code>writeBundle</code>, grava o conteúdo de<code>vue.d.ts</code>exatamente como está em<code>vue.d.mts</code>。</p>
-<p>O comentário explica a razão:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="188-192" onclick="highlightFact('rollup.dts.config.js', '188-192')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:188-192</code></span></p>
-<p>De acordo com a especificação<code>package.json</code>exports do TypeScript 4.7, para fornecer tipos corretamente tanto para Node ESM quanto para CJS,<strong>é necessário ter dois arquivos de declaração independentes</strong>. Portanto, durante o build,<code>vue.d.ts</code>é copiado como<code>vue.d.mts</code>。</p>
-<div class="inference-box"><span class="inference-tag">〔Inferência de design e trade-offs de arquitetura〕</span><p>Por que copiar em vez de regenerar? Porque as formas de tipo de ESM e CJS são completamente idênticas; a diferença está apenas na extensão do arquivo e no mapeamento<code>package.json</code>de<code>exports</code>. Copiar é a solução mais barata, evitando executar o rollup novamente.</p></div>
-<h2>5.3 dts-built-test: teste de fumaça de tipos em artefatos reais</h2>
-<h3>Modelo intuitivo</h3>
-<p>As duas seções anteriores garantem que os artefatos de tipo podem ser gerados e têm a forma correta. Mas "poder ser gerado" não é o mesmo que "ser gerado corretamente". Se<code>patchTypes</code>alguma passagem de<code>import</code>tiver um bug e excluir acidentalmente alguma exportação, o artefato ainda poderá ser gerado, mas o usuário</p>
-<p><code>dts-built-test</code>descobrirá que o tipo está faltando. Isso é<strong>um teste de fumaça de tipos executado sobre o artefato de build real</strong>: ele não testa os tipos do código-fonte, mas sim<code>import</code>o pacote<code>vue</code>já publicado, verificando se as formas de tipos críticas não sofreram regressão.</p>
-<h3>Estrutura de dados: uma asserção de tipo minimizada</h3>
-<p>O núcleo de todo o pacote de teste é apenas um arquivo:</p>
-<p><span class="fact-pill" data-file="packages-private/dts-built-test/src/index.ts" data-lines="3-6" onclick="highlightFact('packages-private/dts-built-test/src/index.ts', '3-6')" title="在右侧代码面板查看真实源码切片">📎 <code>packages-private/dts-built-test/src/index.ts:3-6</code></span></p>
-<p>Leitura linha por linha:</p>
-<ul class="reader-list">
-<li>L1: importa<code>vue</code>de<code>defineComponent</code>. Observe que aqui é importado o<strong>nome do pacote</strong>, não um caminho relativo — ele consome o artefato real<code>packages/vue/dist/vue.d.ts</code>.</li>
-<li>L3-6: define um componente<code>_CustomPropsNotErased</code>, com props vazias e setup vazio.</li>
-<li>L8: comentário<code>// #8376</code>, apontando para uma issue específica.</li>
-<li>L9-12: exporta<code>CustomPropsNotErased</code>, com tipo sendo a interseção de<code>_CustomPropsNotErased</code>e<code>{ foo: string }</code>.</li>
-</ul>
-<p>Este teste verifica que:<strong><code>defineComponent</code>o tipo de retorno de<code>{ foo: string }</code>, após a interseção com<code>foo</code>, não tem a propriedade</strong>。</p>
-<div class="inference-box"><span class="inference-tag">apagada</span><p>〔Inferência de design e trade-offs de arquitetura〕<code>defineComponent</code>Contexto especulado da issue #8376:</p></div>
-<h3>o tipo de retorno de</h3>
-<p><span class="fact-pill" data-file="packages-private/dts-built-test/package.json" data-lines="1-11" onclick="highlightFact('packages-private/dts-built-test/package.json', '1-11')" title="在右侧代码面板查看真实源码切片">📎 <code>packages-private/dts-built-test/package.json:1-11</code></span></p>
-<p>pode passar por algum tipo condicional ou tipo mapeado, fazendo com que propriedades extras na interseção sejam "apagadas". Este teste fixa esse comportamento com uma reprodução mínima; se houver regressão, ocorrerá erro na fase de verificação de tipos.</p>
-<ul class="reader-list">
-<li><code>private: true</code>Configuração do pacote: dependência de workspace apontando para o artefato real</li>
-<li><code>types: dist/index.d.ts</code>Campos-chave:</li>
-<li><code>dependencies</code>: não é publicado no npm.<code>workspace:*</code>: entrada de tipos aponta para o artefato de build.<code>@vue/shared</code>、<code>@vue/reactivity</code>、<code>vue</code>。</li>
-</ul>
-<div class="inference-box"><span class="inference-tag">No</span><p>, três dependências<code>@vue/shared</code>:<code>@vue/reactivity</code>〔Inferência de design e trade-offs de arquitetura〕<code>vue</code>Por que depender de<code>types</code>e<code>dist</code>? Porque os tipos de<strong>podem referenciar os tipos desses dois pacotes. No modo workspace, o pnpm cria links simbólicos dessas dependências para os pacotes locais, e o campo</strong>dos pacotes locais aponta para os artefatos em seus respectivos</p></div>
-<h3>. Assim, toda a cadeia de teste consome</h3>
-<p><code>dts-built-test</code>artefatos de build<code>src/index.ts</code>, não código-fonte.<code>tsc</code>Como o teste é executado<code>tsc</code>Ele próprio não tem script de teste; seu</p>
-<div class="inference-box"><span class="inference-tag">é o caso de teste. A forma de execução é: no CI, executar</span><p>para fazer verificação de tipos nesse pacote. Se a forma do tipo sofrer regressão,<strong>reporta erro e o CI falha.</strong>〔Inferência de design e trade-offs de arquitetura〕<code>tsc</code>A engenhosidade desse design está em codificar o "contrato de tipos" como</p></div>
-<h3>código compilável</h3>
-<p>. Não precisa de biblioteca de asserção extra, não precisa de runtime;<code>dts-built-test</code>ele próprio é o executor de testes. Se os tipos estiverem certos, compila; se estiverem errados, falha na compilação.<code>dts-test</code>Divisão de responsabilidades com dts-test</p>
-<ul class="reader-list">
-<li><code>dts-built-test</code>Observe que o<strong>deste capítulo e o</strong>do próximo capítulo são duas coisas diferentes:</li>
-<li><code>dts-test</code>(este capítulo): consome<strong>artefatos de build</strong>, verifica formas de tipos em nível de publicação.</li>
-</ul>
-<div class="inference-box"><span class="inference-tag">(próximo capítulo): consome</span><p>tipos do código-fonte<code>patchTypes</code>, verifica o contrato da superfície da API.<code>stripInternal</code>〔Inferência de design e trade-offs de arquitetura〕<code>types/</code>Por que são necessárias duas camadas? Porque os tipos do código-fonte e os tipos do artefato podem ser inconsistentes.<code>dts-built-test</code>A reescrita de AST do</p></div>
-<h3>, a remoção do</h3>
-<div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">, a adição do diretório</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant CI as CI 脚本
-    participant TSC as tsc (tsconfig.build.json)
-    participant Rollup as rollup.dts.config.js
-    participant Patch as patchTypes(pkg)
-    participant Dist as packages/vue/dist
-    participant BuiltTest as dts-built-test
-
-    CI-&gt;&gt;TSC: tsc -p tsconfig.build.json --noCheck
-    TSC-&gt;&gt;TSC: include 白名单过滤
-    TSC--&gt;&gt;Rollup: temp/packages/*/src/*.d.ts
-    Rollup-&gt;&gt;Rollup: existsSync('temp/packages') 校验
-    Rollup-&gt;&gt;Rollup: rollup-plugin-dts 聚合
-    Rollup-&gt;&gt;Patch: renderChunk(code, chunk)
-    Patch-&gt;&gt;Patch: pass0 收集 isExported
-    Patch-&gt;&gt;Patch: pass1 prependLeft('export ')
-    Patch-&gt;&gt;Patch: pass2 移除大导出块 specifier
-    Patch-&gt;&gt;Patch: 追加 packages/vue/types/*
-    Patch--&gt;&gt;Rollup: 改写后 code
-    Rollup-&gt;&gt;Dist: 写 vue.d.ts
-    Rollup-&gt;&gt;Dist: copyMts 写 vue.d.mts
-    CI-&gt;&gt;BuiltTest: tsc 类型检查
-    BuiltTest-&gt;&gt;Dist: import { defineComponent } from 'vue'
-    Dist--&gt;&gt;BuiltTest: 类型形状
-    BuiltTest--&gt;&gt;CI: 编译通过 / 报错</code></pre></div>
-<p>, tudo isso pode introduzir bugs em nível de artefato mesmo com os tipos do código-fonte corretos.<code>patchTypes</code>O<code>dts-built-test</code>protege especificamente esse último quilômetro.</p>
-<h2>Linha do tempo completa do pipeline de tipos</h2>
-<h3>Cópia</h3>
-<p><code>patchTypes</code>Este diagrama de sequência ancora a colaboração entre módulos: o CI impulsiona duas fases, tsc e Rollup,<code>code.replace(...)</code>as três passagens de</p>
-<p>1. <strong>são o processamento central,</strong>e no final consome o artefato para validação.<code>start</code>/<code>end</code>Reflexões de design, recuperação de erros e armadilhas em produção</p>
-<p>2. <strong>Por que usar MagicString em vez de substituição de string?</strong>：MagicString consegue gerar mapeamentos, permitindo que os arquivos de tipo reescritos ainda possam ser rastreados de volta ao código-fonte. Embora o uso de sourcemap para arquivos de tipo seja limitado, manter a consistência é uma boa prática.</p>
-<h3>Falha rápida vs tolerância silenciosa</h3>
-<p><code>patchTypes</code>usado em vários lugares<code>assert</code>：</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="74-74" onclick="highlightFact('rollup.dts.config.js', '74-74')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:74-74</code></span></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="107-108" onclick="highlightFact('rollup.dts.config.js', '107-108')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:107-108</code></span></p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="147-148" onclick="highlightFact('rollup.dts.config.js', '147-148')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:147-148</code></span></p>
-<p>Essas asserções lançam erro imediatamente ao encontrar formas de AST inesperadas. Em contraste com<code>onwarn</code>onde<code>UNRESOLVED_IMPORT</code>é silenciosamente engolido——<strong>ruído esperado é engolido, formas inesperadas falham rapidamente</strong>. Essa é a postura correta de um script de build: é preferível que o build falhe a produzir arquivos de tipo com forma incorreta.</p>
-<h3>Armadilhas em produção:<code>_</code>convenção de prefixo</h3>
-<p><code>processDeclaration</code>Pular<code>_</code>tipos que começam com:</p>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="76-78" onclick="highlightFact('rollup.dts.config.js', '76-78')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:76-78</code></span></p>
-<p>Isso significa que qualquer tipo exportado no código-fonte que comece com<code>_</code>não será exportado inline. Se um tipo deveria ser público, mas for pulado por ter nome começando com<code>_</code>, o usuário encontrará o erro "tipo não existe".</p>
-<div class="inference-box"><span class="inference-tag">〔Inferência de design e trade-offs de arquitetura〕</span><p>A abordagem para investigar esse tipo de problema: primeiro verificar se o tipo ainda está no grande bloco de exportação do artefato<code>vue.d.ts</code>, depois verificar se o nome do tipo no código-fonte começa com<code>_</code>. Isso é um acoplamento implícito entre convenção de nomenclatura e comportamento da ferramenta, fácil de cair em armadilha.</p></div>
-<h3>Armadilha em produção: asserção de múltiplos declarators</h3>
-<p><span class="fact-pill" data-file="rollup.dts.config.js" data-lines="106-115" onclick="highlightFact('rollup.dts.config.js', '106-115')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:106-115</code></span></p>
-<p>Se em algum<code>.d.ts</code>aparecer<code>declare const a, b</code>, o build lança erro diretamente. Isso é raro em tipos escritos à mão, mas se algum arquivo de tipo gerado por ferramenta usar essa forma, será acionado. A mensagem de erro imprime o trecho de código problemático, facilitando a localização.</p>
-<h2>Resumo do capítulo</h2>
-<p>Este capítulo rastreou o pipeline completo dos artefatos de tipo do Vue:</p>
-<p>1. <strong>Primeira fase (tsc)</strong>：<code>tsconfig.build.json</code>usa<code>include</code>whitelist para delimitar precisamente o escopo de saída,<code>emitDeclarationOnly</code>apenas emite tipos,<code>stripInternal</code>remove declarações internas. Os artefatos ficam em<code>temp/packages/</code>。</p>
-<p>2. <strong>Segunda fase (rollup)</strong>：<code>rollup.dts.config.js</code>usa<code>rollup-plugin-dts</code>para agregar os tipos de cada pacote,<code>patchTypes</code>através de três passagens de travessia de AST reescreve exportações centralizadas em exportações inline, e anexa<code>types/</code>melhorias manuais do diretório.<code>copyMts</code>para<code>vue</code>pacote gera adicionalmente<code>.d.mts</code>。</p>
-<p>3. <strong>Fase de validação (dts-built-test)</strong>：realiza smoke test de tipos nos artefatos reais de build, usando código compilável para fixar formas de tipos críticos, prevenindo deriva de tipos.</p>
-<h2>Reflexões e autoavaliação do capítulo</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: Se alterarmos<code>tsconfig.build.json</code>de<code>include</code>whitelist para<code>["packages"]</code>（ou seja, incluindo todo o diretório packages）, o que aconteceria? Em quais cenários isso causaria poluição de tipos publicados?</summary>
-<p><strong>Análise de referência</strong>：</p>
-<p><code>include</code>Ao mudar de 12 diretórios precisos para<code>["packages"]</code>, todos os subpacotes (incluindo<code>packages-private</code>todos os<code>packages/*</code>fora de ) participarão da saída do tsc.<span class="fact-pill" data-file="tsconfig.build.json" data-lines="10-23" onclick="highlightFact('tsconfig.build.json', '10-23')" title="在右侧代码面板查看真实源码切片">📎 <code>tsconfig.build.json:10-23</code></span></p>
-<p>Cadeia de consequências:</p>
-<p>1. <code>temp/packages/</code>haverá muitos<code>.d.ts</code>。</p>
-<p>2. <code>rollup.dts.config.js</code>de pacotes extras<code>readdirSync('temp/packages')</code>de<span class="fact-pill" data-file="rollup.dts.config.js" data-lines="15-22" onclick="highlightFact('rollup.dts.config.js', '15-22')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:15-22</code></span></p>
-<p>3. <code>targetPackages</code>lerá esses pacotes extras.<code>packages/&lt;pkg&gt;/dist/&lt;pkg&gt;.d.ts</code>。<span class="fact-pill" data-file="rollup.dts.config.js" data-lines="15-22" onclick="highlightFact('rollup.dts.config.js', '15-22')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:15-22</code></span></p>
-<p>por padrão é igual a todos os pacotes, então será gerado para cada pacote<code>dist</code>Cenário de poluição: se algum pacote não deveria ser publicado (como pacotes de ferramentas internas), seus artefatos de tipo aparecerão em<code>package.json</code>. Se o<code>private: true</code>desse pacote não tiver</p>
-<p>, o script de publicação pode publicá-lo junto no npm, causando vazamento de tipos internos.</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>patchTypes</code>Isso é exatamente o valor do design de whitelist: novos pacotes por padrão não participam, precisam ser explicitamente adicionados, seguindo o princípio de valores padrão seguros.<code>processDeclaration</code>No pass 1 de<code>_</code>, para<code>return</code>tipos que começam com<code>_</code>diretamente<code>_InternalType</code>. Se o tipo de alguma API pública começar com</summary>
-<p><strong>（como</strong>：</p>
-<p><code>processDeclaration</code>exportado acidentalmente）, o que o usuário veria? Como investigar?<code>_</code>Análise de referência<code>shouldRemoveExport</code>ao encontrar<code>export </code>。<span class="fact-pill" data-file="rollup.dts.config.js" data-lines="76-78" onclick="highlightFact('rollup.dts.config.js', '76-78')" title="在右侧代码面板查看真实源码切片">📎 <code>rollup.dts.config.js:76-78</code></span></p>
-<p>que começa com</p>
-<p>retorna diretamente, sem adicionar a<code>export</code>。</p>
-<p>, nem prepend<code>shouldRemoveExport</code>Consequências:</p>
-<p>1. Esse tipo não obterá inline<strong>2. Ele também não será removido do grande bloco de exportação (porque não está em</strong>).</p>
-<p>3. Portanto ele<code>export { _InternalType }</code>ainda está no grande bloco de exportação<code>stripInternal</code>, teoricamente ainda pode ser importado.<code>tsc</code>Mas o problema é: o</p>
-<p>no grande bloco de exportação</p>
-<p>referencia a posição da declaração. Se essa declaração for removida por algum motivo (como<code>vue.d.ts</code>), o bloco de exportação referenciará um nome inexistente, causando<code>export</code>erro.</p>
-<p>Abordagem de investigação:<code>_</code>1. Verificar no artefato</p>
-<p>se o tipo não tem</p>
-<p>na declaração, e é referenciado no grande bloco de exportação.<code>_</code>2. Verificar no código-fonte se o nome do tipo começa com</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>dts-built-test</code>.<code>src/index.ts</code>3. Se confirmado que é problema de nomenclatura, renomear removendo o prefixo de underscore resolve.<code>typeof _CustomPropsNotErased &amp; { foo: string }</code>Isso expõe o acoplamento implícito entre convenção de nomenclatura e comportamento da ferramenta:<code>foo</code>o prefixo originalmente significa "interno", mas a ferramenta o trata como "não exportado", os dois significados não são completamente consistentes.<code>Omit&lt;typeof _CustomPropsNotErased, never&gt; &amp; { foo: string }</code>de</summary>
-<p><strong>usa tipo de interseção</strong>：</p>
-<p><code>Omit&lt;T, never&gt;</code>para validar<strong>não é apagado. Se mudarmos o tipo de interseção para</strong>, o teste ainda conseguiria capturar a regressão #8376? Por quê?</p>
-<ul class="reader-list">
-<li>Análise de referência<code>T &amp; { foo: string }</code>criará um novo tipo mapeado, que irá<code>foo</code>recalcular<code>defineComponent</code>todas as propriedades de T. Se o bug #8376 for "propriedades extras em tipo de interseção são apagadas", então:<code>foo</code>Escrita original</li>
-<li><code>Omit</code>：interseção direta,<code>Omit</code>é parte do tipo de interseção, se<code>T</code>a lógica de tratamento do tipo de retorno apagar propriedades extras na interseção,<code>{ foo: string }</code>será perdido.<code>Omit</code>escrita:</li>
-</ul>
-<p><span class="fact-pill" data-file="packages-private/dts-built-test/src/index.ts" data-lines="9-12" onclick="highlightFact('packages-private/dts-built-test/src/index.ts', '9-12')" title="在右侧代码面板查看真实源码切片">📎 <code>packages-private/dts-built-test/src/index.ts:9-12</code></span></p>
-<p>primeiro faz mapeamento em<strong>, depois faz interseção com</strong>.<code>Omit</code>、<code>Pick</code>o processo de mapeamento pode alterar a estrutura do tipo, fazendo com que a condição de disparo do bug não se aplique mais——mesmo que o bug exista, o teste pode passar.</p>
-<div class="inference-box"><span class="inference-tag">Portanto, a</span><p>minimalidade</p></div>
-</details>
-<p>do caso de teste é crucial: ele deve reproduzir precisamente o caminho de disparo do bug. Qualquer transformação extra de tipo (como<code>dts-built-test</code>) pode mascarar o bug. É por isso que no teste se usa o tipo de interseção mais simples, em vez de uma escrita mais "elegante".<code>dts-test</code>, veja como o Vue usa testes de contrato de tipo para proteger a superfície da API pública.</p>
-<p>Os três formam um ciclo fechado de "geração → modelagem → verificação", garantindo que os tipos do código-fonte e os tipos publicados sejam estritamente consistentes. No entanto, o fato de o pacote de tipos em si estar correto não significa que a forma do tipo da API pública esteja travada. No próximo capítulo vamos aprofundar em<code>packages-private/dts-test</code>, para ver como mais de 20<code>.test-d.ts</code>arquivos usam<code>expectType</code>e outras ferramentas para transformar "tipo como contrato de API" em testes automatizados regressáveis.</p>
-</div>
+        
         
         <div class="reader-chapter-cta">
           <div class="cta-inner">

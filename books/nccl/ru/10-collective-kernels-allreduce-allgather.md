@@ -1,3 +1,5 @@
+# Глава 10: Ядра коллективных операций: архитектура AllReduce, AllGather и ReduceScatter
+
 # Глава 10: Ядра алгоритмов коллективных коммуникаций: реализация AllReduce, AllGather, ReduceScatter на устройстве
 
 В предыдущей главе мы разобрали три протокольных примитива — LL, LL128 и Simple; они являются «двигателями» перемещения данных, но сам двигатель не знает, что перемещать, куда и в каком порядке. Рассматриваемая в этой главе группа файлов ядер алгоритмов в src/device — это «коробка передач»: они переводят семантику коллективных коммуникаций AllReduce, AllGather, ReduceScatter в последовательность вызовов примитивов вроде prims.directSend, prims.directRecvReduceDirectSend. Основное противоречие этой главы можно сформулировать одной фразой: почему для одного и того же AllReduce нужны четыре совершенно разные реализации на стороне устройства — Ring, Tree, CollNet, NVLS? Ответ кроется в соответствии между «топологией потока данных» и «аппаратными возможностями». Ring использует минимальную пропускную способность сети для двухфазного конвейера, Tree с древовидной редукцией снижает задержку до log(n), а CollNet/NVLS выгружают редукцию на сетевую карту или коммутатор NVLink. В этой главе мы разберём каждую по очереди.
@@ -46,16 +48,16 @@ prims.directSend(offset, offset, nelem);
 **Шаги с 1 по nranks-2: приём, редукция и пересылка одновременно**（[FACT:src/device/all_reduce.h:50-56]）
 
 ```
-for (int j = 2; j 计算 chunkCount/loopCount"] --> loop{"elemOffset |否| done["返回"]
-    loop -->|是| s0["step 0: directSendchunk = ringIx-1"]
-    s0 --> mid{"j 从 2 到 nranks-1?"}
-    mid -->|是| s1["directRecvReduceDirectSendchunk = ringIx-j"]
+for (int j = 2; j вычисление chunkCount/loopCount"] --> loop{"elemOffset |нет| done["возврат"]
+    loop -->|да| s0["step 0: directSendchunk = ringIx-1"]
+    s0 --> mid{"j от 2 до nranks-1?"}
+    mid -->|да| s1["directRecvReduceDirectSendchunk = ringIx-j"]
     s1 --> mid
-    mid -->|否| s2["step nranks-1directRecvReduceCopyDirectSendpostOp=true"]
-    s2 --> ag{"j 从 1 到 nranks-2?"}
-    ag -->|是| s3["directRecvCopyDirectSend纯转发"]
+    mid -->|нет| s2["step nranks-1directRecvReduceCopyDirectSendpostOp=true"]
+    s2 --> ag{"j от 1 до nranks-2?"}
+    ag -->|да| s3["directRecvCopyDirectSendчистая пересылка"]
     s3 --> ag
-    ag -->|否| s4["directRecv收最后一块"]
+    ag -->|нет| s4["directRecvприём последнего блока"]
     s4 --> loop
 ```
 
@@ -171,17 +173,17 @@ prims.recvReduceCopy(offset, dataOffset, nelem, /*postOp=*/true);
 
 ```mermaid
 flowchart LR
-    subgraph AllReduce["AllReduce (两阶段)"]
-        A1["reduce-scattern-1 步"] --> A2["all-gathern-1 步"]
+    subgraph AllReduce["AllReduce (двухфазный)"]
+        A1["reduce-scattern-1 шагов"] --> A2["all-gathern-1 шагов"]
     end
-    subgraph AG["AllGather (单阶段)"]
-        B1["directSendstep 0"] --> B2["directRecvCopyDirectSendn-2 步"] --> B3["directRecvstep n-1"]
+    subgraph AG["AllGather (однофазный)"]
+        B1["directSendstep 0"] --> B2["directRecvCopyDirectSendn-2 шагов"] --> B3["directRecvstep n-1"]
     end
-    subgraph RS["ReduceScatter (单阶段)"]
-        C1["sendstep 0"] --> C2["recvReduceSendn-2 步"] --> C3["recvReduceCopystep n-1"]
+    subgraph RS["ReduceScatter (однофазный)"]
+        C1["sendstep 0"] --> C2["recvReduceSendn-2 шагов"] --> C3["recvReduceCopystep n-1"]
     end
-    AllReduce -.->|"拆解"| AG
-    AllReduce -.->|"拆解"| RS
+    AllReduce -.->|"декомпозиция"| AG
+    AllReduce -.->|"декомпозиция"| RS
 ```
 
 ## Подводные камни в продакшене: границы определения in-place
@@ -243,19 +245,19 @@ const int gatherWarps = work->regUsed ? 1 : (totalWarps - reduceWarps - bcastWar
 
 ```mermaid
 sequenceDiagram
-    participant App as 应用层
+    participant App as Прикладной уровень
     participant Scatter as Scatter Warps
-    participant NVLS as NVLS 硬件
+    participant NVLS as Аппаратура NVLS
     participant Reduce as Reduce Warps
     participant Bcast as Bcast Warps
 
     App->>Scatter: prims.scatter(offset, nelem, chunkSize)
-    Scatter->>NVLS: 写入 NVLink SHARP 缓冲区
-    NVLS->>NVLS: 硬件归约 (multimem)
+    Scatter->>NVLS: запись в буфер NVLink SHARP
+    NVLS->>NVLS: аппаратная редукция (multimem)
     NVLS->>Reduce: prims.directRecvDirectSend(offset, nelem)
-    Reduce->>NVLS: 归约结果写回
+    Reduce->>NVLS: запись результата редукции обратно
     NVLS->>Bcast: prims.directRecvDirectSend(offset, nelem)
-    Bcast->>App: 广播到所有 rank
+    Bcast->>App: широковещательная рассылка на все rank
 ```
 
 ## Подводные камни в продакшене: ловушка`direct->out == -1`в CollNet

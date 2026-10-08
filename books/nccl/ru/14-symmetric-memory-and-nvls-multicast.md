@@ -1,3 +1,5 @@
+# Глава 14: Симметричная память и многоадресная рассылка NVLS: масштабирование в NVLink
+
 # Глава 14: Симметричная память и NVLS: многоадресное ускорение и прямая адресация на устройстве LSA
 
 В предыдущей главе мы проследили за одним межмашинным AllReduce и увидели, как данные из памяти GPU через сетевой адаптер достигают GPU на другом конце — этот путь решает задачу коммуникации между машинами. Но в современных AI-кластерах объём коммуникации между GPU внутри одной машины и даже внутри одного домена NVLink также огромен — синхронизация градиентов при параллельном обучении по данным, обмен активациями при тензорном параллелизме, подавляющее большинство происходит внутри машины. Если внутримашинная коммуникация всё ещё идёт по межмашинному маршруту GPU→память→сетевой адаптер→сетевой адаптер на другом конце→память→GPU, это равносильно отправке посылки внутри города авиапочтой — задержка тратится впустую. В этой главе мы разберём именно два инструмента, которые NCCL подготовил для внутримашинной коммуникации: симметричную память и NVLS. Первый позволяет каждому rank использовать один и тот же набор виртуальных адресов для доступа к буферам всех rank, второй использует возможности многоадресной рассылки аппаратного обеспечения NVSwitch для выполнения редукции. В сочетании они позволяют снизить задержку коллективной коммуникации для малых сообщений почти до аппаратного предела.
@@ -169,27 +171,27 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
 
 ```mermaid
 flowchart TD
-    start["ncclSymkMask(comm, coll, red, ty, nElts)"] --> coll{"集合类型?"}
+    start["ncclSymkMask(comm, coll, red, ty, nElts)"] --> coll{"Тип коллектива?"}
     coll -->|AllGather| mask_ag["kmask = kernelMask_AG"]
     coll -->|AllReduce| mask_ar["kmask = kernelMask_AR"]
     coll -->|ReduceScatter| mask_rs["kmask = kernelMask_RS"]
     mask_ag --> check_stmc{"hasLsaMultimem?"}
     mask_ar --> check_stmc
     mask_rs --> check_stmc
-    check_stmc -->|否| clear_stmc["kmask &= ~kernelMask_STMC"]
-    check_stmc -->|是| check_ldmc{"数据类型+归约支持LDMC?"}
+    check_stmc -->|Нет| clear_stmc["kmask &= ~kernelMask_STMC"]
+    check_stmc -->|Да| check_ldmc{"Тип данных + редукция поддерживают LDMC?"}
     clear_stmc --> size_check
-    check_ldmc -->|否| clear_ldmc["kmask &= ~kernelMask_LDMC"]
-    check_ldmc -->|是| size_check
+    check_ldmc -->|Нет| clear_ldmc["kmask &= ~kernelMask_LDMC"]
+    check_ldmc -->|Да| size_check
     clear_ldmc --> size_check
-    size_check{"nBusBytes >= 2GB?"} -->|是| clear_ll["kmask &= ~kernelMask_LL"]
-    size_check -->|否| tma_check
-    clear_ll --> tma_check{"TMA可用且16B对齐?"}
-    tma_check -->|否| clear_tma["kmask &= ~kernelMask_Tma"]
-    tma_check -->|是| gin_check
-    clear_tma --> gin_check{"需要GIN? LSA rank |否| clear_gin["kmask &= ~kernelMask_Gin"]
-    gin_check -->|是| done
-    clear_gin --> done["返回 kmask"]
+    size_check{"nBusBytes >= 2GB?"} -->|Да| clear_ll["kmask &= ~kernelMask_LL"]
+    size_check -->|Нет| tma_check
+    clear_ll --> tma_check{"TMA доступна и выравнивание 16B?"}
+    tma_check -->|Нет| clear_tma["kmask &= ~kernelMask_Tma"]
+    tma_check -->|Да| gin_check
+    clear_tma --> gin_check{"Нужен GIN? LSA rank |Нет| clear_gin["kmask &= ~kernelMask_Gin"]
+    gin_check -->|Да| done
+    clear_gin --> done["Возврат kmask"]
 ```
 
 Этот рисунок полностью описывает`ncclSymkMask`цепочку принятия решений: начиная от типа коллективной операции, последовательно проходя пять фильтров — поддержка многоадресной рассылки, тип данных, границы размера, доступность TMA, потребность в GIN, — и в итоге возвращается битовая маска. Каждый фильтр может исключить группу ядер, что как раз и отражает принцип NCCL «выбор оптимального ядра под сценарий».
@@ -433,12 +435,12 @@ sequenceDiagram
     R1->>CU: "cuMulticastAddDevice(mcHandle, cudaDev)"
     R0->>BS: "bootstrapIntraNodeBarrier()"
     R1->>BS: "bootstrapIntraNodeBarrier()"
-    Note over R0,R1: "barrier 防止 cuMemMap 阻塞时 peer 失败"
+    Note over R0,R1: "barrier предотвращает сбой peer при блокировке cuMemMap"
     R0->>CU: "cuMemAddressReserve(base, capacity)"
     R0->>CU: "cuMemMap(base, capacity, mcHandle)"
     R0->>CU: "cuMemSetAccess(base, capacity, desc)"
     R0->>CU: "cuMulticastBindMem(mcHandle, mcOffset, ucHandle)"
-    CU-->>R0: "绑定完成，硬件多播就绪"
+    CU-->>R0: "Привязка завершена, аппаратная многоадресная рассылка готова"
 ```
 
 Эта диаграмма последовательности описывает полный процесс от создания мультикаст-группы до привязки. Ключевой момент — это barrier: он разделяет «отказ peer» и «блокировку cuMemMap», предотвращая зависание выживших.
@@ -650,24 +652,24 @@ constexpr uint32_t kernelMask_STMC =
 
 ```mermaid
 flowchart LR
-    subgraph host["Host 侧"]
+    subgraph host["Сторона Host"]
         task["ncclTaskCollsendbuff/recvbuff"]
         devwork["ncclSymkDevWorkinputWin + inputOff"]
         task -->|"ncclSymkMakeDevWork"| devwork
     end
-    subgraph device["Device 侧"]
+    subgraph device["Сторона Device"]
         kernel["SymKernelload/store"]
-        lsa{"地址在多播组内?"}
+        lsa{"Адрес в группе многоадресной рассылки?"}
         devwork --> kernel
         kernel --> lsa
     end
-    subgraph hw["NVSwitch 硬件"]
-        mc["多播组MC group"]
-        reduce["硬件归约Reduction"]
-        lsa -->|"是"| mc
-        lsa -->|"否"| local["本地显存UC memory"]
+    subgraph hw["Аппаратное обеспечение NVSwitch"]
+        mc["Группа многоадресной рассылкиMC group"]
+        reduce["Аппаратная редукцияReduction"]
+        lsa -->|"Да"| mc
+        lsa -->|"Нет"| local["Локальная видеопамятьUC memory"]
         mc --> reduce
-        reduce -->|"广播结果"| kernel
+        reduce -->|"Широковещательная рассылка результата"| kernel
     end
 ```
 

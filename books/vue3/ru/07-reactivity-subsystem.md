@@ -1,4 +1,4 @@
-# Глава 7: SFC Playground: подсистема实时 компиляции и отладки в браузере
+# Глава 7: SFC Playground: подсистема компиляции и отладки компонентов в реальном времени
 
 В предыдущей главе мы с помощью более 20`.test-d.ts`файлов прибили «типы как API-контракт» намертво в CI. Но контракты типов отвечают лишь на вопрос «как выглядит поверхность API», они не могут ответить на вопросы «как именно выглядит скомпилированный SFC» и «совпадает ли результат рендеринга в режиме SSR». Чтобы ответить на эти два вопроса, команде Vue нужна песочница, способная прогнать полный конвейер компиляции в браузере — это`packages-private/sfc-playground`. Она принципиально отличается от публичных пакетов под`packages/`:`package.json`в`"private": true`и`"version": "0.0.0"` [FACT:packages-private/sfc-playground/package.json:2-4], что означает, что она никогда не публикуется в npm и является лишь официальным инструментом отладки. В её зависимостях`vue`указывает на`workspace:*` [FACT:packages-private/sfc-playground/package.json:19], то есть на локальный артефакт сборки исходников, а не на стабильную версию из npm — это делает Playground естественной «живой демонстрацией текущего коммита». Эта глава сосредоточена на трёх вопросах: как инициализируется точка входа, как Header управляет переключением состояния, как внедряются константы времени сборки.
 
@@ -44,14 +44,14 @@ window.VUE_DEVTOOLS_CONFIG = {
 
 ```mermaid
 flowchart TD
-    load["浏览器加载 index.html"] --> parse["解析 main.ts 模块图"]
-    parse --> sfc["@vitejs/plugin-vue 编译 App.vue"]
-    sfc --> setcfg["写入 window.VUE_DEVTOOLS_CONFIG"]
-    setcfg --> check{"VUE_DEVTOOLS_CONFIG 已设置?"}
-    check -->|是| mount["createApp(App).mount('#app')"]
-    check -->|否| devtools["DevTools 无法默认选中 repl"]
-    mount --> appsetup["App.vue setup 创建 ReplStore"]
-    appsetup --> ready["Playground 就绪"]
+    load["Браузер загружает index.html"] --> parse["Разбор графа модулей main.ts"]
+    parse --> sfc["@vitejs/plugin-vue компилирует App.vue"]
+    sfc --> setcfg["Запись в window.VUE_DEVTOOLS_CONFIG"]
+    setcfg --> check{"VUE_DEVTOOLS_CONFIG уже установлен?"}
+    check -->|Да| mount["createApp(App).mount('#app')"]
+    check -->|Нет| devtools["DevTools не может по умолчанию выбрать repl"]
+    mount --> appsetup["App.vue setup создаёт ReplStore"]
+    appsetup --> ready["Playground готов"]
     devtools --> mount
 ```
 
@@ -191,21 +191,21 @@ async function copyLink(e: MouseEvent) {
 }
 ```
 
-Это**задняя дверь для разработчика**: при нажатии Cmd на`play.vuejs.org`и клике на кнопку分享 происходит переход на`localhost:5173`(локальный dev server), и текущий URL hash передаётся туда. В hash закодировано полное состояние REPL (исходный код, версия, опции), поэтому локальная отладка может воспроизвести онлайн-проблему. Комментарий`// hidden logic for going to local debug from play.vuejs.org` [FACT:packages-private/sfc-playground/src/Header.vue:47-56]явно указывает, что это намеренно скрытая функция.
+Это**задняя дверь для разработчика**: при нажатии Cmd на`play.vuejs.org`и при клике на кнопку 分享 происходит переход на`localhost:5173`(локальный dev server), и текущий URL hash передаётся туда. В hash закодировано полное состояние REPL (исходный код, версия, опции), поэтому локальная отладка может воспроизвести онлайн-проблему. Комментарий`// hidden logic for going to local debug from play.vuejs.org` [FACT:packages-private/sfc-playground/src/Header.vue:47-56]явно указывает, что это намеренно скрытая функция.
 
 > **[Design Inference & Architectural Trade-offs]**
 > `resetVueVersion()`вызывается перед переходом, устанавливая`store.vueVersion`в`null`, чтобы локальная отладка использовала текущий коммит, а не версию, выбранную онлайн.
 
 ```mermaid
 flowchart TD
-    click["用户点击 Share 按钮"] --> meta{"e.metaKey 按下?"}
-    meta -->|是| reset["resetVueVersion() 置 null"]
-    reset --> jump["跳转 localhost:5173 + hash"]
-    jump --> local["本地 dev server 复现"]
-    meta -->|否| copy["navigator.clipboard.writeText(location.href)"]
-    copy --> check{"写入成功?"}
-    check -->|是| alert["alert 提示已复制"]
-    check -->|否| fail["静默失败 (无 catch)"]
+    click["Пользователь нажимает кнопку Share"] --> meta{"Нажата ли e.metaKey?"}
+    meta -->|Да| reset["resetVueVersion() устанавливает null"]
+    reset --> jump["Переход на localhost:5173 + hash"]
+    jump --> local["Воспроизведение на локальном dev server"]
+    meta -->|Нет| copy["navigator.clipboard.writeText(location.href)"]
+    copy --> check{"Запись успешна?"}
+    check -->|Да| alert["alert: скопировано"]
+    check -->|Нет| fail["Тихий сбой (без catch)"]
 ```
 
 ## Размышления о дизайне и подводные камни
@@ -310,15 +310,15 @@ function copyVuePlugin(): Plugin {
 
 ```mermaid
 flowchart LR
-    user["用户选择版本"] --> setver["setVueVersion(v)"]
+    user["Пользователь выбирает версию"] --> setver["setVueVersion(v)"]
     setver --> store["store.vueVersion = v"]
-    store --> repl["@vue/repl 内部"]
-    repl --> fetch{"版本来源?"}
-    fetch -->|"@commit"| local["加载本地 vue.esm-browser.js"]
-    fetch -->|"3.4.0"| cdn["从 CDN 加载"]
-    local --> compile["浏览器内编译 SFC"]
+    store --> repl["Внутри @vue/repl"]
+    repl --> fetch{"Источник версии?"}
+    fetch -->|"@commit"| local["Загрузить локальный vue.esm-browser.js"]
+    fetch -->|"3.4.0"| cdn["Загрузить из CDN"]
+    local --> compile["Компиляция SFC в браузере"]
     cdn --> compile
-    compile --> preview["实时预览"]
+    compile --> preview["Предпросмотр в реальном времени"]
 ```
 
 Обратите внимание на специальное значение`@${__COMMIT__}`: оно соответствует локальным артефактам, скопированным copyVuePlugin, а не CDN. Именно поэтому Playground обязан копировать браузерные артефакты сборки Vue —**опции «This Commit» нужны локальные файлы**。

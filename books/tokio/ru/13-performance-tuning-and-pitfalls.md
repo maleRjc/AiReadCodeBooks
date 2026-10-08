@@ -1,4 +1,4 @@
-# Следующая глава: Глава 13 →
+# Глава 13: Ловушки в продакшене: безопасность отмены, паники и порядок завершения
 
 В предыдущей главе мы разобрали бюджет кооперации coop: каждая задача в течение одного цикла планирования имеет ограниченный бюджет, исчерпав который она обязана уступить, что предотвращает голодание других задач из-за одной задачи. Однако механизм бюджета решает лишь проблему «справедливого планирования». В реальной производственной среде существует ещё один класс более скрытых ловушек — безопасность отмены, распространение panic и порядок завершения. Когда select! отменяет Future, когда panic задачи перехватывается, когда Runtime начинает завершение, граничное поведение кода часто противоречит интуиции. В этой главе мы начнём с безопасности отмены и сначала посмотрим, что именно теряется у Future, подвергнутого drop.
 
@@ -26,18 +26,18 @@ assert!(err.is_panic());
 
 ```mermaid
 sequenceDiagram
-    participant App as 应用任务
-    participant Worker as Worker 线程
+    participant App as Прикладная задача
+    participant Worker as Поток Worker
     participant Raw as RawTask
     participant JH as JoinHandle
 
     App->>Worker: spawn(async { panic!("boom") })
-    Worker->>Raw: poll 任务 Future
-    Raw->>Raw: catch_unwind 捕获 panic
-    Raw->>Raw: 存储 panic payload 到输出槽
-    Raw->>Raw: state 标记 complete
-    Raw->>JH: 唤醒 join waker
-    JH->>App: await 返回 Err(JoinError::panic)
+    Worker->>Raw: опрос Future задачи
+    Raw->>Raw: catch_unwind перехватывает panic
+    Raw->>Raw: сохранение panic payload в выходной слот
+    Raw->>Raw: state помечается как complete
+    Raw->>JH: пробуждение join waker
+    JH->>App: await возвращает Err(JoinError::panic)
 ```
 
 Ключевой момент: payload panic сохраняется полностью,`JoinError`реализует`std::error::Error`, можно через`into_panic()`извлечь`Box<dyn Any + Send>`, а затем с помощью`downcast_ref::<&str>()`извлечь сообщение panic.
@@ -181,20 +181,20 @@ pub(crate) fn wait(&mut self, timeout: Option) -> bool {
 
 ```mermaid
 flowchart TD
-    start["Runtime::drop 或 shutdown_timeout"] --> sched{"scheduler 类型?"}
+    start["Runtime::drop или shutdown_timeout"] --> sched{"тип scheduler?"}
     sched -->|CurrentThread| ct["try_set_current + current_thread.shutdown"]
     sched -->|MultiThread| mt["multi_thread.shutdown"]
-    ct --> handle_drop["handle 字段 drop"]
+    ct --> handle_drop["drop поля handle"]
     mt --> handle_drop
-    handle_drop --> bp_drop["blocking_pool 字段 drop"]
-    bp_drop --> bp_wait{"shutdown_timeout 已调用?"}
-    bp_wait -->|是| explicit["blocking_pool.shutdown(Some(duration))"]
-    bp_wait -->|否| implicit["BlockingPool::drop 默认等待"]
-    explicit --> wait_check{"try_enter_blocking_region 成功?"}
+    handle_drop --> bp_drop["drop поля blocking_pool"]
+    bp_drop --> bp_wait{"shutdown_timeout был вызван?"}
+    bp_wait -->|да| explicit["blocking_pool.shutdown(Some(duration))"]
+    bp_wait -->|нет| implicit["BlockingPool::drop ожидание по умолчанию"]
+    explicit --> wait_check{"try_enter_blocking_region успешно?"}
     implicit --> wait_check
-    wait_check -->|否且在 panic| skip["返回 false 不等待"]
-    wait_check -->|否且不在 panic| panic_err["panic: Cannot drop a runtime in async context"]
-    wait_check -->|是| block_on["block_on 等待所有 Sender drop"]
+    wait_check -->|нет и в panic| skip["вернуть false, не ждать"]
+    wait_check -->|нет и не в panic| panic_err["panic: Cannot drop a runtime in async context"]
+    wait_check -->|да| block_on["block_on ожидает drop всех Sender"]
 ```
 
 ## Копировать
@@ -273,21 +273,18 @@ pub(crate) struct OsExtraData {
 
 ```mermaid
 sequenceDiagram
-    participant OS as 操作系统
-    participant Handler as 全局 signal handler
-    participant Pipe as 全局 UnixStream pipe
-    participant RtA as Runtime A 信号驱动
-    participant RtB as Runtime B 信号驱动
+    participant OS as Операционная система
+    participant Handler as Глобальный signal handler
+    participant Pipe as Глобальный UnixStream pipe
+    participant RtA as Драйвер сигналов Runtime A
+    participant RtB as Драйвер сигналов Runtime B
 
-    Note over RtA: signal(SIGINT) 注册
+    Note over RtA: регистрация signal(SIGINT)
     RtA->>Handler: signal_hook_registry::register(SIGINT, action)
-    Note over RtB: signal(SIGINT) 注册
-    RtB->>Handler: get_or_init 返回已有 Ok，不重复注册
-    OS->>Handler: 投递 SIGINT
-    Handler->>Pipe: write(&[1])
-    Pipe->>RtA: 可读事件
-    Pipe->>RtB: 可读事件
-    Note over RtA,RtB: 两个 Runtime 竞争读取，只有一个能读到字节
+    Note over RtB: регистрация signal(SIGINT)
+    RtB->>Handler: get_or_init возвращает существующий Ok, повторная регистрация не выполняется
+    OS->>Handler: доставка SIGINT
+    Handler->>Pipe: write(&
 ```
 
 ## Размышления о дизайне и подводные камни

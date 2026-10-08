@@ -1,3 +1,5 @@
+# Глава 11: Транспортный уровень: абстракции P2P, SHM, NET и NVLink SHARP
+
 # Глава 11: Абстракция транспортного уровня: как P2P, SHM, NET, NVLS унифицируются в едином интерфейсе
 
 В предыдущей главе мы углубились в алгоритмические ядра и увидели, как Ring AllReduce разбивает данные и выполняет двухфазную редукцию, а Tree AllReduce с помощью древовидной структуры снижает задержку — но эти алгоритмы определяют лишь логическое представление «кто кому отправляет, какой chunk». Данные в конечном итоге должны пройти через реальные физические каналы: NVLink, PCIe, разделяемую память или сетевую карту. В этой главе мы разберём каталог src/transport и посмотрим, как NCCL с помощью единого интерфейса ncclTransport маскирует четыре физических канала P2P, SHM, NET, NVLS под одним обликом, завершая последнюю милю от алгоритмической топологии до физической передачи.
@@ -153,17 +155,17 @@ NVLS не идёт по обычному пути peer-to-peer соединен�
 
 ```mermaid
 flowchart TD
-    start["selectTransport(comm, peer, connIndex)"] --> loop{"遍历 ncclTransports[t]"}
+    start["selectTransport(comm, peer, connIndex)"] --> loop{"перебор ncclTransports[t]"}
     loop -->|t=0| p2p["p2pCanConnect()"]
-    p2p --> p2p_chk{"拓扑有P2P路径且非中间跳且同主机?"}
-    p2p_chk -->|是| use_p2p["connector->transportComm = p2pTransport调用 p2pSendSetup/p2pRecvSetup"]
-    p2p_chk -->|否| shm["shmCanConnect()"]
-    shm --> shm_chk{"同hostHash且同shmDev?"}
-    shm_chk -->|是| use_shm["connector->transportComm = shmTransport调用 shmSendSetup/shmRecvSetup"]
-    shm_chk -->|否| net["canConnect() (NET)"]
-    net --> net_chk{"同主机时intra-node net 启用?"}
-    net_chk -->|是/跨机| use_net["connector->transportComm = netTransport调用 sendSetup/recvSetup"]
-    net_chk -->|否| collnet["collNetTransport"]
+    p2p --> p2p_chk{"в топологии есть путь P2Pи не промежуточный хопи тот же хост?"}
+    p2p_chk -->|да| use_p2p["connector->transportComm = p2pTransportвызов p2pSendSetup/p2pRecvSetup"]
+    p2p_chk -->|нет| shm["shmCanConnect()"]
+    shm --> shm_chk{"тот же hostHashи тот же shmDev?"}
+    shm_chk -->|да| use_shm["connector->transportComm = shmTransportвызов shmSendSetup/shmRecvSetup"]
+    shm_chk -->|нет| net["canConnect() (NET)"]
+    net --> net_chk{"при том же хостевключён intra-node net?"}
+    net_chk -->|да/межмашинный| use_net["connector->transportComm = netTransportвызов sendSetup/recvSetup"]
+    net_chk -->|нет| collnet["collNetTransport"]
     collnet --> fail["WARN: No transport foundreturn ncclSystemError"]
     use_p2p --> done["return ncclSuccess"]
     use_shm --> done
@@ -499,7 +501,7 @@ static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* co
 ## Проектные соображения
 
 > **[Design Inference & Architectural Trade-offs]**
-> Почему по умолчанию`SHM_RECV_SIDE`? Потому что получателю обычно нужно скопировать данные из разделяемой памяти в собственную видеопамять GPU; если разделяемая память находится локально у получателя, путь копирования короче (локальная память → локальный GPU), что позволяет избежать跨NUMA-доступа. Хотя запись отправителем в удалённую память добавляет одну кросс-узловую запись, отправитель обычно является вычислительно-интенсивным GPU, и операция записи может выполняться асинхронно.
+> Почему по умолчанию`SHM_RECV_SIDE`? 因为接收方通常需要将数据从共享内存复制到自己的GPU显存；如果共享内存在接收方本地，复制路径更短（本地内存→本地GPU），从而避免跨NUMA访问。虽然发送方写入远程内存会增加一次跨节点写入，但发送方通常是计算密集型GPU，写操作可以异步执行。
 
 ## Руководство по избеганию проблем в production
 
@@ -757,22 +759,22 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
 
 ```mermaid
 sequenceDiagram
-    participant GPU as GPU Kernel
+    participant GPU as Ядро GPU
     participant SM as ncclSendMem
     participant Proxy as sendProxyProgress
     participant NIC as ncclNet->isend
-    participant Peer as 对端网卡
+    participant Peer as Сетевая карта партнёра
 
-    GPU->>SM: 写数据到 buffs[p]
-    GPU->>SM: 更新 recvMem->tail
-    Proxy->>SM: 读 recvTail, connFifo[buffSlot].size
-    Proxy->>Proxy: 检查 ready (LL128 flag / GDR)
+    GPU->>SM: Запись данных в buffs[p]
+    GPU->>SM: Обновление recvMem->tail
+    Proxy->>SM: Чтение recvTail, connFifo[buffSlot].size
+    Proxy->>Proxy: Проверка ready (флаг LL128 / GDR)
     Proxy->>NIC: isend(comm, buff, size, mhandle)
-    NIC->>Peer: DMA 发送
+    NIC->>Peer: DMA-отправка
     Proxy->>NIC: test(request, &done)
     NIC-->>Proxy: done=1
-    Proxy->>SM: 更新 sendMem->head (归还缓冲区)
-    Proxy->>GPU: 下一轮 post
+    Proxy->>SM: Обновление sendMem->head (возврат буфера)
+    Proxy->>GPU: Следующий цикл post
 ```
 
 # Пять. NVLS: группы многоадресной рассылки и привязка памяти UC/MC

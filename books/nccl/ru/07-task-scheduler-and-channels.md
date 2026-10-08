@@ -1,3 +1,5 @@
+# Глава 7: Планировщик задач и каналы: разделение нагрузки и управление очередями
+
 # Глава 7: Планировщик задач: как task_sched организует порядок выполнения нескольких каналов и ядер
 
 В предыдущей главе мы проследили путь ncclAllReduce вплоть до ncclTaskColl — объект описания задачи уже лежит в comm->planner. Но описание задачи — это лишь «наряд», оно ещё не стало ядром, реально выполняющимся на GPU. В этой главе мы ответим на три вопроса: как несколько вызовов API накапливаются и отправляются вместе? Как накопленные задачи распределяются по нескольким каналам? Чем гарантируются порядок и зависимости между несколькими ядрами? Сначала дадим общую ментальную модель. Представьте NCCL как ресторан: ncclGroupStart/ncclGroupEnd — это «корзина», пользователь бросает в неё несколько блюд (несколько вызовов коллективной коммуникации); ncclGroupEnd — это «оформление заказа», и только тогда кухня начинает готовить по заказу. А doLaunches — это «диспетчер подачи блюд», он решает, какие блюда подать первыми, а какие можно готовить параллельно. Без семантики группы каждое блюдо заказывается отдельно, и кухне приходится заново разжигать огонь (запускать ядро) для каждого блюда, что даёт огромные накладные расходы; без циклического планирования doLaunches ядра нескольких каналов запускались бы в неправильном порядке, что нарушило бы зависимости по данным.
@@ -420,24 +422,24 @@ fail:
 ```mermaid
 flowchart TD
     gs["ncclGroupStart()"] --> depth_inc["ncclGroupDepth++"]
-    depth_inc --> api_calls["用户调用 ncclAllReduce 等"]
+    depth_inc --> api_calls["пользователь вызывает ncclAllReduce и т.д."]
     api_calls --> join["ncclGroupCommJoin(comm, type)"]
     join --> check_dup{"comm->groupNext[type]== NCCL_COMM_GROUP_INVALID?"}
-    check_dup -->|是| insert["插入 clique 链表ncclMemoryStackPush"]
-    check_dup -->|否| skip["跳过（已加入）"]
+    check_dup -->|да| insert["вставка в список cliquencclMemoryStackPush"]
+    check_dup -->|нет| skip["пропуск (уже добавлен)"]
     insert --> ge["ncclGroupEnd()"]
     skip --> ge
     ge --> depth_dec["--ncclGroupDepth"]
     depth_dec --> depth_zero{"depth == 0?"}
-    depth_zero -->|否| ret_early["返回（嵌套内层）"]
-    depth_zero -->|是| check_err{"ncclGroupError== ncclSuccess?"}
-    check_err -->|否| fail_cleanup["groupCleanup()"]
-    check_err -->|是| create_job["创建 ncclGroupJob转移 thread_local 状态"]
+    depth_zero -->|нет| ret_early["возврат (вложенный внутренний уровень)"]
+    depth_zero -->|да| check_err{"ncclGroupError== ncclSuccess?"}
+    check_err -->|нет| fail_cleanup["groupCleanup()"]
+    check_err -->|да| create_job["создание ncclGroupJobперенос состояния thread_local"]
     create_job --> blocking{"ncclGroupBlocking?"}
-    blocking -->|0 非阻塞| spawn_thread["STDTHREADCREATEgroupLaunchNonBlocking"]
-    blocking -->|1 阻塞| sync_launch["groupLaunch() 同步执行"]
-    spawn_thread --> ret_progress["返回 ncclInProgress"]
-    sync_launch --> ret_ok["返回 ncclSuccess"]
+    blocking -->|0 неблокирующий| spawn_thread["STDTHREADCREATEgroupLaunchNonBlocking"]
+    blocking -->|1 блокирующий| sync_launch["groupLaunch() синхронное выполнение"]
+    spawn_thread --> ret_progress["возврат ncclInProgress"]
+    sync_launch --> ret_ok["возврат ncclSuccess"]
     fail_cleanup --> reset["groupLocalResetJobState()"]
     ret_progress --> reset
     ret_ok --> reset
@@ -686,29 +688,29 @@ for (int type = 0; type groupNext[type];
 
 ```mermaid
 flowchart LR
-    subgraph input["输入"]
+    subgraph input["Вход"]
         preconnect["ncclGroupCommPreconnectHead"]
         coll["ncclGroupCommHead[Collective]"]
         sym["ncclGroupCommHead[SymRegister]"]
     end
 
-    subgraph phase1["阶段1: P2P preconnect"]
+    subgraph phase1["Этап 1: P2P preconnect"]
         p2p_job["ncclPreconnectJobfunc=ncclP2PPreconnectFunc"]
         p2p_launch["asyncJobLaunch"]
     end
 
-    subgraph phase2["阶段2: 对称内存注册"]
+    subgraph phase2["Этап 2: регистрация симметричной памяти"]
         sym_job["ncclGroupSymmetricJobfunc=ncclCommGroupRegisterSymmetric"]
     end
 
-    subgraph phase3["阶段3: 集合通信 prepare+preconnect"]
+    subgraph phase3["Этап 3: коллективная коммуникация prepare+preconnect"]
         prep["ncclPrepareTasksAndCollPreconnect"]
         coll_job["ncclPreconnectJobfunc=ncclCollPreconnectFunc"]
         reg_enq["ncclTasksRegAndEnqueue"]
     end
 
-    subgraph phase4["阶段4: kernel 启动"]
-        do_launch["doLaunches轮次调度"]
+    subgraph phase4["Этап 4: запуск kernel"]
+        do_launch["doLaunchesциклическое планирование"]
         plan["ncclKernelPlan"]
         kernel["ncclLaunchKernel"]
     end

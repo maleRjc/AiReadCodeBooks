@@ -1,20 +1,20 @@
-# 第 5 章：第 5 章：算法与协议选型：tuning 模块如何决定通信路径
+# Глава 5: Тюнинг и выбор протокола: как модуль tuning определяет оптимальные пути и каналы
 
-# 第 5 章：算法与协议选型：tuning 模块如何决定通信路径
+# Глава 5: Выбор алгоритма и протокола: как модуль tuning определяет путь коммуникации
 
-上一章我们拆解了 NCCL 的拓扑感知能力：从 src/graph/topo.cc 枚举设备构建拓扑图，到 src/graph/search.cc 搜索最优路径，再到 rings.cc 与 trees.cc 将搜索结果具体化为 Ring 与 Tree 算法拓扑。但拓扑图只回答了「数据能走哪条路」，它没有回答「这次通信应该走哪条路」。同一台机器上，一次 4KB 的 AllReduce 和一次 400MB 的 AllReduce，最优解可能完全不同：前者拼的是延迟，后者拼的是带宽；前者可能选 Tree/LL，后者可能选 Ring/Simple 或者 NVLS。tuning 模块就是那个「拍板的人」。它的输入是消息大小、rank 数、拓扑图（上一章的产物）和用户环境变量；输出是一个 ncclTuningResult_t，里面写着用哪个算法（algo）、哪个协议（proto）、开多少 channel、用多少 warp。这一章我们按「总调度 → 代价模型 → 各算法估计 → 收尾决策」的顺序，把 src/tuning 目录拆开。核心问题只有一个：NCCL 怎么在几十种 (算法, 协议) 组合里，用一套纯 CPU 的数学模型，在微秒级时间内选出最快的那一个？
+В предыдущей главе мы разобрали возможности NCCL по учёту топологии: от перечисления устройств и построения графа топологии в src/graph/topo.cc, до поиска оптимальных путей в src/graph/search.cc, и далее до конкретизации результатов поиска в топологии алгоритмов Ring и Tree в rings.cc и trees.cc. Но граф топологии отвечает лишь на вопрос «по какому пути могут идти данные», а не на вопрос «по какому пути должно идти данное взаимодействие». На одной и той же машине оптимальное решение для AllReduce размером 4KB и AllReduce размером 400MB может быть совершенно различным: в первом случае важна задержка, во втором — пропускная способность; в первом случае может быть выбран Tree/LL, во втором — Ring/Simple или NVLS. Модуль tuning — это тот, кто «принимает решение». Его входные данные — размер сообщения, количество рангов, граф топологии (результат предыдущей главы) и переменные окружения пользователя; выходные — структура ncclTuningResult_t, содержащая информацию о том, какой алгоритм (algo) использовать, какой протокол (proto), сколько каналов задействовать и сколько warp'ов. В этой главе мы разберём каталог src/tuning в порядке «общее управление → модель стоимости → оценка для каждого алгоритма → финальное решение». Ключевой вопрос только один: как NCCL среди десятков комбинаций (алгоритм, протокол) с помощью чисто CPU-математической модели за микросекунды выбирает самую быструю?
 
-# 一、tuning.cc：总调度与决策主干
+# I. tuning.cc: общее управление и основная логика принятия решений
 
-## 直觉模型
+## Интуитивная модель
 
-把 tuning 模块想象成一家**搬家公司**。客户（一次集合通信）来了，说「我要搬 100MB 的货，从 8 个仓库搬到 8 个仓库」。调度员（`ncclTuningCompute`）不会真的去搬一遍试试，而是拿出一张**价目表**（代价模型），对每种方案（Ring/LL、Tree/Simple、NVLS/Simple……）估算一个「预计耗时」，然后挑最短的那个报价给客户。
+Представьте модуль tuning как**компанию по переездам**. Приходит клиент (одна коллективная операция) и говорит: «Мне нужно перевезти 100MB груза из 8 складов в 8 складов». Диспетчер (`ncclTuningCompute`) не станет реально перевозить груз, чтобы попробовать, а достанет**прайс-лист**(модель стоимости), оценит для каждого варианта (Ring/LL, Tree/Simple, NVLS/Simple……) «ожидаемое время выполнения» и выберет самое короткое предложение для клиента.
 
-如果没有这个调度员，NCCL 就只能写死「AllReduce 永远用 Ring」，那在小消息场景会被 Tree 吊打，在大规模 NVLink 场景会被 NVLS 吊打。**代价就是性能在特定场景下腰斩甚至更差。**
+Без этого диспетчера NCCL мог бы только жёстко прописать «AllReduce всегда использует Ring», и тогда в сценариях с малыми сообщениями он бы проигрывал Tree, а в крупномасштабных сценариях с NVLink — NVLS.**Цена этого — падение производительности в определённых сценариях вдвое или даже хуже.**
 
-## 数据结构与内存布局
+## Структуры данных и компоновка памяти
 
-决策的载体是`ncclTuningResult_t`，候选集合是`ncclTuningResultList_t`（一个单链表）。链表节点定义在`tuning_int.h`，但 push 逻辑在`tuning.cc`里：
+Носителем решения является`ncclTuningResult_t`, множество кандидатов — это`ncclTuningResultList_t`(односвязный список). Узлы списка определены в`tuning_int.h`, но логика push находится в`tuning.cc`:
 
 [FACT:src/tuning/tuning.cc:32-39]
 
@@ -30,7 +30,7 @@ ncclResult_t ncclTuningResultListPushFront(struct ncclTuningResultList_t* list, 
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 注意这里是**头插法**：每算出一个有效候选，就插到链表头部。这意味着链表顺序和 id 顺序是**反的**。为什么用链表而不是数组？ 因为候选数量在编译期由`NCCL_TUNING_COUNT`决定，但实际有效的候选是动态的（受`tuningMask`、平台能力、用户环境变量影响），链表允许「只把有效的挂上去」，避免遍历时反复判断`valid`。代价是每次决策要`ncclCalloc`один раз, но tuning происходит на пути постановки в очередь и нечасто, так что эти накладные расходы на выделение приемлемы.
+> Обратите внимание, здесь используется**вставка в голову**: каждый раз, когда вычисляется допустимый кандидат, он вставляется в голову списка. Это означает, что порядок списка и порядок id**обратны**. Почему используется список, а не массив? Потому что количество кандидатов на этапе компиляции определяется`NCCL_TUNING_COUNT`, но фактически допустимые кандидаты динамичны (зависят от`tuningMask`, возможностей платформы, переменных окружения пользователя), список позволяет «прикреплять только допустимые», избегая повторных проверок при обходе`valid`. Цена — при каждом принятии решения необходимо`ncclCalloc`один раз, но tuning происходит на пути постановки в очередь и нечасто, так что эти накладные расходы на выделение приемлемы.
 
 `ncclTuningResult_t`два наиболее важных поля —`timeUs`(ожидаемое время, микросекунды) и`selectionTimeUs`(время, используемое для выбора, может быть переопределено плагином tuner). Логика выбора смотрит только на последнее:
 
@@ -127,30 +127,30 @@ static ncclResult_t ncclTuningSelectBestTuning(struct ncclTuningResultList_t* tu
 
 ```mermaid
 flowchart TD
-    start["ncclTuningCompute(input)"] --> check_rank{"comm->nRanks |是| single["bestTuning = Ring/SimplenChannels = 0"]
-    check_rank -->|否| enum["ncclTuningComputeAllTunings遍历 NCCL_TUNING_COUNT"]
-    enum --> mask{"tuningMask & (1|否| skip["tuning.valid = 0continue"]
-    mask -->|是| expand["ncclTuningExpandId(i)"]
+    start["ncclTuningCompute(input)"] --> check_rank{"comm->nRanks |да| single["bestTuning = Ring/SimplenChannels = 0"]
+    check_rank -->|нет| enum["ncclTuningComputeAllTuningsперебор NCCL_TUNING_COUNT"]
+    enum --> mask{"tuningMask & (1|нет| skip["tuning.valid = 0continue"]
+    mask -->|да| expand["ncclTuningExpandId(i)"]
     expand --> sim["ncclTuningComputeTuning-> ncclTuningCostModelSimModel"]
     sim --> valid{"result.valid?"}
-    valid -->|是| push["ncclTuningResultListPushFront"]
-    valid -->|否| skip
+    valid -->|да| push["ncclTuningResultListPushFront"]
+    valid -->|нет| skip
     push --> tuner{"comm->tuner != NULL?"}
-    tuner -->|是| plugin["tuner->getCollInfo覆盖 generalTable"]
-    tuner -->|否| select
-    plugin --> select["ncclTuningSelectBestTuning取 selectionTimeUs 最小"]
+    tuner -->|да| plugin["tuner->getCollInfoперезапись generalTable"]
+    tuner -->|нет| select
+    plugin --> select["ncclTuningSelectBestTuningвыбор с минимальным selectionTimeUs"]
     select --> getch["ncclTuningGetChannels"]
-    getch --> cta{"CTA_POLICY_EFFICIENCY且 NVLS 在 mask 内?"}
-    cta -->|是| nvls["ncclNvlsRegResourcesQuery可能改写为 NVLS"]
-    cta -->|否| symk
-    nvls --> symk{"symKernelId 需要回退?"}
-    symk -->|是| fallback["ncclTuningCompute(generalInput)回退普通 kernel"]
-    symk -->|否| done
+    getch --> cta{"CTA_POLICY_EFFICIENCYи NVLS в mask?"}
+    cta -->|да| nvls["ncclNvlsRegResourcesQueryвозможна замена на NVLS"]
+    cta -->|нет| symk
+    nvls --> symk{"symKernelId требует отката?"}
+    symk -->|да| fallback["ncclTuningCompute(generalInput)откат к обычному kernel"]
+    symk -->|нет| done
     fallback --> done["*result = bestTuning"]
     single --> done
-    done --> undef{"algo/proto 仍 UNDEF?"}
-    undef -->|是| warn["WARN + 返回InvalidUsage 或 InternalError"]
-    undef -->|否| ret_ok["返回 ncclSuccess"]
+    done --> undef{"algo/proto всё ещё UNDEF?"}
+    undef -->|да| warn["WARN + возвратInvalidUsage или InternalError"]
+    undef -->|нет| ret_ok["возврат ncclSuccess"]
 ```
 
 ---

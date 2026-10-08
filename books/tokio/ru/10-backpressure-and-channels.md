@@ -1,4 +1,4 @@
-# Глава 10: Абстракции потокового I/O: AsyncRead/AsyncWrite и фреймворк кодеков
+# Глава 10: Абстракции потокового I/O: AsyncRead, AsyncWrite и фреймворк кодеков
 
 В предыдущей главе мы разобрали процесс раскрытия tokio-macros и увидели, как #[tokio::main], select!, join! берут на себя шаблонный код и проверки на этапе компиляции. Но макросы всё равно генерируют обычные Future и вызовы poll — когда эти Future действительно начинают читать и записывать байты, Tokio предоставляет лишь две низкоуровневые абстракции-трейта: AsyncRead и AsyncWrite. Их проблема в том, что они «слишком низкоуровневые»: один poll_read гарантирует лишь «прочитано сколько-то байтов», но не «прочитано целое сообщение». А подавляющее большинство протоколов (HTTP, Redis, gRPC, пользовательские RPC) ориентированы на «кадры», а не на «поток байтов». Ключевой вопрос этой главы: где следует провести границу абстракции асинхронного I/O? Ответ Tokio состоит из двух уровней: tokio::io предоставляет трейты и инструменты уровня потока байтов (BufReader/BufWriter/copy_bidirectional), а фреймворк codec в tokio-util поверх этого предоставляет адаптацию Stream/Sink уровня кадров (Framed/LengthDelimitedCodec). Поняв разделение труда этих двух уровней, вы поймёте, «почему реализации протоколов почти всегда начинаются с Framed».
 
@@ -136,20 +136,20 @@ loop {
 
 ```mermaid
 flowchart TD
-    start["transfer_one_direction 进入 loop"] --> match_state{"当前 TransferState?"}
+    start["transfer_one_direction входит в loop"] --> match_state{"текущий TransferState?"}
     match_state -->|Running| poll_copy["buf.poll_copy(cx, r, w)"]
-    poll_copy --> copy_ready{"poll_copy 结果?"}
-    copy_ready -->|Pending| ret_pending["返回 Poll::Pending状态保持 Running"]
-    copy_ready -->|Err| ret_err["返回 Poll::Ready(Err)错误向上传播"]
+    poll_copy --> copy_ready{"результат poll_copy?"}
+    copy_ready -->|Pending| ret_pending["возврат Poll::Pendingсостояние остаётся Running"]
+    copy_ready -->|Err| ret_err["возврат Poll::Ready(Err)ошибка распространяется вверх"]
     copy_ready -->|Ok(count)| to_shutdown["state = ShuttingDown(count)"]
     to_shutdown --> match_state
     match_state -->|ShuttingDown| poll_shutdown["w.poll_shutdown(cx)"]
-    poll_shutdown --> shutdown_ready{"shutdown 结果?"}
-    shutdown_ready -->|Pending| ret_pending2["返回 Poll::Pending状态保持 ShuttingDown"]
+    poll_shutdown --> shutdown_ready{"результат shutdown?"}
+    shutdown_ready -->|Pending| ret_pending2["возврат Poll::Pendingсостояние остаётся ShuttingDown"]
     shutdown_ready -->|Err| ret_err
     shutdown_ready -->|Ok| to_done["state = Done(count)"]
     to_done --> match_state
-    match_state -->|Done| ret_done["返回 Poll::Ready(Ok(count))"]
+    match_state -->|Done| ret_done["возврат Poll::Ready(Ok(count))"]
 ```
 
 ## для закрытия пишущей стороны (отправка FIN), после завершения переход в
@@ -208,24 +208,24 @@ pub struct Framed {
 
 ```mermaid
 sequenceDiagram
-    participant App as 应用层
+    participant App as Прикладной уровень
     participant F as FramedImpl
     participant C as Decoder/Encoder
     participant IO as AsyncRead/AsyncWrite
 
     App->>F: poll_next(cx)
     F->>C: decode(&mut read.buffer)
-    alt 缓冲中已有完整帧
+    alt в буфере уже есть полный кадр
         C-->>F: Some(frame)
         F-->>App: Poll::Ready(Some(frame))
-    else 半包
+    else полупакет
         C-->>F: None
         F->>IO: poll_read(cx, &mut read.buffer)
-        alt 数据就绪
+        alt данные готовы
             IO-->>F: Ready(Ok(()))
             F->>C: decode(&mut read.buffer)
-            C-->>F: Some(frame) 或 None
-        else 无数据
+            C-->>F: Some(frame) или None
+        else нет данных
             IO-->>F: Pending
             F-->>App: Poll::Pending
         end
@@ -357,16 +357,16 @@ Ok(Some(n))
 flowchart TD
     entry["decode(src)"] --> check_state{"self.state?"}
     check_state -->|Head| head["decode_head(src)"]
-    head --> head_result{"结果?"}
-    head_result -->|Ok(None)| ret_none1["返回 Ok(None)等待更多数据"]
-    head_result -->|Err| ret_err1["返回 Err长度超限或溢出"]
+    head --> head_result{"результат?"}
+    head_result -->|Ok(None)| ret_none1["возврат Ok(None)ожидание дополнительных данных"]
+    head_result -->|Err| ret_err1["возврат Errпревышение длины или переполнение"]
     head_result -->|Ok(Some(n))| set_data["state = Data(n)"]
     set_data --> decode_data
     check_state -->|Data(n)| decode_data["decode_data(n, src)"]
     decode_data --> data_result{"src.len() >= n?"}
-    data_result -->|否| ret_none2["返回 Ok(None)等待更多数据"]
-    data_result -->|是| split["src.split_to(n)state = Headreserve 下一帧头部"]
-    split --> ret_frame["返回 Ok(Some(frame))"]
+    data_result -->|нет| ret_none2["возврат Ok(None)ожидание дополнительных данных"]
+    data_result -->|да| split["src.split_to(n)state = Headreserve заголовка следующего кадра"]
+    split --> ret_frame["возврат Ok(Some(frame))"]
 ```
 
 ## Проектное размышление: обрезка max_frame_len и защита от переполнения

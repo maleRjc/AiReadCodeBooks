@@ -1,3 +1,5 @@
+# Глава 8: Запуск ядер и выполнение на GPU: координация нитей и аппаратные ресурсы
+
 # Глава 8: Запуск kernel и выполнение на устройстве: от вызова на стороне host до старта блоков потоков GPU
 
 В предыдущей главе мы разобрали, как задачи разбиваются на несколько channel, как генерируются параметры запуска kernel и как работает механизм пакетной отправки и упорядочивания зависимостей в семантике group. Теперь план запуска готов, но это всё ещё только структура данных на стороне host. Ключевой вопрос этой главы:`ncclKernelPlan`Как это превращается в реально работающий grid на GPU? Мы пройдём по цепочке вызовов`ncclLaunchKernel`, посмотрим, как параметры помещаются в kernel args, как выбирается вариант kernel,`cuLaunchKernelEx`как вызывается`ncclKernelMain`, а также как на стороне устройства
@@ -21,31 +23,31 @@
 ```mermaid
 flowchart TD
     plan["ncclKernelPlanchannelMask / workBytes / kernelFn"]
-    finish["finishPlan()决定 workStorageType"]
-    check_budget{"sizeof(args)+batchBytes+workBytes work 直接放 kernel 参数"]
-    fifo_type["workStorageType = Fifo/Persistentwork 放外部缓冲区"]
-    upload["uploadWork()拷贝 work 到目标缓冲区"]
-    launch["ncclLaunchKernel()组装 CUlaunchConfig"]
-    check_cluster{"compCap >= 90且 clusterSize > 0?"}
-    add_cluster["添加 CLUSTER_DIMENSION+ SPREAD 调度策略"]
-    no_cluster["不添加 cluster 属性"]
-    check_event{"userKernelEvent且 driver >= 12030?"}
-    add_event["添加 LAUNCH_COMPLETION_EVENT"]
-    no_event["无 completion event"]
-    cu_launch["cuLaunchKernelEx()发射 grid 到 GPU"]
+    finish["finishPlan()определение workStorageType"]
+    check_budget{"sizeof(args)+batchBytes+workBytes work напрямую в параметрах kernel"]
+    fifo_type["workStorageType = Fifo/Persistentwork во внешнем буфере"]
+    upload["uploadWork()копирование work в целевой буфер"]
+    launch["ncclLaunchKernel()сборка CUlaunchConfig"]
+    check_cluster{"compCap >= 90и clusterSize > 0?"}
+    add_cluster["добавление CLUSTER_DIMENSION+ стратегия планирования SPREAD"]
+    no_cluster["без атрибутов cluster"]
+    check_event{"userKernelEventи driver >= 12030?"}
+    add_event["добавление LAUNCH_COMPLETION_EVENT"]
+    no_event["без completion event"]
+    cu_launch["cuLaunchKernelEx()запуск grid на GPU"]
 
     plan --> finish --> check_budget
-    check_budget -->|是| args_type
-    check_budget -->|否| fifo_type
+    check_budget -->|да| args_type
+    check_budget -->|нет| fifo_type
     args_type --> upload
     fifo_type --> upload
     upload --> launch --> check_cluster
-    check_cluster -->|是| add_cluster
-    check_cluster -->|否| no_cluster
+    check_cluster -->|да| add_cluster
+    check_cluster -->|нет| no_cluster
     add_cluster --> check_event
     no_cluster --> check_event
-    check_event -->|是| add_event
-    check_event -->|否| no_event
+    check_event -->|да| add_event
+    check_event -->|нет| no_event
     add_event --> cu_launch
     no_event --> cu_launch
 ```
@@ -226,9 +228,9 @@ if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire)) {
 
 ## Запуск kernel: от CUlaunchConfig до cuLaunchKernelEx
 
-`ncclLaunchKernel`的角色类似于"火箭发射控制台"。Он принимает plan с уже загруженным топливом (данными work), вычисляет параметры полёта ракеты (размерности grid/block), настраивает различные опции запуска (cluster, mem sync domain, completion event), а затем нажимает кнопку запуска (`cuLaunchKernelEx`）。
+`ncclLaunchKernel`играет роль, аналогичную «пульту управления запуском ракеты». Он принимает plan с уже загруженным топливом (данными work), вычисляет параметры полёта ракеты (размерности grid/block), настраивает различные опции запуска (cluster, mem sync domain, completion event), а затем нажимает кнопку запуска (`cuLaunchKernelEx`）。
 
-Если на этом этапе происходит ошибка — например, неверно вычислена размерность grid — на GPU будет запущено неправильное количество блоков, что приведёт к тому, что работа части каналов никогда не будет выполнена, и通信 зависнет.
+Если на этом этапе происходит ошибка — например, неверно вычислена размерность grid — на GPU будет запущено неправильное количество блоков, что приведёт к тому, что работа части каналов никогда не будет выполнена, и коммуникация зависнет.
 
 ## Структуры данных и разметка памяти
 

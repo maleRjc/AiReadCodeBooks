@@ -8,7 +8,7 @@
 
 Представьте`release.js`как панель управления старой стиральной машины: ручка (`parseArgs`Раскладка флагов и глобального состояния в памяти
 
-## 标志位与全局状态的内存布局
+## Разметка памяти для флагов и глобального состояния
 
 > **[Design Inference & Architectural Trade-offs]**
 > Первое, что делает скрипт после запуска, — разбирает аргументы командной строки в структурированный объект. Здесь используется встроенный в Node`parseArgs`, а не`yargs`или`commander`— это сделано для устранения сторонних зависимостей, поскольку сам скрипт публикации должен запускаться в любом окружении, даже если`node_modules`установлен наполовину.
@@ -84,23 +84,10 @@ const runIfNotDry = isDryRun ? dryRun : run
 
 ```mermaid
 flowchart TD
-    start["node scripts/release.js"] --> parse["parseArgs 解析 10 个选项"]
-    parse --> preid{"args.preid 存在?"}
-    preid -->|是| use_arg["preId = args.preid"]
-    preid -->|否| infer["preId = semver.prerelease(currentVersion)[0]"]
-    use_arg --> scan["扫描 packages/ 目录"]
-    infer --> scan
-    scan --> filter{"是目录 且 有 package.json 且 非 private?"}
-    filter -->|否| skip_pkg["排除该包"]
-    filter -->|是| keep_pkg["加入 packages 列表"]
-    skip_pkg --> build_menu
-    keep_pkg --> build_menu
-    build_menu{"preId 存在?"} -->|是| full["versionIncrements = patch/minor/major + 4 个 pre*"]
-    build_menu -->|否| stable["versionIncrements = patch/minor/major"]
-    full --> dispatch{"args.publishOnly?"}
-    stable --> dispatch
-    dispatch -->|是| publish_only["fnToRun = publishOnly"]
-    dispatch -->|否| main_fn["fnToRun = main"]
+    start["node scripts/release.js"] --> parse["parseArgs разбирает 10 опций"]
+    parse --> preid{"args.preid существует?"}
+    preid -->|да| use_arg["preId = args.preid"]
+    preid -->|нет| infer["preId = semver.prerelease(currentVersion)
 ```
 
 ---
@@ -162,7 +149,7 @@ skipTests ||= isCIPassed
 
 ```mermaid
 sequenceDiagram
-    participant Dev as 开发者
+    participant Dev as Разработчик
     participant Main as main()
     participant Git as git CLI
     participant GH as GitHub API
@@ -173,21 +160,21 @@ sequenceDiagram
     Git-->>Main: branch, sha
     Main->>GH: fetch commits/{branch}
     GH-->>Main: remote sha
-    alt sha 不一致
-        Main->>Dev: prompt 确认继续?
-        Dev-->>Main: yes/no
+    alt sha не совпадает
+        Main->>Dev: запрос подтверждения продолжения?
+        Dev-->>Main: да/нет
     end
-    Main->>Dev: prompt 选择版本增量
+    Main->>Dev: запрос выбора инкремента версии
     Dev-->>Main: "patch (3.5.44)"
-    Main->>Main: semver.valid 校验
-    Main->>GH: getCIResult() 查询 workflow_runs
+    Main->>Main: проверка semver.valid
+    Main->>GH: getCIResult() запрос workflow_runs
     GH-->>Main: workflow_runs[]
-    alt CI 通过
-        Main->>Dev: prompt 跳过本地测试?
-        Dev-->>Main: yes
-    else CI 未通过
+    alt CI прошёл
+        Main->>Dev: запрос пропуска локальных тестов?
+        Dev-->>Main: да
+    else CI не прошёл
         Main->>Pnpm: run test --run
-        Pnpm-->>Main: exit code
+        Pnpm-->>Main: код выхода
     end
     Main->>Main: updateVersions(targetVersion)
 ```
@@ -283,20 +270,20 @@ flowchart TD
     upd["updateVersions(targetVersion)"] --> flag["versionUpdated = true"]
     flag --> changelog["pnpm run changelog"]
     changelog --> lock["pnpm install --prefer-offline"]
-    lock --> gitdiff{"git diff 有输出?"}
-    gitdiff -->|是| commit["git add -A && git commit"]
-    gitdiff -->|否| nochange["No changes to commit"]
+    lock --> gitdiff{"git diff есть вывод?"}
+    gitdiff -->|да| commit["git add -A && git commit"]
+    gitdiff -->|нет| nochange["No changes to commit"]
     commit --> pub{"args.publish?"}
     nochange --> pub
-    pub -->|是| build["buildPackages()"]
-    pub -->|否| push
+    pub -->|да| build["buildPackages()"]
+    pub -->|нет| push
     build --> publish["publishPackages()"]
     publish --> push["git tag && git push"]
-    push --> done["完成"]
-    changelog -.->|抛错| rollback["catch: updateVersions(currentVersion)"]
-    lock -.->|抛错| rollback
-    commit -.->|抛错| rollback
-    publish -.->|抛错| rollback
+    push --> done["завершено"]
+    changelog -.->|исключение| rollback["catch: updateVersions(currentVersion)"]
+    lock -.->|исключение| rollback
+    commit -.->|исключение| rollback
+    publish -.->|исключение| rollback
     rollback --> exit["process.exit(1)"]
 ```
 

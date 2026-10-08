@@ -1,3 +1,5 @@
+# Глава 19: Устройство-сторонний коммуникационный ABI: архитектура и структуры devComm
+
 # Глава 19: Устройство-сторонний домен коммуникации и совместимость ABI: коммуникационный контракт между devcomm и kernel
 
 В предыдущей главе мы видели, как host-сторонний ncclMemManager с помощью подсчёта ссылок и CUDA VMM API управляет жизненным циклом коммуникационных буферов. Но коммуникация реально происходит в GPU kernel — потоки внутри kernel должны знать: какой я rank? По какому виртуальному адресу находится буфер удалённого rank? Готово ли соединение? Эта информация находится в host-сторонней структуре ncclComm, но kernel не может напрямую разыменовывать host-указатели. Если бы NCCL заставляла kernel каждый раз получать эти метаданные через параметры или запросы к глобальной памяти, каждая коммуникация несла бы дополнительные накладные расходы по задержке и пропускной способности. Хуже того, как только код kernel скомпилирован, смещения полей, к которым он обращается, фиксируются — если после обновления библиотеки раскладка ncclComm изменится, старый kernel прочитает неверные данные. Это и есть основная проблема, которую решает devcomm: отобразить ключевые метаданные host-стороннего домена коммуникации в стабильной, версионированной раскладке памяти в структуры, доступные на устройстве. Файлы devcomm_v22902.cc, devcomm_v22907.cc, devcomm_v23000.cc, devcomm_v23100.cc в каталоге src/devcomm — это конкретные реализации данного версионированного ABI. Каждый файл соответствует диапазону версий NCCL и определяет точную раскладку памяти ncclDevComm в этом диапазоне, а также логику копирования полей между новыми и старыми версиями. В этой главе мы последовательно разберём: как выглядят ключевые структуры данных устройство-стороннего коммуникатора, как работает механизм регистрации и сопоставления версионированного ABI, как выполняется пофайловое преобразование между новыми и старыми версиями, а также границы и подводные камни этого механизма в производственной среде.
@@ -137,15 +139,15 @@ struct ncclDevCommCompat ncclDevCommCompat_v23000 = {
 
 ```mermaid
 flowchart TD
-    start["应用请求设备侧通信器"] --> read_ver["读取 reqs->version（应用编译时版本）"]
-    read_ver --> find_compat{"在 ncclDevCommCompat 表中查找覆盖该版本的插件?"}
-    find_compat -->|找到| check_filter["调用 devCommRequirementsFilter检查资源请求兼容性"]
-    find_compat -->|未找到| err_unsupported["返回 ncclInvalidUsage版本不兼容"]
-    check_filter --> filter_ok{"过滤器返回ncclSuccess?"}
-    filter_ok -->|是| copy_new_to_old["调用 devCommCopyNewToOld把当前布局转为旧布局"]
-    filter_ok -->|否| err_gin["返回 ncclInvalidUsageGIN 资源不兼容"]
-    copy_new_to_old --> done["返回旧布局 ncclDevComm"]
-    err_unsupported --> done_err["应用收到错误"]
+    start["приложение запрашивает устройство-сторонний коммуникатор"] --> read_ver["прочитать reqs->version(версия на момент компиляции приложения)"]
+    read_ver --> find_compat{"найти в таблице ncclDevCommCompatплагин, покрывающий эту версию?"}
+    find_compat -->|найден| check_filter["вызвать devCommRequirementsFilterпроверить совместимость запросов ресурсов"]
+    find_compat -->|не найден| err_unsupported["вернуть ncclInvalidUsageверсия несовместима"]
+    check_filter --> filter_ok{"фильтр вернулncclSuccess?"}
+    filter_ok -->|да| copy_new_to_old["вызвать devCommCopyNewToOldпреобразовать текущую раскладку в старую"]
+    filter_ok -->|нет| err_gin["вернуть ncclInvalidUsageресурсы GIN несовместимы"]
+    copy_new_to_old --> done["вернуть старую раскладку ncclDevComm"]
+    err_unsupported --> done_err["приложение получает ошибку"]
     err_gin --> done_err
 ```
 
@@ -208,11 +210,11 @@ static ncclResult_t ncclDevCommCopyOldToNew_v23000(ncclComm_t comm, struct ncclD
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 〔Проектные выводы и архитектурные компромиссы〕[FACT:src/devcomm/devcomm_v23000.cc:180-181]Обратите внимание на семантическое преобразование`ginConnectionsRailed`: если в старой версии`ginConnectionStride`истинно, то в новой версии`lsaSize`；否则设为 1。这里用`lsaSize`作为步长，是因为 railed 模式下每个 LSA 组内的 rank 共享一个 GIN 连接，步长等于 LSA 组的大小。
+> 〔Проектные выводы и архитектурные компромиссы〕[FACT:src/devcomm/devcomm_v23000.cc:180-181]Обратите внимание на семантическое преобразование`ginConnectionsRailed`: если в старой версии`ginConnectionStride`истинно, то в новой версии`lsaSize`; иначе установить в 1. Здесь используется`lsaSize`в качестве шага, потому что в режиме railed каждый rank внутри группы LSA разделяет одно GIN-соединение, и шаг равен размеру группы LSA.
 
-## v22902 的特殊处理
+## специальная обработка v22902
 
-`ncclDevCommCopyOldToNew_v22902` [FACT:src/devcomm/devcomm_v22902.cc:149-167]有一个重要注释：
+`ncclDevCommCopyOldToNew_v22902` [FACT:src/devcomm/devcomm_v22902.cc:149-167]есть важное примечание:
 
 ```c
 // Note: this callback will be used with v22907 as well because, prior to 2.30.0, ncclDevComm was unversioned,
@@ -220,23 +222,23 @@ static ncclResult_t ncclDevCommCopyOldToNew_v23000(ncclComm_t comm, struct ncclD
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 这意味着在 2.30.0 之前，`ncclDevComm`没有`magic`/`version`字段，所以库无法区分一个旧结构体到底是 v22902 还是 v22907。因此，v22907 的`devCommCopyOldToNew`被设为`nullptr` [FACT:src/devcomm/devcomm_v22907.cc:128]，实际使用的是 v22902 的版本。由于两者都不支持 GIN 向后兼容，GIN 相关字段的差异不影响正确性。
+> Это означает, что до 2.30.0`ncclDevComm`отсутствует`magic`/`version`поле, поэтому библиотека не может различить, является ли старая структура v22902 или v22907. Следовательно, для v22907`devCommCopyOldToNew`установлено в`nullptr` [FACT:src/devcomm/devcomm_v22907.cc:128], фактически используется версия v22902. Поскольку обе версии не поддерживают обратную совместимость GIN, различия в полях, связанных с GIN, не влияют на корректность.
 
-## 资源窗口的版本化
+## Версионирование окон ресурсов
 
-`ncclWindow_vidmem_v22902`的定义在`devcomm_v22902.h`中（本章未提供该文件内容），但从[FACT:src/devcomm/devcomm_v22902.cc:141]和[FACT:src/devcomm/devcomm_v22902.cc:164]可以看到，v22902 使用`ncclDevCommCopyResourceWindow_v22902`进行窗口转换。这个函数在`devcomm_v22902.h`中声明，具体实现未在本章源码中展示。
+`ncclWindow_vidmem_v22902`Определение находится в`devcomm_v22902.h`(содержимое этого файла не предоставлено в данной главе), но из[FACT:src/devcomm/devcomm_v22902.cc:141]и[FACT:src/devcomm/devcomm_v22902.cc:164]видно, что v22902 использует`ncclDevCommCopyResourceWindow_v22902`для преобразования окна. Эта функция объявлена в`devcomm_v22902.h`, конкретная реализация не показана в исходном коде данной главы.
 
-[FACT:src/devcomm/devcomm_v23000.cc:11-18]的`static_assert`验证了 v23000 的窗口布局与当前版本一致，所以 v23000 的转换函数可以直接逐字段拷贝。
+[FACT:src/devcomm/devcomm_v23000.cc:11-18]в`static_assert`подтверждает, что компоновка окна v23000 совпадает с текущей версией, поэтому функция преобразования v23000 может быть скопирована напрямую поле за полем.
 
 ---
 
-# 四、能力过滤与资源检查：防止旧 kernel 访问不支持的特性
+# IV. Фильтрация возможностей и проверка ресурсов: предотвращение доступа старых ядер к неподдерживаемым функциям
 
-## 直觉模型
+## Интуитивная модель
 
-版本转换不只是「字段搬家」——还需要检查旧版本是否支持应用程序请求的特性。比如，一个用 2.29.2 编译的 kernel 请求 GIN 资源，但 2.29.2 的`ncclDevComm`布局中 GIN 字段不完整，直接转换会导致 kernel 读到垃圾数据。所以需要一个「过滤器」在转换前拦截这种请求。
+Преобразование версий — это не просто «перемещение полей» — необходимо также проверить, поддерживает ли старая версия функции, запрашиваемые приложением. Например, ядро, скомпилированное с 2.29.2, запрашивает ресурс GIN, но в компоновке`ncclDevComm`версии 2.29.2 поля GIN неполны, и прямое преобразование приведёт к тому, что ядро прочитает мусорные данные. Поэтому необходим «фильтр», который перехватывает такие запросы перед преобразованием.
 
-## commPropertiesFilter：能力标志过滤
+## commPropertiesFilter: фильтрация флагов возможностей
 
 `ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77]：
 
@@ -251,15 +253,15 @@ static ncclResult_t ncclCommPropertiesFilter_v22907(ncclComm_t comm, struct nccl
 }
 ```
 
-三个操作：
+Три операции:
 
-1. **`deviceApiSupport`降级**：如果 LSA 组的 rank 数不等于总 rank 数（即存在跨节点通信），则禁用设备 API。这是因为 2.29.7 的 GIN 不支持跨节点。
+1. **`deviceApiSupport`Понижение версии**: если количество рангов в группе LSA не равно общему количеству рангов (то есть присутствует межнодовая коммуникация), API устройства отключается. Это связано с тем, что GIN версии 2.29.7 не поддерживает межнодовую работу.
 
-2. **`ginType`置为 NONE**：明确告诉应用程序「这个版本不支持 GIN」。
+2. **`ginType`Установить в NONE**: явно сообщить приложению, что «данная версия не поддерживает GIN».
 
-3. **`railedGinType`置为 NONE**：同上。
+3. **`railedGinType`Установить в NONE**: аналогично вышеуказанному.
 
-`ncclCommPropertiesFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:86-96]类似，但多了一个细节：
+`ncclCommPropertiesFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:86-96]Аналогично, но с одной дополнительной деталью:
 
 ```c
 // v22902 ncclCommProperties is _almost_ compatible with newer ones, with the exception of ginType, which in that
@@ -267,7 +269,7 @@ static ncclResult_t ncclCommPropertiesFilter_v22907(ncclComm_t comm, struct nccl
 ((struct ncclCommProperties_v22902*)props)->ginType = NCCL_GIN_TYPE_NONE_v22902;
 ```
 
-[FACT:src/devcomm/devcomm_v22902.cc:13-17]定义了 v22902 的 GIN 类型枚举：
+[FACT:src/devcomm/devcomm_v22902.cc:13-17]Определено перечисление типов GIN для v22902:
 
 ```c
 typedef enum : uint8_t {
@@ -277,11 +279,11 @@ typedef enum : uint8_t {
 } ncclGinType_t_v22902;
 ```
 
-注意这是`uint8_t`类型，而新版本中`ginType`是`int`。所以 v22902 的过滤器需要把`props`强制转换为`ncclCommProperties_v22902*`，然后写入`uint8_t`类型的`ginType`。[FACT:src/devcomm/devcomm_v22902.cc:35-36]的`static_assert`验证了`ginType`在偏移 34，结构体大小为 40 字节。
+Обратите внимание, что это`uint8_t`тип, тогда как в новой версии`ginType`является`int`. Поэтому фильтр v22902 должен`props`привести к типу`ncclCommProperties_v22902*`, затем записать в`uint8_t`типа`ginType`。[FACT:src/devcomm/devcomm_v22902.cc:35-36]из`static_assert`подтвердил`ginType`по смещению 34, размер структуры составляет 40 байт.
 
-## devCommRequirementsFilter：资源请求检查
+## devCommRequirementsFilter: проверка запросов ресурсов
 
-`ncclDevCommRequirementsFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:79-98]检查应用程序是否请求了 GIN 资源：
+`ncclDevCommRequirementsFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:79-98]Проверяет, запрашивает ли приложение ресурсы GIN:
 
 ```c
 static ncclResult_t ncclDevCommRequirementsFilter_v22907(ncclComm_t comm, ncclDevCommRequirements_t* reqs) {
@@ -300,15 +302,15 @@ static ncclResult_t ncclDevCommRequirementsFilter_v22907(ncclComm_t comm, ncclDe
 }
 ```
 
-逻辑分两步：
+Логика состоит из двух шагов:
 
-1. **检查顶层请求**：`reqs->ginSignalCount`、`ginCounterCount`、`barrierCount`、`railGinBarrierCount`任一大于 0，说明请求了 GIN 资源。
+1. **Проверка запросов верхнего уровня**：`reqs->ginSignalCount`、`ginCounterCount`、`barrierCount`、`railGinBarrierCount`Любое значение больше 0 означает, что ресурсы GIN запрошены.
 
-2. **遍历资源需求链表**：如果顶层没有请求，继续遍历`resourceRequirementsList`链表，检查每个节点的`ginSignalCount`和`ginCounterCount`。
+2. **Обход связного списка требований к ресурсам**: если на верхнем уровне запрос отсутствует, продолжить обход`resourceRequirementsList`связанный список, проверка каждого узла`ginSignalCount`и`ginCounterCount`。
 
-如果确实请求了 GIN 资源，且`ginConnectionType`不是`NONE`或`ginForceEnable`为真，则返回`ncclInvalidUsage`并打印警告，提示应用程序需要重新编译。
+если ресурс GIN действительно запрошен, и`ginConnectionType`не является`NONE`или`ginForceEnable`истинно, то возвращается`ncclInvalidUsage`и выводится предупреждение о необходимости перекомпиляции приложения.
 
-`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126]更复杂，除了 GIN 检查外，还处理了`barrierCount`的语义变化：
+`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126]более сложный: помимо проверки GIN, также обрабатывается`barrierCount`изменение семантики:
 
 ```c
 // Prior to 2.29.4, a non-zero barrierCount did not imply GIN, but it does since.
@@ -321,45 +323,45 @@ reqs->railGinBarrierCount = 0;
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 在 2.29.4 之前，`barrierCount`只表示 LSA barrier，不隐含 GIN 需求。从 2.29.4 开始，`barrierCount`隐含 GIN 需求。为了兼容旧版本，过滤器把`barrierCount`转换为`lsaBarrierCount`，并清零`barrierCount`和`railGinBarrierCount`。
+> До версии 2.29.4`barrierCount`обозначал только барьер LSA и не подразумевал потребность в GIN. Начиная с версии 2.29.4`barrierCount`подразумевает потребность в GIN. Для совместимости со старыми версиями фильтр преобразует`barrierCount`в`lsaBarrierCount`, и обнулить`barrierCount`и`railGinBarrierCount`。
 
-下面的时序图展示了从应用请求到版本转换的完整交互：
+Приведённая ниже диаграмма последовательности демонстрирует полный процесс взаимодействия от запроса приложения до преобразования версии:
 
 ```mermaid
 sequenceDiagram
-    participant App as 应用层
-    participant Host as Host 侧 NCCL 库
-    participant Compat as ncclDevCommCompat 插件
-    participant Dev as 设备侧 ncclDevComm
+    participant App as Прикладной уровень
+    participant Host as Библиотека NCCL на стороне Host
+    participant Compat as Плагин ncclDevCommCompat
+    participant Dev as ncclDevComm на стороне устройства
 
     App->>Host: ncclCommGetDeviceHandle(comm, &devComm)
-    Host->>Host: 读取 reqs->version（应用编译版本）
-    Host->>Compat: 查找覆盖该版本的插件
-    Compat-->>Host: 返回 ncclDevCommCompat_vXXXXX
+    Host->>Host: Чтение reqs->version (версия компиляции приложения)
+    Host->>Compat: Поиск плагина, покрывающего эту версию
+    Compat-->>Host: Возврат ncclDevCommCompat_vXXXXX
     Host->>Compat: devCommRequirementsFilter(comm, reqs)
-    alt 请求了不支持的 GIN 资源
+    alt Запрошен неподдерживаемый ресурс GIN
         Compat-->>Host: ncclInvalidUsage
-        Host-->>App: 返回错误 + 警告日志
-    else 资源兼容
+        Host-->>App: Возврат ошибки + предупреждение в лог
+    else Ресурсы совместимы
         Compat-->>Host: ncclSuccess
         Host->>Compat: devCommCopyNewToOld(comm, oldDevComm, newDevComm)
         Compat->>Compat: memset(old, 0, sizeof(*old))
-        Compat->>Compat: 逐字段拷贝 + 语义转换
+        Compat->>Compat: Пофайловое копирование + семантическое преобразование
         Compat-->>Host: ncclSuccess
-        Host->>Dev: 返回旧布局 ncclDevComm
-        Dev-->>App: 设备侧可访问的通信器
+        Host->>Dev: Возврат ncclDevComm со старой компоновкой
+        Dev-->>App: Коммуникатор, доступный на стороне устройства
     end
 ```
 
 ---
 
-# 五、生产避坑指南与故障恢复链
+# Пять. Руководство по избеганию проблем в production и цепочка восстановления после сбоев
 
-## 陷阱一：GIN 资源请求与旧版本 kernel 的冲突
+## Ловушка первая: конфликт запросов ресурсов GIN со старыми версиями kernel
 
-**场景**：应用程序用 NCCL 2.29.2 编译，但运行时链接了 2.31.0 的库。应用程序在 kernel 中调用了 GIN 相关的设备侧 API（如`ncclGinPut`）。
+**Сценарий**: Приложение скомпилировано с NCCL 2.29.2, но во время выполнения слинковано с библиотекой 2.31.0. Приложение вызывает в kernel API со стороны устройства, связанные с GIN (например,`ncclGinPut`）。
 
-**会发生什么**：`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126]检测到`ginForceEnable`或`ginSignalCount > 0`，返回`ncclInvalidUsage`，并打印警告：
+**Что произойдёт**：`ncclDevCommRequirementsFilter_v22902` [FACT:src/devcomm/devcomm_v22902.cc:98-126]Обнаружено`ginForceEnable`или`ginSignalCount > 0`, возвращается`ncclInvalidUsage`, и выводится предупреждение:
 
 ```
 The application was compiled with too old version of NCCL. It was compiled with NCCL version 2.29.2, but is
@@ -367,27 +369,27 @@ running with NCCL library version 2.31.0. Because of its use of GIN device kerne
 preferably with the same NCCL version that it will be running with.
 ```
 
-**根因**：2.29.2 的`ncclDevComm_v22902`布局中，GIN 字段（`ginContextCount`、`ginNetDeviceTypes`、`ginHandles`等）与 2.31.0 的布局不兼容。如果强行转换，kernel 会读到错误的偏移，导致未定义行为。
+**Первопричина**: в компоновке версии 2.29.2`ncclDevComm_v22902`поля GIN (`ginContextCount`、`ginNetDeviceTypes`、`ginHandles`и т.д.) несовместимы с компоновкой версии 2.31.0. При принудительном преобразовании ядро будет читать по неверному смещению, что приведёт к неопределённому поведению.
 
-**正确做法**：应用程序必须用与运行时库相同（或兼容）的 NCCL 版本重新编译。如果无法重新编译，应避免在 kernel 中使用 GIN API。
+**Правильный подход**: приложение должно быть перекомпилировано с той же (или совместимой) версией NCCL, что и библиотека времени выполнения. Если перекомпиляция невозможна, следует избегать использования GIN API в ядре.
 
-## 陷阱二：跨节点通信时设备 API 被静默禁用
+## Ловушка вторая: API устройства молча отключается при межузловой коммуникации
 
-**场景**：应用程序用 2.29.7 编译，通信域包含跨节点 rank（`ncclTeamLsa(comm).nRanks != comm->nRanks`）。
+**Сценарий**: приложение скомпилировано с версией 2.29.7, домен коммуникации содержит межузловые ранги (`ncclTeamLsa(comm).nRanks != comm->nRanks`）。
 
-**会发生什么**：`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77]把`props->deviceApiSupport`设为`false`。应用程序如果检查了这个标志，会知道设备 API 不可用；但如果不检查，直接调用设备侧 API，会得到未定义行为。
+**Что произойдёт**：`ncclCommPropertiesFilter_v22907` [FACT:src/devcomm/devcomm_v22907.cc:69-77]установить`props->deviceApiSupport`в значение`false`. Если приложение проверяет этот флаг, оно узнает, что API устройства недоступен; но если не проверяет и напрямую вызывает API на стороне устройства, это приведёт к неопределённому поведению.
 
-**根因**：2.29.7 的 GIN 不支持跨节点。LSA（Local SHARP Aggregation）组内的 rank 才能使用设备侧 API。
+**Первопричина**: GIN версии 2.29.7 не поддерживает межузловую работу. Использовать API на стороне устройства могут только ранги внутри группы LSA (Local SHARP Aggregation).
 
-**正确做法**：应用程序应在初始化后检查`ncclCommProperties.deviceApiSupport`，如果为`false`，回退到 host 侧 API。
+**Правильный подход**: приложение должно после инициализации проверить`ncclCommProperties.deviceApiSupport`, если равно`false`, откатиться к API на стороне хоста.
 
-## 陷阱三：memset 清零与未初始化字段泄露
+## Ловушка третья: обнуление через memset и утечка неинициализированных полей
 
-**场景**：`ncclDevCommCopyNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:118]在拷贝前执行`memset(old, '\0', sizeof(*old))`。
+**Сценарий**：`ncclDevCommCopyNewToOld_v23000` [FACT:src/devcomm/devcomm_v23000.cc:118]Перед копированием выполнить`memset(old, '\0', sizeof(*old))`。
 
-**为什么需要**：旧结构体中可能有新版本不存在的字段（如 v22902 中的`ginSignalBase`、`ginCounterBase`）。如果不清零，这些字段会保留栈上的垃圾值，可能被 kernel 误读为有效数据。
+**Почему это необходимо**: в старой структуре могут быть поля, отсутствующие в новой версии (например,`ginSignalBase`、`ginCounterBase`в v22902). Если не обнулить, эти поля сохранят мусорные значения со стека, которые ядро может ошибочно интерпретировать как валидные данные.
 
-**踩坑点**：Если разработчик вручную реализует преобразование версий и забудет обнулить память, ядро может прочитать случайные значения, что проявится в виде перемежающихся ошибок — которые трудно воспроизвести и отладить.
+**Подводный камень**：Если разработчик вручную реализует преобразование версий и забудет обнулить память, ядро может прочитать случайные значения, что проявится в виде перемежающихся ошибок — которые трудно воспроизвести и отладить.
 
 **Правильный подход**：Всегда обнуляйте всю целевую структуру перед преобразованием. Все реализации`CopyNewToOld`в NCCL следуют этому шаблону[FACT:src/devcomm/devcomm_v22902.cc:132] [FACT:src/devcomm/devcomm_v22907.cc:104] [FACT:src/devcomm/devcomm_v23000.cc:118]。
 
@@ -405,7 +407,7 @@ preferably with the same NCCL version that it will be running with.
 > **[Design Inference & Architectural Trade-offs]**
 > **Что произойдёт**： Если логика сопоставления строго следует поиску по диапазону, 2.29.4 не найдёт совпадения и вернёт ошибку. Но в реальной реализации может быть стратегия «ближайшего совпадения» — 2.29.4 может быть направлен к плагину v22902 или v22907.
 
-**Правильный подход**：Приложение должно по возможности использовать тот же мажорный номер версии, что и библиотека времени выполнения. Если необходимо跨 версии, следует проверить, есть ли в целевом диапазоне версий соответствующий совместимый плагин.
+**Правильный подход**: Приложение должно по возможности использовать тот же мажорный номер версии, что и библиотека времени выполнения. Если необходимо跨 версии, следует проверить, есть ли в целевом диапазоне версий соответствующий совместимый плагин.
 
 ## Цепочка восстановления после сбоя
 
@@ -415,7 +417,7 @@ preferably with the same NCCL version that it will be running with.
 
 2. **API верхнего уровня перехватывает ошибку**：`ncclCommGetDeviceHandle`проверяет возвращаемое значение, и если оно не`ncclSuccess`, не заполняет`devComm`структуру.
 
-3. **Обработка приложением**：Приложение должно проверить возвращаемое значение и в случае неудачи откатиться к API на стороне хоста или прекратить通信.
+3. **Обработка приложением**: Приложение должно проверить возвращаемое значение и в случае неудачи откатиться к API на стороне хоста или прекратить通信.
 
 4. **Ведение журнала**：NCCL выводит журнал уровня`WARN`, содержащий версию компиляции и версию времени выполнения, что помогает локализовать проблему.
 
@@ -456,9 +458,9 @@ preferably with the same NCCL version that it will be running with.
 
 5. **проверяет совместимость запросов ресурсов со старыми версиями.**Производственные ловушки
 
-：конфликт запросов ресурсов GIN с ядрами старых версий, отключение API устройства при меж节点通信, необходимость обнуления через memset, сбой сопоставления из-за пробелов в диапазонах версий.`nccl_device`В следующей главе мы перейдём к API на стороне устройства и слиянию ядер и рассмотрим, как
+: конфликт запросов ресурсов GIN с ядрами старых версий, отключение API устройства при меж节点通信, необходимость обнуления через memset, сбой сопоставления из-за пробелов в диапазонах версий.`nccl_device`В следующей главе мы перейдём к API на стороне устройства и слиянию ядер и рассмотрим, как
 
-# заголовочные файлы организуют функции на стороне устройства, а также как слияние ядер объединяет несколько операций коллективной通信 в одно ядро для выполнения.
+# Заголовочные файлы организуют функции на стороне устройства, а также как слияние ядер объединяет несколько операций коллективной связи в одно ядро для выполнения.
 
 Вопросы для размышления и самопроверки по этой главе`ncclDevCommCopyNewToOld_v23000`Q1: Если убрать`memset(old, '\0', sizeof(*old))`из
 
@@ -499,7 +501,7 @@ preferably with the same NCCL version that it will be running with.
 Способы обхода для приложения:
 
 - Использовать тот же номер мажорной версии, что и у runtime-библиотеки (например, 2.31.x).
-- Если необходимо跨版本, проверить, есть ли для целевого диапазона версий соответствующий совместимый плагин.
+- При необходимости跨版本, проверить, есть ли для целевого диапазона версий соответствующий совместимый плагин.
 - После инициализации проверить`ncclCommProperties.deviceApiSupport`, и если он равен`false`, откатиться к host-side API.
 
 Q3: `ncclDevCommRequirementsFilter_v22902`Внутри есть фрагмент логики:`if (reqs->barrierCount) { reqs->lsaBarrierCount = std::max(reqs->lsaBarrierCount, reqs->barrierCount); reqs->barrierCount = 0; }`. Объясните, зачем нужно это преобразование и что произойдёт, если его не выполнить.

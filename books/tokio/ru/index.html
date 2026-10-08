@@ -130,14 +130,14 @@
           <li><a href="#ch-03" class="toc-link" data-target="ch-03"><span class="toc-num">03</span><span>Глава 3: Жизнь задачи (часть 1): как spawn превращает Future в планируемую сущность</span></a></li>
           <li><a href="#ch-04" class="toc-link" data-target="ch-04"><span class="toc-num">04</span><span>Глава 4: Жизнь задачи (часть 2): цикл планирования, poll и замкнутый цикл пробуждения</span></a></li>
           <li><a href="#ch-05" class="toc-link" data-target="ch-05"><span class="toc-num">05</span><span>Глава 5: Уведомление о готовности I/O: как Reactor переводит события epoll в пробуждение Waker</span></a></li>
-          <li><a href="#ch-06" class="toc-link" data-target="ch-06"><span class="toc-num">06</span><span>第 6 章：时间驱动：时间轮、Sleep 与超时如何被唤醒</span></a></li>
-          <li><a href="#ch-07" class="toc-link" data-target="ch-07"><span class="toc-num">07</span><span>Итак, мы уже увидели, как временное驱动 повторно использует механизм park/unpark I/O driver, позволяя таймерам и готовности fd совместно использовать одну точку ожидания. Уровни временного колеса, вычисление истечения и запуск Waker образуют полный замкнутый цикл обработки «готовности времени» в асинхронном рантайме. Но асинхронное ожидание не ограничивается I/O и временем — когда несколько задач конкурируют за одну и ту же блокировку или передают сообщения через каналы, где должен храниться Waker? В следующей главе мы войдём в семейство tokio::sync и посмотрим, какие разные компромиссы делают Mutex, Semaphore и различные каналы в отношении «очереди ожидающих + пробуждения через Waker».</span></a></li>
+          <li><a href="#ch-06" class="toc-link" data-target="ch-06"><span class="toc-num">06</span><span>Глава 6: Драйвер времени: как колесо времени, Sleep и тайм-ауты пробуждают задачи</span></a></li>
+          <li><a href="#ch-07" class="toc-link" data-target="ch-07"><span class="toc-num">07</span><span>Глава 7: Примитивы синхронизации: как Mutex, Semaphore и каналы реализуют асинхронное ожидание</span></a></li>
           <li><a href="#ch-08" class="toc-link" data-target="ch-08"><span class="toc-num">08</span><span>Глава 8: Блокировки и мосты: пул потоков spawn_blocking и границы block_on</span></a></li>
-          <li><a href="#ch-09" class="toc-link" data-target="ch-09"><span class="toc-num">09</span><span>Глава 9: Магия макросов: генерация кода за #[tokio::main], select! и join!</span></a></li>
-          <li><a href="#ch-10" class="toc-link" data-target="ch-10"><span class="toc-num">10</span><span>Глава 10: Абстракции потокового I/O: AsyncRead/AsyncWrite и фреймворк кодеков</span></a></li>
-          <li><a href="#ch-11" class="toc-link" data-target="ch-11"><span class="toc-num">11</span><span>Глава 11: Экосистема Stream и слой инструментов: механизмы расширения tokio-stream и tokio-util</span></a></li>
-          <li><a href="#ch-12" class="toc-link" data-target="ch-12"><span class="toc-num">12</span><span>Глава 12: Кооперативное планирование и бюджет: как механизм coop предотвращает голодание планировщика задачами</span></a></li>
-          <li><a href="#ch-13" class="toc-link" data-target="ch-13"><span class="toc-num">13</span><span>Следующая глава: Глава 13 →</span></a></li>
+          <li><a href="#ch-09" class="toc-link" data-target="ch-09"><span class="toc-num">09</span><span>Глава 9: Магия макросов: кодогенерация за #[tokio::main], select! и join!</span></a></li>
+          <li><a href="#ch-10" class="toc-link" data-target="ch-10"><span class="toc-num">10</span><span>Глава 10: Абстракции потокового I/O: AsyncRead, AsyncWrite и фреймворк кодеков</span></a></li>
+          <li><a href="#ch-11" class="toc-link" data-target="ch-11"><span class="toc-num">11</span><span>Глава 11: Экосистема Stream и утилиты: механизмы расширения tokio-stream и tokio-util</span></a></li>
+          <li><a href="#ch-12" class="toc-link" data-target="ch-12"><span class="toc-num">12</span><span>Глава 12: Кооперативное планирование и бюджет: как coop предотвращает голодание планировщика</span></a></li>
+          <li><a href="#ch-13" class="toc-link" data-target="ch-13"><span class="toc-num">13</span><span>Глава 13: Ловушки в продакшене: безопасность отмены, паники и порядок завершения</span></a></li>
           <li><a href="#ch-14" class="toc-link" data-target="ch-14"><span class="toc-num">14</span><span>Глава 14: Архитектурные компромиссы и будущая эволюция: от io_uring к подключаемым драйверам</span></a></li>
         </ul>
       </nav>
@@ -265,8 +265,8 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 }</code></pre></div>
 <p><span class="fact-pill" data-file="tokio/src/runtime/mod.rs" data-lines="649-673" onclick="highlightFact('tokio/src/runtime/mod.rs', '649-673')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/mod.rs:649-673</code></span></p>
 <p>Копировать<code>AutoBox</code>Этот код решает очень конкретную проблему: если Future слишком велик (более 16 КБ, в debug-режиме 2 КБ), прямое встраивание в структуру Task приведёт к переполнению стека или расточительному расходу памяти.<code>SHOULD_BOX</code>Через константу времени компиляции</p>
-<div class="inference-box"><span class="inference-tag">решается, упаковывать ли Future в бокс.</span><p>〔Проектные предположения и архитектурные компромиссы〕<code>if</code>」的原因：如果用运行时判断，编译器会为每个<code>T</code>同时实例化两条分支的代码（一条处理<code>T</code>，一条处理<code>Pin&lt;Box&lt;T&gt;&gt;</code>），导致代码膨胀。而用常量分支，单态化收集器会剪掉不可达的分支，只为实际使用的类型生成代码。这是一个典型的「用类型系统替代运行时判断」的优化。</p></div>
-<h3>调度公平性：31 与 61 的魔法数字</h3>
+<div class="inference-box"><span class="inference-tag">решается, упаковывать ли Future в бокс.</span><p>〔Проектные предположения и архитектурные компромиссы〕<code>if</code>» причина: если использовать проверку во время выполнения, компилятор для каждого<code>T</code>одновременно инстанцирует код обеих ветвей (одна обрабатывает<code>T</code>, другая обрабатывает<code>Pin&lt;Box&lt;T&gt;&gt;</code>), что приводит к раздуванию кода. При использовании константных ветвей сборщик мономорфизации вырезает недостижимые ветви и генерирует код только для фактически используемых типов. Это типичная оптимизация «замена проверки во время выполнения системой типов».</p></div>
+<h3>Справедливость планирования: магические числа 31 и 61</h3>
 <p>В документации планировщика Tokio определено формальное гарантирование справедливости:</p>
 <blockquote class="reader-quote">If the total number of tasks does not grow without bound, and no task is blocking the thread, then it is guaranteed that tasks are scheduled fairly.</blockquote>
 <p><span class="fact-pill" data-file="tokio/src/runtime/mod.rs" data-lines="279-281" onclick="highlightFact('tokio/src/runtime/mod.rs', '279-281')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/mod.rs:279-281</code></span></p>
@@ -885,7 +885,7 @@ pub(super) enum Stage&lt;T: Future&gt; {
 <p>Остальные биты используются для счётчика ссылок<span class="fact-pill" data-file="tokio/src/runtime/task/mod.rs" data-lines="53" onclick="highlightFact('tokio/src/runtime/task/mod.rs', '53')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/task/mod.rs:53</code></span>。</p>
 <p><code>RUNNING</code>Тот факт, что бит служит блокировкой, заслуживает подробного рассмотрения. В разделе Safety документации модуля указано: любой изменяемый доступ к future должен происходить после получения блокировки путём изменения<code>RUNNING</code>бита, что гарантирует эксклюзивный доступ<span class="fact-pill" data-file="tokio/src/runtime/task/mod.rs" data-lines="130-133" onclick="highlightFact('tokio/src/runtime/task/mod.rs', '130-133')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/task/mod.rs:130-133</code></span>. Это означает, что при poll задачи поток сначала CAS устанавливает<code>RUNNING</code>, и в случае успеха получает эксклюзивный доступ к future; при неудаче это означает, что другой поток уже выполняет poll, и текущий poll немедленно возвращается. Это объединяет «взаимное исключение poll» и «переход состояния» в одну атомарную операцию, избегая отдельного мьютекса.</p>
 <h3>Протокол управления доступом JOIN_WAKER</h3>
-<p><code>JOIN_WAKER</code>Бит<code>waker</code>— самая изящная часть всего конечного автомата. Он решает проблему:<code>Trailer</code>поле (в<strong>) может одновременно访问 двумя потоками — среда выполнения при завершении задачи</strong>читает<code>JoinHandle</code>его, чтобы разбудить join'ера,<strong>при poll</strong>записывает<span class="fact-pill" data-file="tokio/src/runtime/task/mod.rs" data-lines="75-120" onclick="highlightFact('tokio/src/runtime/task/mod.rs', '75-120')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/task/mod.rs:75-120</code></span>：</p>
+<p><code>JOIN_WAKER</code>Бит<code>waker</code>— самая изящная часть всего конечного автомата. Он решает проблему:<code>Trailer</code>поле (в<strong>) может одновременно быть доступен двум потокам — среда выполнения при завершении задачи</strong>читает<code>JoinHandle</code>его, чтобы разбудить join'ера,<strong>при poll</strong>записывает<span class="fact-pill" data-file="tokio/src/runtime/task/mod.rs" data-lines="75-120" onclick="highlightFact('tokio/src/runtime/task/mod.rs', '75-120')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/task/mod.rs:75-120</code></span>：</p>
 <p>1. <code>JOIN_WAKER</code>его для регистрации waker. Документация модуля приводит 7 правил</p>
 <p>изначально равен 0.<code>JoinHandle</code>2. Когда равен 0,</p>
 <p>имеет эксклюзивный (изменяемый) доступ к полю waker.<code>JoinHandle</code>3. Когда равен 1,</p>
@@ -1280,14 +1280,14 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
     participant Inject as "InjectQueue"
     participant Parker as "Unparker"
 
-    Future-&gt;&gt;Waker: "返回 Pending, 注册 waker"
-    Note over Future: "事件就绪(如 epoll)"
+    Future-&gt;&gt;Waker: "возвращает Pending, регистрирует waker"
+    Note over Future: "событие готово (например, epoll)"
     Waker-&gt;&gt;RawTask: "raw.wake_by_ref()"
     RawTask-&gt;&gt;RawTask: "state: PENDING -&gt; SCHEDULED"
     RawTask-&gt;&gt;Handle: "schedule(Notified)"
-    alt 当前线程是同一 worker 且持有 core
-        Handle-&gt;&gt;Core: "schedule_local: 放入 lifo_slot"
-    else 外部线程或 core 被偷走
+    alt текущий поток — тот же worker и владеет core
+        Handle-&gt;&gt;Core: "schedule_local: поместить в lifo_slot"
+    else внешний поток или core украден
         Handle-&gt;&gt;Inject: "push_remote_task"
         Handle-&gt;&gt;Parker: "notify_parked_remote().unpark()"
     end</code></pre></div>
@@ -1322,9 +1322,9 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>Резюме главы<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="1172-1174" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '1172-1174')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:1172-1174</code></span>Главный цикл worker<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="1179-1182" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '1179-1182')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:1179-1182</code></span>— сердце планировщика: после каждого tick сначала берёт задачу (LIFO-слот → локальная очередь → глобальная очередь), если взял —<code>steal_into</code>выполняет poll, если не взял — крадёт, если кража не удалась — park.<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="1197-1203" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '1197-1203')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:1197-1203</code></span>。</p>
 <h2>Внутренний LIFO-цикл сжимает «пробуждение → постановка в очередь → повторный poll» в рамках одного budget, образуя замкнутый контур с низкой задержкой.</h2>
 <p>— это необработанный указатель плюс статическая vtable,<code>Context::run</code>через переход состояния запускает<code>run_task</code>, в зависимости от того, является ли текущий поток тем же worker, решает идти в локальную очередь или глобальную.<code>run_task</code>Использует четырёхсостоянийную атомарную машину плюс condvar как запасной вариант, решая классическую гонку потери пробуждения.<code>Waker</code>В следующей главе мы покинем планировщик и войдём в мир I/O: как Reactor переводит события epoll в<code>wake_by_ref</code>пробуждение, превращая<code>schedule</code>в<code>park</code>/<code>unpark</code>Вопросы для размышления и самопроверки в этой главе</p>
-<p>Q1: Если изменить<code>Waker</code>так, чтобы сначала брать<code>AsyncFd</code> 的 <code>Pending</code> 变成 <code>Ready</code>。</p>
-<h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>next_local_task</code> 改成先取 <code>run_queue</code>Затем берём<code>lifo_slot</code>, какие последствия будут в сценариях с интенсивной передачей сообщений?</summary>
+<p>Q1: Если изменить<code>Waker</code>так, чтобы сначала брать<code>AsyncFd</code>из<code>Pending</code>превращается в<code>Ready</code>。</p>
+<h2>Вопросы для размышления и самопроверки к этой главе</h2>
+<details class="reader-details"><summary class="reader-summary">Q1: Если<code>next_local_task</code>изменить на сначала взять<code>run_queue</code>Затем берём<code>lifo_slot</code>, какие последствия будут в сценариях с интенсивной передачей сообщений?</summary>
 <p><strong>Справочный разбор</strong>：<code>next_local_task</code>Текущая реализация —<code>self.lifo_slot.take().or_else(|| self.run_queue.pop())</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="1158-1160" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '1158-1160')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:1158-1160</code></span>, сначала берётся LIFO-слот. Если наоборот сначала брать<code>run_queue</code>, то только что разбуженные задачи, данные которых ещё горячие, будут поставлены в очередь на выполнение после других задач. В режиме передачи сообщений A→B→A, после пробуждения B не запустится немедленно, а будет ждать завершения других задач в очереди; к этому моменту данные, записанные A, могут быть вытеснены из кэша CPU, и выгода от локальности теряется. Что ещё серьёзнее,<code>lifo_slot</code>задачи внутри будут ждать, пока<code>run_queue</code>не опустеет, прежде чем выполняться, и задержка заметно возрастёт. Комментарий в исходном коде<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="117-121" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '117-121')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:117-121</code></span>явно указывает, что этот порядок нужен для «улучшения локальности, использования преимуществ шаблона передачи сообщений и снижения задержки».</p>
 </details>
 <details class="reader-details"><summary class="reader-summary">Q2: <code>park_condvar</code>, если убрать<code>Err(NOTIFIED)</code>в ветке<code>self.state.swap(EMPTY, SeqCst)</code>, оставив только<code>return</code>, какие будут проблемы?</summary>
@@ -1373,7 +1373,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>В предыдущей главе мы проследили главный цикл worker-потока: задача poll-ится, при возврате Pending Waker сохраняется куда-то, после готовности события Waker срабатывает, и задача снова ставится в очередь. Но что это за «куда-то»? Как Waker находится при поступлении события epoll? Именно на это должен ответить Reactor. Сначала построим интуитивную модель: представьте весь механизм уведомления о готовности I/O как систему вызова по номеру в ресторане — клиент (задача), сделав заказ, не стоит и не ждёт у окна, а берёт пейджер (Waker) и возвращается на место; кухня (ядро epoll), приготовив блюдо, сообщает стойке (Reactor), которая по номеру заказа (Token) находит соответствующий пейджер и нажимает кнопку. Без этой системы каждой задаче пришлось бы опрашивать socket, и CPU сгорел бы; либо использовались бы блокирующие потоки — один поток на соединение, и масштабирование было бы невозможно. Reactor в Tokio состоит из трёх файлов, образующих трёхуровневую структуру со строгим разделением обязанностей: driver.rs — это сам цикл событий, владеющий mio::Poll, отвечающий за вызов poll() для блокирующего ожидания событий ядра и перевод событий в чтение/запись ScheduledIo; registration.rs — это пользовательский регистрационный дескриптор, который хранится внутри TcpStream и предоставляет API poll_read_ready / poll_write_ready и т. п.; scheduled_io.rs — это слот состояния каждого fd, хранящий биты готовности чтения/записи и список Waker, являясь мостом между событиями и задачами. Связи сборки модулей можно посмотреть в tokio/src/runtime/io/mod.rs:5-16: driver экспортирует Driver, Handle, ReadyEvent, registration экспортирует Registration, scheduled_io экспортирует ScheduledIo. Следующая схема фиксирует полный поток данных, который нужно проследить в этой главе: TcpStream → Registration → ScheduledIo → Handle/Driver → ядро → обратно в ScheduledIo → Waker. Далее мы разберём это слой за слоем.</p>
 <h2>Уровень драйвера:<code>Driver</code>и<code>Handle</code>разделение обязанностей</h2>
 <h3>Интуитивная модель</h3>
-<p><code>Driver</code>— это<strong>единственная сущность, владеющая<code>mio::Poll</code>, к ней можно обращаться только из одного потока</strong>— это требование эксклюзивности цикла событий. А<code>&amp;mut</code>— это<code>Handle</code>клонируемая точка входа для регистрации, разделяемая между потоками<strong>可克隆、可跨线程共享的注册入口</strong>, любой поток, желающий зарегистрировать новый fd, делает это через него. Без этого разделения пришлось бы либо<code>mio::Poll</code>блокировать, либо возвращать все регистрации в поток driver (что вводит межпоточную очередь сообщений). Tokio выбирает, чтобы<code>Handle</code>напрямую владел клоном<code>mio::Registry</code>, регистрация может выполняться параллельно, и только фактическое ожидание событий требует эксклюзивного доступа.</p>
+<p><code>Driver</code>— это<strong>единственная сущность, владеющая<code>mio::Poll</code>, к ней можно обращаться только из одного потока</strong>— это требование эксклюзивности цикла событий. А<code>&amp;mut</code>— это<code>Handle</code>клонируемая точка входа для регистрации, разделяемая между потоками<strong>клонируемая, разделяемая между потоками точка регистрации</strong>, любой поток, желающий зарегистрировать новый fd, делает это через него. Без этого разделения пришлось бы либо<code>mio::Poll</code>блокировать, либо возвращать все регистрации в поток driver (что вводит межпоточную очередь сообщений). Tokio выбирает, чтобы<code>Handle</code>напрямую владел клоном<code>mio::Registry</code>, регистрация может выполняться параллельно, и только фактическое ожидание событий требует эксклюзивного доступа.</p>
 <h3>Раскладка памяти и поля</h3>
 <p>Сначала рассмотрим<code>Driver</code>поля<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="25-38" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '25-38')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:25-38</code></span>：</p>
 <ul class="reader-list">
@@ -1408,18 +1408,18 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">копирование</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
     start["turn(handle, max_wait)"] --&gt; assert["debug_assert!(!is_shutdown)"]
     assert --&gt; release["release_pending_registrations()"]
-    release --&gt; pick{"max_wait == 0&lt;br/&gt;且 events_busy 存在?"}
-    pick --&gt;|是| busy["events = events_busy"]
-    pick --&gt;|否| main["events = events"]
+    release --&gt; pick{"max_wait == 0&lt;br/&gt;и events_busy существует?"}
+    pick --&gt;|да| busy["events = events_busy"]
+    pick --&gt;|нет| main["events = events"]
     busy --&gt; poll["poll.poll(events, max_wait)"]
     main --&gt; poll
-    poll --&gt; pollres{"poll 返回?"}
-    pollres --&gt;|"Ok / Interrupted"| iter["遍历 events.iter()"]
-    pollres --&gt;|"其他 Err"| panic["panic!(unexpected error)"]
+    poll --&gt; pollres{"poll вернул?"}
+    pollres --&gt;|"Ok / Interrupted"| iter["обход events.iter()"]
+    pollres --&gt;|"другие Err"| panic["panic!(unexpected error)"]
     iter --&gt; tok{"event.token()?"}
-    tok --&gt;|"TOKEN_WAKEUP"| skip["忽略，仅用于打断阻塞"]
+    tok --&gt;|"TOKEN_WAKEUP"| skip["игнорировать, используется только для прерывания блокировки"]
     tok --&gt;|"TOKEN_SIGNAL"| sig["signal_ready = true"]
-    tok --&gt;|"普通 fd token"| cast["EXPOSE_IO.from_exposed_addr(token.0)"]
+    tok --&gt;|"обычный fd token"| cast["EXPOSE_IO.from_exposed_addr(token.0)"]
     cast --&gt; setr["io.set_readiness(Tick::Set, curr | ready)"]
     setr --&gt; wake["io.wake(ready)"]
     wake --&gt; iter
@@ -1466,7 +1466,7 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p><code>async_io</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="225-245" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '225-245')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:225-245</code></span>— асинхронная версия:<code>readiness(interest).await</code>регистрирует Waker и ждёт, затем при выполнении<code>f()</code>，<code>WouldBlock</code>сбрасывает бит готовности и зацикливается. Обратите внимание, что в цикле также вызывается<code>coop::poll_proceed</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="233" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '233')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:233</code></span>, чтобы не исчерпать бюджет при множественных<code>WouldBlock</code>повторных попытках.</p>
 <h3>Производственные подводные камни:<code>Drop</code>Очистка Waker в</h3>
 <p><code>Registration::drop</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="253-262" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '253-262')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:253-262</code></span>вызывает<code>self.shared.clear_wakers()</code>. Комментарий<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="253-262" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '253-262')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:253-262</code></span>объясняет причину:<code>ScheduledIo</code>хранящийся в<code>Waker</code>может держать<code>Arc&lt;driver::Inner&gt;</code>, а<code>driver::Inner</code>в свою очередь держит<code>ScheduledIo</code>, образуя циклическую ссылку. Очистка Waker — это способ разорвать цикл. Но комментарий также признаёт, что это «imperfect solution» — если<code>Registration</code>сам сохранён в<code>Waker</code>, цикл всё равно остаётся. Это проблема, обсуждаемая в tokio-rs/tokio#3481.</p>
-<div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>В production поведение таково: если множество соединений было drop, но runtime не завершился, память не освобождается немедленно до следующего<code>clear_wakers</code>или runtime shutdown. Для сервисов с длительными соединениями это обычно не проблема; но для сценариев с короткими соединениями и частым созданием/уничтожением нужно следить за моментом回收<code>ScheduledIo</code>.</p></div>
+<div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>В production поведение таково: если множество соединений было drop, но runtime не завершился, память не освобождается немедленно до следующего<code>clear_wakers</code>или завершение работы runtime. Для сервисов с длительными соединениями это обычно не проблема; но для сценариев с короткими соединениями и частым созданием/уничтожением нужно следить за моментом освобождения<code>ScheduledIo</code>.</p></div>
 <h2>От<code>TcpStream::read</code>до<code>Waker</code>полная цепочка пробуждения</h2>
 <h3>Интуитивная модель</h3>
 <p>Теперь свяжем три слоя вместе. Пользователь на<code>TcpStream</code>вызывает<code>.read().await</code>, фактически выполняется<code>AsyncRead::poll_read</code> → <code>PollEvented::poll_read</code> → <code>Registration::poll_read_io</code>. Когда данных нет,<code>Waker</code>сохраняется в<code>ScheduledIo</code>; когда epoll сообщает о готовности к чтению, driver извлекает из<code>ScheduledIo</code><code>Waker</code>и пробуждает, задача перепланируется, и при повторном poll<code>poll_readiness</code>обнаруживает, что бит готовности установлен, и сразу возвращает<code>Ready</code>，<code>read()</code>успешно.</p>
@@ -1480,28 +1480,28 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p><strong>Этап третий: приход события</strong>. driver<code>turn</code>из<code>poll.poll()</code>получает событие<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="198" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '198')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:198</code></span>, при обходе для каждого события fd выполняет<code>io.set_readiness(Tick::Set, |curr| curr | ready)</code>и<code>io.wake(ready)</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="228-229" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '228-229')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:228-229</code></span>。<code>wake</code>внутри извлекает<code>Waker</code>соответствующего направления и вызывает<code>wake()</code>。</p>
 <p><strong>Этап четвёртый: перепланирование задачи</strong>。<code>Waker::wake()</code>повторно ставит задачу в локальную очередь worker (рассказывалось в предыдущей главе). worker снова poll-ит эту задачу,<code>poll_readiness</code>обнаруживает, что бит готовности установлен, возвращает<code>Ready</code>，<code>read()</code>успешно.</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant Task as "任务 (worker 线程)"
+    participant Task as "Задача (worker-поток)"
     participant Reg as "Registration"
     participant SIO as "ScheduledIo"
-    participant Drv as "Driver (I/O 线程)"
+    participant Drv as "Driver (поток ввода-вывода)"
     participant OS as "epoll/kqueue"
 
     Task-&gt;&gt;Reg: "poll_read_ready(cx)"
     Reg-&gt;&gt;SIO: "poll_readiness(cx, Read)"
-    SIO--&gt;&gt;Reg: "Pending (Waker 已存入读槽位)"
+    SIO--&gt;&gt;Reg: "Pending (Waker сохранён в слоте чтения)"
     Reg--&gt;&gt;Task: "Poll::Pending"
-    Note over Task: 任务让出，worker 去跑别的任务
+    Note over Task: задача уступает, worker идёт выполнять другие задачи
     Drv-&gt;&gt;OS: "poll.poll(events, max_wait)"
     OS--&gt;&gt;Drv: "event(token=fd_ptr, READABLE)"
     Drv-&gt;&gt;SIO: "set_readiness(Tick::Set, curr | READABLE)"
     Drv-&gt;&gt;SIO: "wake(READABLE)"
-    SIO-&gt;&gt;Task: "Waker::wake() 重新入队"
-    Note over Task: worker 再次 poll 该任务
+    SIO-&gt;&gt;Task: "Waker::wake() повторная постановка в очередь"
+    Note over Task: worker снова опрашивает эту задачу
     Task-&gt;&gt;Reg: "poll_read_ready(cx)"
     Reg-&gt;&gt;SIO: "poll_readiness(cx, Read)"
     SIO--&gt;&gt;Reg: "Ready(ReadyEvent{ready: READABLE})"
     Reg--&gt;&gt;Task: "Poll::Ready(Ok(ev))"
-    Task-&gt;&gt;Task: "read() 成功返回数据"</code></pre></div>
+    Task-&gt;&gt;Task: "read() успешно возвращает данные"</code></pre></div>
 <h3>Важное ответвление:<code>assume_ready</code>оптимизация</h3>
 <p><code>TcpStream::new_accepted</code> <span class="fact-pill" data-file="tokio/src/net/tcp/stream.rs" data-lines="174-181" onclick="highlightFact('tokio/src/net/tcp/stream.rs', '174-181')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/net/tcp/stream.rs:174-181</code></span>— заметная оптимизация.<code>accept</code>возвращаемый socket естественно доступен для записи и обычно уже содержит первую партию байтов от peer. Если ждать первого события driver, при высокой нагрузке это событие может оказаться позади событий всех установленных соединений, вызывая задержку. Поэтому<code>new_accepted</code>напрямую вызывает<code>assume_ready(Ready::READABLE | Ready::WRITABLE)</code> <span class="fact-pill" data-file="tokio/src/net/tcp/stream.rs" data-lines="174-181" onclick="highlightFact('tokio/src/net/tcp/stream.rs', '174-181')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/net/tcp/stream.rs:174-181</code></span>。</p>
 <p><code>assume_ready</code>, комментарий<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="103-105" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '103-105')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:103-105</code></span>гласит: «A wrong guess costs one<code>WouldBlock</code>, which clears the readiness again.» — цена ошибочной догадки — всего один<code>WouldBlock</code>，<code>poll_io</code>цикл очистит бит готовности и снова будет ждать. Это дизайн<strong>оптимистичной догадки + быстрого исправления ошибок</strong>.</p>
@@ -1513,34 +1513,34 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>Цена — необходимость<code>ScheduledIo</code>обрабатывать конкурентный доступ (<code>set_readiness</code>и<code>poll_readiness</code>могут происходить одновременно), что решается атомарными операциями и внутренними блокировками.</p>
 <h3>Производственные подводные камни:<code>is_shutdown</code>и<code>RUNTIME_SHUTTING_DOWN_ERROR</code></h3>
 <p><code>poll_ready</code>проверяет<code>ev.is_shutdown</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="155-171" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '155-171')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:155-171</code></span>, если истина — возвращает<code>gone()</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="265-267" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '265-267')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:265-267</code></span>, то есть<code>RUNTIME_SHUTTING_DOWN_ERROR</code>。</p>
-<div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>Смысл этой проверки в том, что: при завершении runtime driver<code>shutdown</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="174-182" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '174-182')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:174-182</code></span>会遍历所有注册并调用<code>io.shutdown()</code>，把<code>is_shutdown</code>置位并唤醒所有等待者。如果不检查这个标志，任务可能在 runtime 已经停止调度后仍然尝试读 socket，导致未定义行为或挂起。生产环境中，如果你看到<code>RUNTIME_SHUTTING_DOWN_ERROR</code>，通常意味着有任务在 runtime drop 之后仍在运行——检查是否有<code>spawn</code>的任务没有被正确 join。</p></div>
-<p>另一个坑是<code>deregister_source</code>的<code>unpark</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="328" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '328')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:328</code></span>。如果 driver 正阻塞在<code>poll</code>里，且此时最后一个<code>Registration</code>被 drop，<code>unpark</code>会唤醒 driver。但如果 driver 不在阻塞状态（比如正在处理其他事件），<code>unpark</code>只是让下一次<code>turn</code>立即返回<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="280-283" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '280-283')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:280-283</code></span>。这个语义在<code>Handle::unpark</code>的文档注释里有说明。</p>
-<h2>设计思考：Reactor 的三个关键权衡</h2>
-<p><strong>权衡一：<code>Token</code>用指针而非索引</strong>。<code>EXPOSE_IO.from_exposed_addr(token.0)</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="220" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '220')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:220</code></span>把<code>mio::Token</code>直接当作<code>*const ScheduledIo</code>的地址。这避免了维护一个<code>Token → ScheduledIo</code>的映射表，查找是 O(1) 且无锁。代价是安全性依赖严格的生命周期管理：指针必须在注销且 driver 不再 poll 之后才能释放<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="222-225" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '222-225')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:222-225</code></span>。</p>
-<p><strong>权衡二：读写双 Waker 槽位</strong>。<code>Registration</code>文档<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="24-26" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '24-26')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:24-26</code></span>说「A registration instance represents two separate readiness streams」——读和写各有一个独立的<code>Waker</code>槽位。这允许同一个 socket 的读任务和写任务分别注册，互不干扰。但<code>poll_read_ready</code>的注释<span class="fact-pill" data-file="tokio/src/net/tcp/stream.rs" data-lines="549-552" onclick="highlightFact('tokio/src/net/tcp/stream.rs', '549-552')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/net/tcp/stream.rs:549-552</code></span>提醒：多次调用<code>poll_read_ready</code>/<code>poll_read</code>/<code>poll_peek</code>只有最后一次的<code>Waker</code>会被保留——读方向只有一个槽位。</p>
-<p><strong>权衡三：<code>events_busy</code>的独立缓冲区</strong>。测试<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="364-386" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '364-386')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:364-386</code></span>验证了这个行为：<code>Driver::new(16, Some(2))</code>创建 busy 容量为 2 的 driver，注册 5 个可读 source 后，非阻塞<code>turn</code>只取 2 个事件<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="375-376" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '375-376')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:375-376</code></span>，剩余 3 个留在内核队列，下次阻塞<code>turn</code>取到<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="379-380" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '379-380')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:379-380</code></span>。这防止了非阻塞 poll 一次性吞掉所有事件导致后续 poll 饥饿。</p>
-<h2>本章小结</h2>
-<p>本章追踪了<code>TcpStream::read</code>背后的完整 Reactor 链路：</p>
+<div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>Смысл этой проверки в том, что: при завершении runtime driver<code>shutdown</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="174-182" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '174-182')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:174-182</code></span>обойдёт все регистрации и вызовет<code>io.shutdown()</code>, установит<code>is_shutdown</code>и разбудит всех ожидающих. Если не проверять этот флаг, задача может попытаться прочитать сокет после того, как runtime уже прекратил планирование, что приведёт к неопределённому поведению или зависанию. В производственной среде, если вы видите<code>RUNTIME_SHUTTING_DOWN_ERROR</code>, это обычно означает, что какая-то задача всё ещё выполняется после drop runtime — проверьте, нет ли<code>spawn</code>задач, которые не были корректно присоединены через join.</p></div>
+<p>Ещё одна ловушка —<code>deregister_source</code>из<code>unpark</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="328" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '328')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:328</code></span>. Если driver в данный момент заблокирован в<code>poll</code>, и в этот момент последний<code>Registration</code>был drop,<code>unpark</code>разбудит driver. Но если driver не находится в состоянии блокировки (например, обрабатывает другие события),<code>unpark</code>лишь заставит следующий<code>turn</code>немедленно вернуть<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="280-283" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '280-283')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:280-283</code></span>. Эта семантика описана в комментариях к документации<code>Handle::unpark</code>.</p>
+<h2>Проектное решение: три ключевых компромисса Reactor</h2>
+<p><strong>Компромисс первый:<code>Token</code>использовать указатели вместо индексов</strong>。<code>EXPOSE_IO.from_exposed_addr(token.0)</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="220" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '220')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:220</code></span>Рассматривать<code>mio::Token</code>напрямую как адрес<code>*const ScheduledIo</code>. Это позволяет избежать поддержки<code>Token → ScheduledIo</code>таблица сопоставления, поиск за O(1) и без блокировок. Цена — безопасность зависит от строгого управления жизненным циклом: указатель может быть освобождён только после дерегистрации и прекращения опроса драйвером<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="222-225" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '222-225')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:222-225</code></span>。</p>
+<p><strong>Компромисс второй: два слота Waker для чтения и записи</strong>。<code>Registration</code>Документация<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="24-26" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '24-26')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:24-26</code></span>гласит: «A registration instance represents two separate readiness streams» — для чтения и записи имеется независимый<code>Waker</code>слот. Это позволяет задачам чтения и записи одного и того же сокета регистрироваться отдельно, не мешая друг другу. Но<code>poll_read_ready</code>комментарий<span class="fact-pill" data-file="tokio/src/net/tcp/stream.rs" data-lines="549-552" onclick="highlightFact('tokio/src/net/tcp/stream.rs', '549-552')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/net/tcp/stream.rs:549-552</code></span>предупреждает: при многократном вызове<code>poll_read_ready</code>/<code>poll_read</code>/<code>poll_peek</code>сохраняется только последний<code>Waker</code>— для направления чтения существует только один слот.</p>
+<p><strong>Компромисс третий:<code>events_busy</code>независимый буфер</strong>. Тест<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="364-386" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '364-386')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:364-386</code></span>подтвердил это поведение:<code>Driver::new(16, Some(2))</code>создаётся драйвер с ёмкостью busy равной 2, после регистрации 5 источников, доступных для чтения, неблокирующий<code>turn</code>извлекает только 2 события<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="375-376" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '375-376')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:375-376</code></span>, остальные 3 остаются в очереди ядра и будут заблокированы в следующий раз<code>turn</code>получено<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="379-380" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '379-380')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:379-380</code></span>. Это предотвращает ситуацию, когда неблокирующий poll за один раз поглощает все события, что приводит к голоданию последующих poll.</p>
+<h2>Резюме главы</h2>
+<p>В этой главе прослежен<code>TcpStream::read</code>полный путь Reactor, стоящий за</p>
 <ul class="reader-list">
-<li><strong>驱动层</strong>：<code>Driver</code>独占<code>mio::Poll</code>，<code>turn</code>阻塞等待事件，用<code>EXPOSE_IO</code>把<code>Token</code>还原为<code>ScheduledIo</code>指针，调用<code>set_readiness</code> + <code>wake</code>触发<code>Waker</code>。<code>Handle</code>提供可跨线程的注册入口，<code>unpark</code>用于打断阻塞。</li>
-<li><strong>注册层</strong>：<code>Registration</code>持有<code>Arc&lt;ScheduledIo&gt;</code>，<code>poll_ready</code>检查就绪位或存入<code>Waker</code>，<code>poll_io</code>用<code>WouldBlock</code>重试循环处理假阳性，<code>try_io</code>/<code>async_io</code>分别服务同步和异步场景。</li>
-<li><strong>状态层</strong>：<code>ScheduledIo</code>是 fd 的状态槽，存储读写就绪位和双<code>Waker</code>槽位，是事件与任务之间的唯一桥梁。</li>
+<li><strong>Уровень драйвера</strong>：<code>Driver</code>эксклюзивно<code>mio::Poll</code>，<code>turn</code>блокирующее ожидание события, с помощью<code>EXPOSE_IO</code>восстановить<code>Token</code>в<code>ScheduledIo</code>указатель, вызвать<code>set_readiness</code> + <code>wake</code>запустить<code>Waker</code>。<code>Handle</code>предоставляет точку регистрации, доступную для межпоточного использования,<code>unpark</code>используется для прерывания блокировки.</li>
+<li><strong>Слой регистрации</strong>：<code>Registration</code>Содержит<code>Arc&lt;ScheduledIo&gt;</code>，<code>poll_ready</code>Проверяет бит готовности или сохраняет<code>Waker</code>，<code>poll_io</code>Использует<code>WouldBlock</code>Цикл повторных попыток для обработки ложных срабатываний,<code>try_io</code>/<code>async_io</code>Обслуживает синхронные и асинхронные сценарии по отдельности.</li>
+<li><strong>Слой состояния</strong>：<code>ScheduledIo</code>Является слотом состояния fd, хранит биты готовности чтения/записи и двойной<code>Waker</code>Слот, является единственным мостом между событиями и задачами.</li>
 </ul>
-<h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把<code>poll_io</code>里<code>WouldBlock</code>分支的<code>self.clear_readiness(ev)</code>删掉，在什么场景下会导致任务忙循环（busy-loop）？为什么？</summary>
-<p><strong>参考解析</strong>：<code>poll_io</code>的循环<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="173-192" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '173-192')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:173-192</code></span>在<code>f()</code>返回<code>WouldBlock</code>时调用<code>clear_readiness(ev)</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="187" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '187')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:187</code></span>。<code>ev</code>是<code>poll_ready</code>返回的<code>ReadyEvent</code>，包含当前就绪位。<code>clear_readiness</code>会把这些位从<code>ScheduledIo</code>里清掉。</p>
-<p>如果不清理，下一次循环调用<code>poll_ready</code> → <code>poll_readiness</code>时，<code>ScheduledIo</code>里仍然保留着旧的「可读」位，<code>poll_readiness</code>会立即返回<code>Ready</code>（因为就绪位非空），然后<code>f()</code>再次执行<code>read()</code>，如果 socket 确实没数据，又返回<code>WouldBlock</code>，循环继续。由于就绪位从未被清除，这个循环永远不会进入<code>Pending</code>，任务会一直占用 CPU 轮询。</p>
-<p>触发场景：多个任务共享同一个 socket 的读方向（虽然<code>Registration</code>文档<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="28-33" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '28-33')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:28-33</code></span>说最多两个任务，但读方向只有一个槽位），或者<code>try_read</code>和<code>poll_read</code>混用。更常见的是：epoll 报告可读后，另一个线程抢先读走了数据，当前任务的<code>read()</code>返回<code>WouldBlock</code>，此时必须清就绪位，否则会一直重试。</p>
+<h2>Вопросы для размышления и самопроверки в этой главе</h2>
+<details class="reader-details"><summary class="reader-summary">Q1: Если удалить<code>poll_io</code>в<code>WouldBlock</code>ветви<code>self.clear_readiness(ev)</code>то в каком сценарии это приведёт к busy-loop задачи? Почему?</summary>
+<p><strong>Справочный анализ</strong>：<code>poll_io</code>цикл<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="173-192" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '173-192')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:173-192</code></span>в<code>f()</code>возврат<code>WouldBlock</code>вызывается при<code>clear_readiness(ev)</code> <span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="187" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '187')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:187</code></span>。<code>ev</code>является<code>poll_ready</code>возвращаемым<code>ReadyEvent</code>, содержит текущие биты готовности.<code>clear_readiness</code>удалит эти биты из<code>ScheduledIo</code>.</p>
+<p>Если не очистить, при следующем вызове цикла<code>poll_ready</code> → <code>poll_readiness</code>,<code>ScheduledIo</code>по-прежнему сохраняются старые биты «доступно для чтения»,<code>poll_readiness</code>немедленно вернёт<code>Ready</code>(поскольку биты готовности не пусты), затем<code>f()</code>снова выполнит<code>read()</code>, если в socket действительно нет данных, и снова возвращается<code>WouldBlock</code>, цикл продолжается. Поскольку бит готовности никогда не сбрасывается, этот цикл никогда не войдёт в<code>Pending</code>, задача будет постоянно занимать CPU опросом.</p>
+<p>Сценарий срабатывания: несколько задач совместно используют одно направление чтения одного socket (хотя<code>Registration</code>документация<span class="fact-pill" data-file="tokio/src/runtime/io/registration.rs" data-lines="28-33" onclick="highlightFact('tokio/src/runtime/io/registration.rs', '28-33')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/registration.rs:28-33</code></span>говорит, что максимум две задачи, но для направления чтения есть только один слот), или<code>try_read</code>и<code>poll_read</code>используются совместно. Более распространённый случай: после того как epoll сообщил о готовности к чтению, другой поток успел первым вычитать данные, и<code>read()</code>текущей задачи возвращает<code>WouldBlock</code>, в этот момент необходимо сбросить бит готовности, иначе будут бесконечные повторные попытки.</p>
 </details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>add_source</code>在<code>registry.register</code>失败时为什么要调用<code>registrations.remove</code>？如果不调用会发生什么？</summary>
-<p><strong>参考解析</strong>：<code>add_source</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="288-312" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '288-312')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:288-312</code></span>先<code>registrations.allocate</code>分配<code>ScheduledIo</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="293" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '293')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:293</code></span>，再<code>registry.register</code>向内核注册<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="298" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '298')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:298</code></span>。如果注册失败，<code>ScheduledIo</code>已经分配但没有任何 fd 与之关联，如果不移除，它会永远留在<code>RegistrationSet</code>里。</p>
-<p>注释<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="296-297" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '296-297')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:296-297</code></span>明确说：「we should remove the<code>scheduled_io</code> from the <code>registrations</code> set if registering the <code>source</code> with the OS fails. Otherwise it will leak the <code>scheduled_io</code>.」——这是一个内存泄漏。</p>
-<p><code>remove</code>调用<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="300-303" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '300-303')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:300-303</code></span>用 unsafe 块包裹，因为<code>ScheduledIo</code>是<code>RegistrationSet</code>的一部分，移除操作需要保证没有其他引用。泄漏的后果：<code>RegistrationSet</code>持续增长，<code>Token</code>空间被浪费，最终可能导致<code>allocate</code>失败或内存耗尽。在高频创建/销毁连接的场景（如短连接服务器），如果注册失败率较高（比如 fd 耗尽），泄漏会加速资源枯竭。</p>
+<details class="reader-details"><summary class="reader-summary">Q2: <code>add_source</code>При<code>registry.register</code>почему при сбое вызывается<code>registrations.remove</code>? Что произойдёт, если не вызвать?</summary>
+<p><strong>Справочный анализ</strong>：<code>add_source</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="288-312" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '288-312')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:288-312</code></span>Сначала<code>registrations.allocate</code>Выделить<code>ScheduledIo</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="293" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '293')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:293</code></span>, затем<code>registry.register</code>зарегистрировать в ядре<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="298" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '298')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:298</code></span>. Если регистрация не удалась,<code>ScheduledIo</code>уже выделен, но не связан ни с одним fd; если не удалить, он навсегда останется в<code>RegistrationSet</code>.</p>
+<p>Комментарий<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="296-297" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '296-297')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:296-297</code></span>явно говорит: «we should remove the<code>scheduled_io</code> from the <code>registrations</code> set if registering the <code>source</code> with the OS fails. Otherwise it will leak the <code>scheduled_io</code>.» — это утечка памяти.</p>
+<p><code>remove</code>Вызов<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="300-303" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '300-303')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:300-303</code></span>обёрнут в блок unsafe, потому что<code>ScheduledIo</code>является<code>RegistrationSet</code>частью, и операция удаления должна гарантировать отсутствие других ссылок. Последствия утечки:<code>RegistrationSet</code>постоянно растёт,<code>Token</code>пространство расходуется впустую, что в конечном итоге может привести к<code>allocate</code>Сбой или исчерпание памяти. В сценариях с частым созданием/уничтожением соединений (например, серверы с короткими соединениями), если вероятность сбоя регистрации высока (например, исчерпание fd), утечка ускоряет исчерпание ресурсов.</p>
 </details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>deregister_source</code>中，为什么<code>unpark()</code>只在<code>registrations.deregister</code>返回 true 时调用？如果无条件调用会有什么问题？</summary>
-<p><strong>参考解析</strong>：<code>deregister_source</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="315-334" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '315-334')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:315-334</code></span>的逻辑是：先<code>registry.deregister(source)</code>向内核注销<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="322" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '322')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:322</code></span>，然后<code>registrations.deregister</code>清理内部状态<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="315-334" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '315-334')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:315-334</code></span>，若返回 true 则<code>unpark()</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="328" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '328')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:328</code></span>。</p>
-<p><code>registrations.deregister</code>返回 true 意味着这是最后一个引用，<code>ScheduledIo</code>被真正移除。此时 driver 可能正阻塞在<code>poll</code>里等待这个 fd 的事件，但 fd 已经注销，内核不会再产生事件。<code>unpark</code>通过<code>mio::Waker</code>往 epoll 塞一个<code>TOKEN_WAKEUP</code>事件<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="280-283" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '280-283')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:280-283</code></span>，让<code>poll</code>立即返回，driver 重新检查注册集合并可能退出阻塞。</p>
-<p>如果无条件调用<code>unpark</code>：每次注销一个非最后的引用都会唤醒 driver，造成不必要的唤醒。在大量连接共享同一个<code>ScheduledIo</code>的场景（比如<code>TcpStream</code>的<code>split</code>后读写两半），每次 drop 一个半都会唤醒 driver，增加 CPU 开销。更严重</p>
+<details class="reader-details"><summary class="reader-summary">Q3: <code>deregister_source</code>, почему<code>unpark()</code>только при<code>registrations.deregister</code>возвращает true? Какие проблемы возникнут, если вызывать безусловно?</summary>
+<p><strong>Справочный анализ</strong>：<code>deregister_source</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="315-334" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '315-334')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:315-334</code></span>Логика такова: сначала<code>registry.deregister(source)</code>отменяет регистрацию в ядре<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="322" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '322')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:322</code></span>, затем<code>registrations.deregister</code>очищает внутреннее состояние<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="315-334" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '315-334')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:315-334</code></span>, если возвращает true, то<code>unpark()</code> <span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="328" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '328')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:328</code></span>。</p>
+<p><code>registrations.deregister</code>возврат true означает, что это последняя ссылка,<code>ScheduledIo</code>действительно удалён. В этот момент driver может быть заблокирован в<code>poll</code>в ожидании события для этого fd, но fd уже отменён, и ядро больше не будет генерировать события.<code>unpark</code>через<code>mio::Waker</code>помещает в epoll<code>TOKEN_WAKEUP</code>Событие<span class="fact-pill" data-file="tokio/src/runtime/io/driver.rs" data-lines="280-283" onclick="highlightFact('tokio/src/runtime/io/driver.rs', '280-283')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/io/driver.rs:280-283</code></span>, позволяя<code>poll</code>немедленно вернуться, driver повторно проверяет набор регистраций и может выйти из блокировки.</p>
+<p>Если безусловно вызывать<code>unpark</code>: каждая отмена регистрации не последней ссылки пробуждает driver, вызывая ненужные пробуждения. В сценариях, где множество соединений совместно используют один и тот же<code>ScheduledIo</code>(например,<code>TcpStream</code>из<code>split</code>после разделения на половины чтения и записи), каждое удаление одной половины пробуждает driver, увеличивая нагрузку на CPU. Что ещё серьёзнее</p>
 <p>本章我们拆解了 Reactor 如何把 epoll 事件翻译成 Waker 唤醒：从 TcpStream 的 poll_read_ready 出发，经过 Registration 的注册与查询，落到 ScheduledIo 的就绪位与 Waker 槽位，再由 Driver 在事件循环中根据 Token 定位并触发唤醒。关键设计包括：Token 即指针实现 O(1) 查找，读写双 Waker 槽位支持并发读写分离，events_busy 独立缓冲区防止事件饥饿，assume_ready 乐观猜测优化 accept 场景。至此，I/O 就绪通知的闭环已经完整。但异步运行时还需要处理另一类「就绪」——时间。下一章我们将剖析 tokio::time::sleep 与 timeout 的实现：定时器如何被插入时间轮、时间轮如何按到期时间分级、driver 如何计算下一次 park 的超时并触发到期任务。你会看到「时间也是一种 I/O 事件」这一统一抽象，以及 start_paused 与 test clock 如何让时间在测试中可控。</p>
 </details></div>
         
@@ -1566,10 +1566,10 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-06" data-title="第 6 章：时间驱动：时间轮、Sleep 与超时如何被唤醒">
+      <section class="reader-chapter-section" id="ch-06" data-title="Глава 6: Драйвер времени: как колесо времени, Sleep и тайм-ауты пробуждают задачи">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 06</span>
-          <h2 class="reader-chapter-title">第 6 章：时间驱动：时间轮、Sleep 与超时如何被唤醒</h2>
+          <h2 class="reader-chapter-title">Глава 6: Драйвер времени: как колесо времени, Sleep и тайм-ауты пробуждают задачи</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -1579,22 +1579,22 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
           </div>
         </div>
         <div class="chapter-body">
-<p>上一章我们追踪了 TcpStream::read 的完整链路，看到 ScheduledIo 如何把 epoll 的 fd 就绪事件翻译成 Waker 唤醒。但异步运行时还需要处理另一类「就绪」：一个 sleep(100ms) 的 Future，在 100ms 后必须被唤醒。这类事件不来自内核 fd，而来自「时间本身」。Tokio 的设计选择是把时间也当作一种 I/O 事件：Driver 结构体里只有一个字段 park: IoStack，它复用了 I/O driver 的 park/unpark 机制。当时间轮算出「下一次到期时刻」时，driver 就调用 park_timeout 让线程睡到那个时刻；被唤醒后再从时间轮里取出到期条目、触发它们的 Waker。这样，调度器只需要一个统一的 park 入口，就能同时等待「fd 就绪」和「定时器到期」两类事件。本章要回答三个问题：定时器如何被插入时间轮？时间轮如何按到期时间分级？driver 如何计算下一次 park 的超时并触发到期任务？</p>
-<h2>一、时间轮：六层 64 槽的哈希分级结构</h2>
-<h3>直觉模型</h3>
-<p>想象一个机械钟表：秒针转一圈带动分针，分针转一圈带动时针。如果只有一根秒针，要表示「12 天后」就得数 100 万格；而分层之后，秒针只管 64 秒内的精度，分针管 64 分钟，时针管 64 小时——每一层只需 64 个槽位，就能覆盖到 2 年之后。</p>
-<p>若没有分层，插入一个远期定时器要么需要 O(N) 遍历，要么需要巨大的数组。时间轮用「按到期时间分级」把插入和触发都压到近似 O(1)。</p>
-<h3>内存布局与字段</h3>
-<p><code>Wheel</code>的核心字段只有三个<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="22-40" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '22-40')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:22-40</code></span>：</p>
-<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-rust">pub(crate) struct Wheel {
+<p>В предыдущей главе мы проследили полный путь TcpStream::read и увидели, как ScheduledIo преобразует события готовности fd из epoll в пробуждение через Waker. Однако асинхронной среде выполнения необходимо обрабатывать ещё один тип «готовности»: Future от sleep(100ms) должен быть разбужен через 100 мс. Такие события исходят не от файловых дескрипторов ядра, а от «самого времени». Архитектурное решение Tokio заключается в том, чтобы рассматривать время как разновидность событий ввода-вывода: в структуре Driver есть только одно поле park: IoStack, которое переиспользует механизм park/unpark драйвера ввода-вывода. Когда колесо времени вычисляет «момент следующего срабатывания», драйвер вызывает park_timeout, чтобы усыпить поток до этого момента; после пробуждения он извлекает из колеса времени сработавшие записи и активирует их Waker. Таким образом, планировщику достаточно единой точки входа park, чтобы одновременно ожидать события двух типов: «готовность fd» и «истечение таймера». В этой главе мы ответим на три вопроса: как таймеры вставляются в колесо времени? Как колесо времени распределяет таймеры по уровням в зависимости от времени срабатывания? Как драйвер вычисляет тайм-аут следующего park и активирует сработавшие задачи?</p>
+<h2>I. Колесо времени: шестиуровневая хеш-структура с 64 слотами на каждом уровне</h2>
+<h3>Интуитивная модель</h3>
+<p>Представьте механические часы: секундная стрелка, совершая оборот, движет минутную, а минутная, совершая оборот, движет часовую. Если бы была только одна секундная стрелка, для отображения «через 12 дней» пришлось бы отсчитать миллион делений; но с многоуровневой структурой секундная стрелка отвечает лишь за точность в пределах 64 секунд, минутная — за 64 минуты, часовая — за 64 часа — каждому уровню достаточно всего 64 слотов, чтобы охватить период более 2 лет.</p>
+<p>Без многоуровневой структуры вставка отдалённого таймера потребовала бы либо обхода за O(N), либо огромного массива. Колесо времени использует «распределение по уровням в зависимости от времени срабатывания», сводя и вставку, и срабатывание к почти O(1).</p>
+<h3>Структура памяти и поля</h3>
+<p><code>Wheel</code>Основных полей всего три<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="22-40" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '22-40')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:22-40</code></span>：</p>
+<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-rust">pub(crate) struct Wheel {
     elapsed: u64,                          // 自 wheel 创建以来经过的毫秒数
     levels: Box&lt;[Level; NUM_LEVELS]&gt;,      // 6 层，每层 64 槽
     pending: LinkedList&lt;TimerShared&gt;,      // 已到期、待触发的条目
 }</code></pre></div>
-<p><code>NUM_LEVELS = 6</code>，<code>BITS_PER_LEVEL = 6</code>（即每层 64 槽）<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="45-47" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '45-47')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:45-47</code></span>。<code>MAX_DURATION = 1 &lt;&lt; (6 * 6) = 1 &lt;&lt; 36</code>毫秒，约 2 年<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="50" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '50')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:50</code></span>。</p>
-<p>六层的粒度按文档注释是<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="22-40" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '22-40')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:22-40</code></span>：</p>
+<p><code>NUM_LEVELS = 6</code>，<code>BITS_PER_LEVEL = 6</code>(то есть по 64 слота на каждом уровне)<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="45-47" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '45-47')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:45-47</code></span>。<code>MAX_DURATION = 1 &lt;&lt; (6 * 6) = 1 &lt;&lt; 36</code>миллисекунд, примерно 2 года<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="50" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '50')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:50</code></span>。</p>
+<p>Гранулярность шести уровней согласно комментариям в документации:<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="22-40" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '22-40')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:22-40</code></span>：</p>
 <div class="table-container"><table class="reader-table">
-<thead><tr><th>层</th><th>槽粒度</th><th>覆盖范围</th></tr></thead>
+<thead><tr><th>Уровень</th><th>Гранулярность слота</th><th>Диапазон покрытия</th></tr></thead>
 <tbody>
 <tr><td>0</td><td>1 ms</td><td>64 ms</td></tr>
 <tr><td>1</td><td>64 ms</td><td>~4 s</td></tr>
@@ -1604,20 +1604,20 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <tr><td>5</td><td>~12 day</td><td>~2 yr</td></tr>
 </tbody>
 </table></div>
-<p><code>pending</code>是一个侵入式链表（<code>LinkedList&lt;TimerShared&gt;</code>），存放已经从轮中取出、等待触发 Waker 的条目。注意它是<code>LinkedList</code>而非<code>Vec</code>：条目本身内嵌在<code>TimerShared</code>里，插入/移除不需要分配。</p>
-<h3>场景驱动：插入一个 100ms 的 sleep</h3>
-<p>当<code>sleep(100ms)</code>首次被 poll 时，<code>Sleep::poll_elapsed</code>会构造<code>Timer::new</code>并调用<code>init</code> <span class="fact-pill" data-file="tokio/src/time/sleep.rs" data-lines="436-440" onclick="highlightFact('tokio/src/time/sleep.rs', '436-440')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/time/sleep.rs:436-440</code></span>。<code>init</code>最终调用<code>Handle::reregister</code>，进而调用<code>Wheel::insert</code>。</p>
-<p><code>insert</code>的第一步是检查是否已过期<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="90-98" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '90-98')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:90-98</code></span>：</p>
-<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-rust">let when = unsafe { item.sync_when() };
+<p><code>pending</code>представляет собой интрузивный связный список (<code>LinkedList&lt;TimerShared&gt;</code>), хранящий записи, уже извлечённые из очереди и ожидающие пробуждения Waker. Обратите внимание, что это<code>LinkedList</code>, а не<code>Vec</code>: сами записи встроены в<code>TimerShared</code>, вставка/удаление не требует выделения памяти.</p>
+<h3>Сценарий: вставка sleep на 100 мс</h3>
+<p>Когда<code>sleep(100ms)</code>впервые подвергается poll,<code>Sleep::poll_elapsed</code>конструирует<code>Timer::new</code>и вызывает<code>init</code> <span class="fact-pill" data-file="tokio/src/time/sleep.rs" data-lines="436-440" onclick="highlightFact('tokio/src/time/sleep.rs', '436-440')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/time/sleep.rs:436-440</code></span>。<code>init</code>в конечном итоге вызывает<code>Handle::reregister</code>, что в свою очередь вызывает<code>Wheel::insert</code>。</p>
+<p><code>insert</code>, первым шагом является проверка, истёк ли срок<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="90-98" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '90-98')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:90-98</code></span>：</p>
+<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-rust">let when = unsafe { item.sync_when() };
 if when &lt;= self.elapsed {
     return Err((item, InsertError::Elapsed));
 }</code></pre></div>
-<p>如果<code>when</code>已经落在<code>elapsed</code>之前（比如 deadline 已过），直接返回<code>Elapsed</code>，调用方会立即触发该定时器。</p>
-<p>否则计算该条目应放入哪一层<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="90-114" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '90-114')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:90-114</code></span>：</p>
-<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-rust">let level = self.level_for(when);
+<p>Если<code>when</code>уже попал в<code>elapsed</code>Ранее (например, deadline уже прошёл), возвращаемся напрямую<code>Elapsed</code>, вызывающая сторона немедленно запустит этот таймер.</p>
+<p>В противном случае вычисляем, в какой уровень следует поместить данную запись<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="90-114" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '90-114')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:90-114</code></span>：</p>
+<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копирование</button></div><pre class="source-code-block"><code class="language-rust">let level = self.level_for(when);
 unsafe { self.levels[level].add_entry(item); }</code></pre></div>
-<p><code>level_for</code>是分级算法的核心<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="276-289" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '276-289')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:276-289</code></span>：</p>
-<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-rust">fn level_for(elapsed: u64, when: u64) -&gt; usize {
+<p><code>level_for</code>является ядром каскадного алгоритма<span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="276-289" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '276-289')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:276-289</code></span>：</p>
+<div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копирование</button></div><pre class="source-code-block"><code class="language-rust">fn level_for(elapsed: u64, when: u64) -&gt; usize {
     const SLOT_MASK: u64 = (1 &lt;&lt; BITS_PER_LEVEL) - 1;
     let masked = elapsed ^ when | SLOT_MASK;
     if masked &gt;= MAX_DURATION {
@@ -1625,8 +1625,8 @@ unsafe { self.levels[level].add_entry(item); }</code></pre></div>
     }
     masked.ilog2() as usize / BITS_PER_LEVEL
 }</code></pre></div>
-<p>这里用<code>elapsed ^ when</code>而非<code>when - elapsed</code>，是一个精妙的技巧：XOR 的最高有效位反映了「两个时间戳从哪一位开始不同」，也就是「需要多粗的粒度才能区分它们」。<code>| SLOT_MASK</code>把低 6 位强制置 1，避免<code>ilog2</code>落在同一槽内时算出过小的层。<code>ilog2() / 6</code>把位宽映射到层号。如果 XOR 结果超过<code>MAX_DURATION</code>（即超过 2 年），就强制塞进最高层——这就是「fudge the timer into the top level」。</p>
-<p>对于 100ms 的 sleep，假设<code>elapsed</code>接近 0，<code>when ≈ 100</code>，<code>elapsed ^ when ≈ 100</code>，<code>ilog2(100) = 6</code>，<code>6 / 6 = 1</code>, поэтому он попадает на уровень 1 (гранулярность 64 мс). Это означает, что он будет ждать в одном из слотов уровня 1, пока время не дойдёт до границы этого слота, и только тогда будет опущен на уровень 0.</p>
+<p>Здесь используется<code>elapsed ^ when</code>вместо<code>when - elapsed</code>, это изящный приём: старший значащий бит XOR отражает «с какого бита два временных штампа начинают различаться», то есть «насколько грубая гранулярность нужна, чтобы их различить».<code>| SLOT_MASK</code>Принудительно устанавливаем младшие 6 бит в 1, чтобы избежать<code>ilog2</code>вычисления слишком малого уровня при попадании в один и тот же слот.<code>ilog2() / 6</code>Отображаем разрядность в номер уровня. Если результат XOR превышает<code>MAX_DURATION</code>(то есть превышает 2 года), принудительно помещаем в самый верхний уровень — это и есть «fudge the timer into the top level».</p>
+<p>Для sleep длительностью 100ms, предположим,<code>elapsed</code>близко к 0,<code>when ≈ 100</code>，<code>elapsed ^ when ≈ 100</code>，<code>ilog2(100) = 6</code>，<code>6 / 6 = 1</code>, поэтому он попадает на уровень 1 (гранулярность 64 мс). Это означает, что он будет ждать в одном из слотов уровня 1, пока время не дойдёт до границы этого слота, и только тогда будет опущен на уровень 0.</p>
 <h3>Каскадное опускание: process_expiration</h3>
 <p>Когда<code>poll(now)</code>продвигает время,<code>Wheel::poll</code>циклически вызывает<code>next_expiration</code>и<code>process_expiration</code> <span class="fact-pill" data-file="tokio/src/runtime/time/wheel/mod.rs" data-lines="142-166" onclick="highlightFact('tokio/src/runtime/time/wheel/mod.rs', '142-166')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/time/wheel/mod.rs:142-166</code></span>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>rust</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копия</button></div><pre class="source-code-block"><code class="language-rust">pub(crate) fn poll(&amp;mut self, now: u64) -&gt; Option&lt;TimerHandle&gt; {
@@ -1678,21 +1678,21 @@ while let Some(item) = entries.pop_back() {
 }</code></pre></div>
 <p>Если<code>pending</code>непуст, значит есть просроченные записи, ожидающие срабатывания, и немедленно возвращается текущий<code>elapsed</code>в качестве deadline (так driver выполнит park с нулевым таймаутом и сразу вернётся для обработки). Иначе сканирует уровень за уровнем и возвращает deadline первого непустого слота.<code>debug_assert</code>проверяет инвариант: на более высоком уровне не может быть более ранней точки истечения, чем на текущем.</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копия</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["Wheel::poll(now)"] --&gt; check_pending{"pending 非空?"}
-    check_pending --&gt;|是| pop["pop_back 返回 TimerHandle"]
-    check_pending --&gt;|否| next_exp{"next_expiration() 有到期点?"}
-    next_exp --&gt;|无| set_elapsed["set_elapsed(now) 后 break"]
-    next_exp --&gt;|有| cmp{"expiration.deadline &lt;= now?"}
-    cmp --&gt;|否| set_elapsed
-    cmp --&gt;|是| proc["process_expiration(expiration)"]
-    proc --&gt; take["take_entries 取出整槽"]
+    start["Wheel::poll(now)"] --&gt; check_pending{"pending не пуст?"}
+    check_pending --&gt;|да| pop["pop_back возвращает TimerHandle"]
+    check_pending --&gt;|нет| next_exp{"next_expiration() есть точка истечения?"}
+    next_exp --&gt;|нет| set_elapsed["set_elapsed(now) затем break"]
+    next_exp --&gt;|да| cmp{"expiration.deadline &lt;= now?"}
+    cmp --&gt;|нет| set_elapsed
+    cmp --&gt;|да| proc["process_expiration(expiration)"]
+    proc --&gt; take["take_entries извлекает весь слот"]
     take --&gt; mark{"item.mark_pending()"}
-    mark --&gt;|Ok 已到期| push_pending["pending.push_front(item)"]
-    mark --&gt;|Err 未到期| reinsert["level_for 后 add_entry 下沉"]
+    mark --&gt;|Ok истёк| push_pending["pending.push_front(item)"]
+    mark --&gt;|Err не истёк| reinsert["level_for затем add_entry с понижением"]
     push_pending --&gt; set_elapsed2["set_elapsed(expiration.deadline)"]
     reinsert --&gt; set_elapsed2
     set_elapsed2 --&gt; check_pending
-    set_elapsed --&gt; pop2["pending.pop_back() 返回"]</code></pre></div>
+    set_elapsed --&gt; pop2["pending.pop_back() возврат"]</code></pre></div>
 <p>---</p>
 <h2>II. Цикл park в Driver: подключение timing wheel к стеку I/O</h2>
 <h3>Интуитивная модель</h3>
@@ -1824,22 +1824,22 @@ while let Some(item) = entries.pop_back() {
 
     Sleep-&gt;&gt;Handle: reregister(unpark, new_tick, entry)
     Handle-&gt;&gt;Handle: lock.inner.lock()
-    Handle-&gt;&gt;Wheel: wheel.remove(entry) [若已注册]
+    Handle-&gt;&gt;Wheel: wheel.remove(entry) [если уже зарегистрирован]
     Handle-&gt;&gt;Wheel: wheel.insert(entry)
     Wheel--&gt;&gt;Handle: Ok(when)
     alt when &lt; next_wake
         Handle-&gt;&gt;IoStack: unpark.unpark()
     end
     Handle-&gt;&gt;Handle: drop(lock)
-    Handle--&gt;&gt;Sleep: 返回 waker (若有)
+    Handle--&gt;&gt;Sleep: возврат waker (если есть)
 
-    Note over Driver: 另一线程
+    Note over Driver: другой поток
     Driver-&gt;&gt;Handle: lock.inner.lock()
     Driver-&gt;&gt;Wheel: next_expiration_time()
     Wheel--&gt;&gt;Driver: Some(when)
     Driver-&gt;&gt;Driver: drop(lock)
     Driver-&gt;&gt;IoStack: park_timeout(duration)
-    IoStack--&gt;&gt;Driver: 被 unpark 或超时
+    IoStack--&gt;&gt;Driver: разбужен unpark или таймаут
     Driver-&gt;&gt;Handle: process(clock)
     Handle-&gt;&gt;Wheel: poll(now)
     Wheel--&gt;&gt;Handle: TimerHandle
@@ -1996,10 +1996,10 @@ while let Some(item) = entries.pop_back() {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-07" data-title="Итак, мы уже увидели, как временное驱动 повторно использует механизм park/unpark I/O driver, позволяя таймерам и готовности fd совместно использовать одну точку ожидания. Уровни временного колеса, вычисление истечения и запуск Waker образуют полный замкнутый цикл обработки «готовности времени» в асинхронном рантайме. Но асинхронное ожидание не ограничивается I/O и временем — когда несколько задач конкурируют за одну и ту же блокировку или передают сообщения через каналы, где должен храниться Waker? В следующей главе мы войдём в семейство tokio::sync и посмотрим, какие разные компромиссы делают Mutex, Semaphore и различные каналы в отношении «очереди ожидающих + пробуждения через Waker».">
+      <section class="reader-chapter-section" id="ch-07" data-title="Глава 7: Примитивы синхронизации: как Mutex, Semaphore и каналы реализуют асинхронное ожидание">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 07</span>
-          <h2 class="reader-chapter-title">Итак, мы уже увидели, как временное驱动 повторно использует механизм park/unpark I/O driver, позволяя таймерам и готовности fd совместно использовать одну точку ожидания. Уровни временного колеса, вычисление истечения и запуск Waker образуют полный замкнутый цикл обработки «готовности времени» в асинхронном рантайме. Но асинхронное ожидание не ограничивается I/O и временем — когда несколько задач конкурируют за одну и ту же блокировку или передают сообщения через каналы, где должен храниться Waker? В следующей главе мы войдём в семейство tokio::sync и посмотрим, какие разные компромиссы делают Mutex, Semaphore и различные каналы в отношении «очереди ожидающих + пробуждения через Waker».</h2>
+          <h2 class="reader-chapter-title">Глава 7: Примитивы синхронизации: как Mutex, Semaphore и каналы реализуют асинхронное ожидание</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -2053,21 +2053,21 @@ unsafe impl&lt;T&gt; Sync for Mutex&lt;T&gt; where T: ?Sized + Send {}</code></p
 <p>Четвёртый шаг, когда задача B, удерживающая блокировку, освобождает её,<code>MutexGuard::drop</code>вызывает<code>s.release(1)</code> <span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="965-975" onclick="highlightFact('tokio/src/sync/mutex.rs', '965-975')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:965-975</code></span>, семафор передаёт разрешение первому в очереди ожидающему и пробуждает его Waker, задача A перепланируется,<code>acquire</code>возвращает<code>Ok</code>, конструируется<code>MutexGuard</code>。</p>
 <p>Весь процесс можно описать следующей диаграммой последовательности:</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant TaskA as 任务 A
+    participant TaskA as Задача A
     participant Mutex as Mutex.s (batch_semaphore)
-    participant TaskB as 任务 B (持锁者)
+    participant TaskB as Задача B (держатель блокировки)
     participant Exec as Executor
 
     TaskA-&gt;&gt;Mutex: acquire(1).await
-    Mutex--&gt;&gt;TaskA: Pending (Waker 入队)
-    TaskA-&gt;&gt;Exec: 让出，调度其他任务
-    Note over TaskB: 持有锁执行临界区
+    Mutex--&gt;&gt;TaskA: Pending (Waker в очереди)
+    TaskA-&gt;&gt;Exec: уступает, планирует другие задачи
+    Note over TaskB: выполняет критическую секцию с блокировкой
     TaskB-&gt;&gt;Mutex: MutexGuard::drop -&gt; release(1)
-    Mutex-&gt;&gt;TaskA: 唤醒队首 Waker
-    Exec-&gt;&gt;TaskA: 重新 poll
-    TaskA-&gt;&gt;Mutex: acquire(1) 重试
-    Mutex--&gt;&gt;TaskA: Ok(()) 获得许可
-    TaskA-&gt;&gt;TaskA: 构造 MutexGuard</code></pre></div>
+    Mutex-&gt;&gt;TaskA: пробуждает Waker из головы очереди
+    Exec-&gt;&gt;TaskA: повторный poll
+    TaskA-&gt;&gt;Mutex: acquire(1) повтор
+    Mutex--&gt;&gt;TaskA: Ok(()) получено разрешение
+    TaskA-&gt;&gt;TaskA: создаёт MutexGuard</code></pre></div>
 <h3>Проектное размышление: FIFO-справедливость и безопасность отмены</h3>
 <p>Документация явно заявляет, что Mutex в Tokio гарантирует FIFO<span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="20-22" onclick="highlightFact('tokio/src/sync/mutex.rs', '20-22')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:20-22</code></span>. Эта справедливость исходит из семантики очереди нижележащего семафора. Цена справедливости: одна<code>lock</code>отмена (например, проигрыш в<code>select!</code>) заставит вас<strong>потерять место в очереди</strong> <span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="415-419" onclick="highlightFact('tokio/src/sync/mutex.rs', '415-419')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:415-419</code></span>. Это не баг, а неизбежность FIFO-очереди — отмена означает удаление из очереди, повторный<code>lock</code>требует повторной постановки в очередь.</p>
 <p>Ещё одно контринтуитивное проектное решение —<strong>не отравляет</strong>（no poisoning）。<code>std::sync::Mutex</code>помечается как poisoned при panic в потоке, удерживающем блокировку, последующий<code>lock</code>возвращает<code>Err</code>. Mutex в Tokio так не делает: при panic удерживающего блокировка нормально освобождается<span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="122-125" onclick="highlightFact('tokio/src/sync/mutex.rs', '122-125')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:122-125</code></span>. Документация предупреждает, что если panic перехвачен, защищённые данные могут оказаться в несогласованном состоянии. Это прагматичный компромисс в асинхронном сценарии — panic в асинхронной задаче обычно означает завершение задачи, а механизм отравления лишь добавляет сложность.</p>
@@ -2092,7 +2092,7 @@ unsafe impl&lt;T&gt; Sync for Mutex&lt;T&gt; where T: ?Sized + Send {}</code></p
 <p><code>permits</code>Копировать<code>forget</code>/<code>merge</code>/<code>split</code>Поле<code>forget</code>— ключ к пониманию<code>permits</code>.<span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="1193-1195" onclick="highlightFact('tokio/src/sync/semaphore.rs', '1193-1195')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:1193-1195</code></span>обнуляет<code>split</code>, так что при Drop возвращается 0 разрешений — эквивалентно «постоянному расходованию» этих разрешений.<span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="1260-1271" onclick="highlightFact('tokio/src/sync/semaphore.rs', '1260-1271')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:1260-1271</code></span>。<code>merge</code>вырезает n из текущих разрешений для нового permit<span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="1230-1240" onclick="highlightFact('tokio/src/sync/semaphore.rs', '1230-1240')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:1230-1240</code></span>。</p>
 <div class="inference-box"><span class="inference-tag">объединяет счётчик другого permit и утверждает, что оба происходят от одного семафора</span><p><code>MAX_PERMITS</code>〔Проектные выводы и архитектурные компромиссы〕<code>usize::MAX &gt;&gt; 3</code> <span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="476-479" onclick="highlightFact('tokio/src/sync/semaphore.rs', '476-479')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:476-479</code></span>— это<code>batch_semaphore</code>. Почему сдвиг вправо на 3 бита? Низкоуровневому<code>usize</code>нужно кодировать флаги состояния (например, флаг закрытия) в старших битах, поэтому количество доступных разрешений ограничивается младшими битами, а старшие оставляются под флаги. Это распространённый приём упаковки «счётчик + состояние» в один</p></div>
 <h3>.</h3>
-<p>Пошагово:流转 разрешений при acquire и release<code>acquire()</code>Сценарий: семафор изначально с 2 разрешениями, задача A<code>acquire_many(2)</code>。</p>
+<p>Пошагово: поток разрешений при acquire и release<code>acquire()</code>Сценарий: семафор изначально с 2 разрешениями, задача A<code>acquire_many(2)</code>。</p>
 <p><code>acquire()</code>, задача B<code>ll_sem.acquire(1)</code>делегирует<code>SemaphorePermit { permits: 1 }</code> <span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="614-631" onclick="highlightFact('tokio/src/sync/semaphore.rs', '614-631')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:614-631</code></span>。<code>acquire_many(2)</code>, после успеха конструирует<span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="661-679" onclick="highlightFact('tokio/src/sync/semaphore.rs', '661-679')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:661-679</code></span>。</p>
 <p>аналогично, но передаёт 2<code>ll_sem.acquire(n)</code>Если разрешений недостаточно,<code>Pending</code>возвращает<code>acquire_many(5)</code>, Waker ставится в очередь. Здесь есть деталь справедливости: документация указывает, что если во главе очереди стоит<code>acquire(1)</code>, а осталось всего 3 разрешения, то даже если позади есть<span class="fact-pill" data-file="tokio/src/sync/semaphore.rs" data-lines="19-24" onclick="highlightFact('tokio/src/sync/semaphore.rs', '19-24')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/semaphore.rs:19-24</code></span>, которое можно немедленно удовлетворить, оно должно ждать — потому что большая машина во главе занимает очередь</p>
 <p>. Это цена строгого FIFO, избегающая голодания.</p>
@@ -2248,8 +2248,8 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 <h3>Размышления о дизайне: безопасность отмены и потеря сообщений</h3>
 <p>Документация mpsc неоднократно подчёркивает безопасность отмены<span class="fact-pill" data-file="tokio/src/sync/mpsc/bounded.rs" data-lines="776-784" onclick="highlightFact('tokio/src/sync/mpsc/bounded.rs', '776-784')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mpsc/bounded.rs:776-784</code></span>：<code>send</code>при проигрыше в<code>select!</code>,<strong>сообщение будет отброшено</strong>. Чтобы избежать потери, необходимо использовать<code>reserve</code>получить<code>Permit</code>затем<code>send</code>— поскольку<code>Permit</code>уже зарезервировал ёмкость,<code>send</code>синхронный и не может быть прерван.</p>
 <p><code>recv</code>же является безопасным от отмены<span class="fact-pill" data-file="tokio/src/sync/mpsc/bounded.rs" data-lines="199-204" onclick="highlightFact('tokio/src/sync/mpsc/bounded.rs', '199-204')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mpsc/bounded.rs:199-204</code></span>: если<code>recv</code>проигрывает в<code>select!</code>, гарантируется, что ни одно сообщение не будет потреблено. Это потому, что<code>recv</code>возвращает<code>poll_recv</code>только при фактическом получении сообщения, а при<code>Ready</code>，<code>Pending</code>не трогает очередь.</p>
-<p><code>oneshot</code>как Future также безопасен от отмены<code>Receiver</code>. Но обратите внимание:<span class="fact-pill" data-file="tokio/src/sync/oneshot.rs" data-lines="246-251" onclick="highlightFact('tokio/src/sync/oneshot.rs', '246-251')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/oneshot.rs:246-251</code></span>синхронный, поэтому не существует проблемы «send отменён» — либо отправлено, либо<code>oneshot</code>возвращает исходное значение.<code>send</code>Размышления о дизайне и подводные камни в продакшене<code>Err</code> 返回原值。</p>
-<h2>设计思考与生产踩坑</h2>
+<p><code>oneshot</code>как Future также безопасен от отмены<code>Receiver</code>. Но обратите внимание:<span class="fact-pill" data-file="tokio/src/sync/oneshot.rs" data-lines="246-251" onclick="highlightFact('tokio/src/sync/oneshot.rs', '246-251')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/oneshot.rs:246-251</code></span>синхронный, поэтому не существует проблемы «send отменён» — либо отправлено, либо<code>oneshot</code>возвращает исходное значение.<code>send</code>Размышления о дизайне и подводные камни в продакшене<code>Err</code>Возвращает исходное значение.</p>
+<h2>Проектные соображения и подводные камни в продакшене</h2>
 <p><strong>Ошибка первая: использование асинхронного Mutex для защиты чистых данных.</strong>Документация явно рекомендует<span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="26-36" onclick="highlightFact('tokio/src/sync/mutex.rs', '26-36')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:26-36</code></span>: если защищаемые данные являются чистыми (без<code>.await</code>требований), использовать<code>std::sync::Mutex</code>или<code>parking_lot</code>быстрее. Накладные расходы асинхронного Mutex заключаются в атомарных операциях семафора и возможном планировании задач. Только когда необходимо удерживать блокировку во время<code>.await</code>(например, при доступе к соединению с базой данных с удержанием блокировки), следует использовать асинхронный Mutex.</p>
 <p><strong>Ошибка вторая: удержание блокировки через<code>.await</code>приводит к взаимоблокировке.</strong>Это самая опасная ловушка асинхронного Mutex. Если задача A, удерживая блокировку,<code>.await</code>ожидает события, которое должно быть выполнено задачей B, а задача B в свою очередь ждёт эту блокировку, возникает взаимоблокировка.<code>std::sync::Mutex</code>guard не является<code>Send</code>(в перемещаемых задачах), компилятор предотвратит удержание через<code>.await</code>; но guard асинхронного Mutex является<code>Send</code> <span class="fact-pill" data-file="tokio/src/sync/mutex.rs" data-lines="314-314" onclick="highlightFact('tokio/src/sync/mutex.rs', '314-314')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mutex.rs:314-314</code></span>, компилятор не остановит вас, нужно самостоятельно гарантировать отсутствие циклического ожидания.</p>
 <p><strong>Ошибка третья:<code>reserve</code>после забытого<code>send</code>。</strong> <code>Permit</code>Drop вернёт разрешение<span class="fact-pill" data-file="tokio/src/sync/mpsc/bounded.rs" data-lines="1732-1745" onclick="highlightFact('tokio/src/sync/mpsc/bounded.rs', '1732-1745')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/sync/mpsc/bounded.rs:1732-1745</code></span>, поэтому ёмкость не будет утеряна. Но если канал уже закрыт и простаивает, Drop разбудит получателя — это пробуждение необходимо, иначе получатель может никогда не дождаться уведомления о закрытии.</p>
@@ -2372,33 +2372,33 @@ if metrics.num_idle_threads() == 0 {
 <p>Копировать</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">8.3 Главный цикл worker: состояние BUSY/IDLE и переработка по таймауту</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
     call["Spawner::spawn_blocking(func)"] --&gt; box{"AutoBox::SHOULD_BOX?"}
-    box --&gt;|是| boxed["Box::new(func)"]
-    box --&gt;|否| raw["func"]
+    box --&gt;|да| boxed["Box::new(func)"]
+    box --&gt;|нет| raw["func"]
     boxed --&gt; inner["spawn_blocking_inner"]
     raw --&gt; inner
     inner --&gt; unowned["task::unowned -&gt; Task + JoinHandle"]
     unowned --&gt; spawn_task["InnerImpl::spawn_task"]
     spawn_task --&gt; lock["LockedImpl: mutex.lock()"]
     lock --&gt; shutting{"thread_mgmt_state.shutdown?"}
-    shutting --&gt;|是| discard["task.task.shutdown()"]
+    shutting --&gt;|да| discard["task.task.shutdown()"]
     discard --&gt; err_sd["Err(ShuttingDown)"]
-    shutting --&gt;|否| push["queue.push_back(task)"]
+    shutting --&gt;|нет| push["queue.push_back(task)"]
     push --&gt; idle{"num_idle_threads == 0?"}
-    idle --&gt;|是| on_no_idle["on_no_idle(thread_mgmt_state)"]
+    idle --&gt;|да| on_no_idle["on_no_idle(thread_mgmt_state)"]
     on_no_idle --&gt; cap{"num_threads == thread_cap?"}
-    cap --&gt;|是| backpressure["返回 Ok, 任务留队列"]
-    cap --&gt;|否| spawn_th["spawn_thread(shutdown_tx, rt, id)"]
-    spawn_th --&gt; th_ok{"spawn 成功?"}
-    th_ok --&gt;|是| reg["inc_num_threads, 注册 JoinHandle"]
-    th_ok --&gt;|否| tmp{"WouldBlock 且已有线程?"}
-    tmp --&gt;|是| ignore["忽略, 等忙碌线程取走"]
-    tmp --&gt;|否| err_nt["Err(NoThreads)"]
-    idle --&gt;|否| notify["dec_num_idle_threads, num_notify+=1, notify_one"]
-    err_sd --&gt; ret["返回 JoinHandle"]
+    cap --&gt;|да| backpressure["возврат Ok, задача остаётся в очереди"]
+    cap --&gt;|нет| spawn_th["spawn_thread(shutdown_tx, rt, id)"]
+    spawn_th --&gt; th_ok{"spawn успешен?"}
+    th_ok --&gt;|да| reg["inc_num_threads, регистрация JoinHandle"]
+    th_ok --&gt;|нет| tmp{"WouldBlock и есть потоки?"}
+    tmp --&gt;|да| ignore["игнорировать, ждать пока занятый поток заберёт"]
+    tmp --&gt;|нет| err_nt["Err(NoThreads)"]
+    idle --&gt;|нет| notify["dec_num_idle_threads, num_notify+=1, notify_one"]
+    err_sd --&gt; ret["возврат JoinHandle"]
     backpressure --&gt; ret
     reg --&gt; ret
     ignore --&gt; ret
-    err_nt --&gt; panic_os["panic: OS can't spawn worker thread"]</code></pre></div>
+    err_nt --&gt; panic_os["panic: OS не может создать рабочий поток"]</code></pre></div>
 <h2>Интуитивная модель</h2>
 <p><strong>: каждый блокирующий поток — это «дежурный помощник». При наличии заказов он непрерывно работает (BUSY), без заказов дремлет (IDLE), а если дремлет дольше</strong>, то уходит с работы (выход по таймауту). Без переработки по таймауту пул навсегда сохранял бы все потоки, созданные на пике, тратя память и накладные расходы планировщика ядра.<code>keep_alive</code>Структура главного цикла</p>
 <p><strong>— это цикл</strong>。<code>LockedImpl::run_worker</code>, внутри которого попеременно чередуются две фазы: BUSY и IDLE<code>'main</code>. Замечание: здесь BUSY/IDLE — это<span class="fact-pill" data-file="tokio/src/runtime/blocking/pool.rs" data-lines="642-735" onclick="highlightFact('tokio/src/runtime/blocking/pool.rs', '642-735')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/blocking/pool.rs:642-735</code></span>фазы<strong>внутри цикла, а не явные состояния перечисления, поэтому ниже они описываются блок-схемой, а не диаграммой состояний.</strong>Фаза BUSY</p>
@@ -2414,25 +2414,25 @@ if metrics.num_idle_threads() == 0 {
 <p><code>shutdown::Receiver::wait</code>очень продумана<span class="fact-pill" data-file="tokio/src/runtime/blocking/shutdown.rs" data-lines="37-70" onclick="highlightFact('tokio/src/runtime/blocking/shutdown.rs', '37-70')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/blocking/shutdown.rs:37-70</code></span>: сначала обрабатывается<code>timeout == 0</code>быстрый путь сразу возвращает false; затем вызывается<code>try_enter_blocking_region()</code>для входа в блокирующую область, и если это не удаётся и в данный момент происходит паника, возвращается false, иначе возникает паника с подсказкой «нельзя drop runtime в асинхронном контексте»<span class="fact-pill" data-file="tokio/src/runtime/blocking/shutdown.rs" data-lines="44-57" onclick="highlightFact('tokio/src/runtime/blocking/shutdown.rs', '44-57')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/blocking/shutdown.rs:44-57</code></span>. Наконец, в зависимости от timeout вызывается<code>block_on_timeout</code>или<code>block_on</code>для управления тем oneshot.</p>
 <p><code>shutdown_tx</code>Механизм<code>Arc&lt;oneshot::Sender&lt;()&gt;&gt;</code>таков: каждый поток worker владеет клоном<span class="fact-pill" data-file="tokio/src/runtime/blocking/shutdown.rs" data-lines="12-14" onclick="highlightFact('tokio/src/runtime/blocking/shutdown.rs', '12-14')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/blocking/shutdown.rs:12-14</code></span>. После завершения всех потоков все клоны уничтожаются,<code>Arc</code>счётчик обнуляется,<code>oneshot::Sender</code>уничтожается,<code>Receiver</code>получает уведомление. Это классический шаблон «после drop всех Sender пробуждается Receiver».</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant App as "应用线程 (drop Runtime)"
+    participant App as "Поток приложения (drop Runtime)"
     participant Pool as "BlockingPool::shutdown"
     participant Locked as "LockedImpl"
-    participant Worker as "阻塞 worker 线程"
+    participant Worker as "Поток блокирующего worker"
     participant Rx as "shutdown::Receiver"
 
     App-&gt;&gt;Pool: shutdown(timeout)
     Pool-&gt;&gt;Locked: begin_shutdown()
-    Locked-&gt;&gt;Locked: thread_mgmt_state.begin_shutdown() 设 shutdown=true, shutdown_tx=None
+    Locked-&gt;&gt;Locked: thread_mgmt_state.begin_shutdown() устанавливает shutdown=true, shutdown_tx=None
     Locked-&gt;&gt;Worker: condvar.notify_all()
     Locked--&gt;&gt;Pool: Some((last_exited_thread, workers))
     Pool-&gt;&gt;Rx: wait(timeout)
-    Worker-&gt;&gt;Worker: 从 wait_timeout 醒来, 见 shutdown=true
-    Worker-&gt;&gt;Worker: 排空队列 shutdown_or_run_if_mandatory()
-    Worker-&gt;&gt;Worker: dec_num_threads, 退出 run_worker
-    Worker-&gt;&gt;Worker: drop(shutdown_tx) 克隆
-    Worker--&gt;&gt;Rx: 最后一个 Sender drop, oneshot 完成
-    Rx--&gt;&gt;Pool: 返回 true
-    Pool-&gt;&gt;Worker: join 所有 worker 句柄</code></pre></div>
+    Worker-&gt;&gt;Worker: просыпается из wait_timeout, видит shutdown=true
+    Worker-&gt;&gt;Worker: опустошает очередь shutdown_or_run_if_mandatory()
+    Worker-&gt;&gt;Worker: dec_num_threads, выход из run_worker
+    Worker-&gt;&gt;Worker: drop(shutdown_tx) клона
+    Worker--&gt;&gt;Rx: последний Sender уничтожен, oneshot завершён
+    Rx--&gt;&gt;Pool: возврат true
+    Pool-&gt;&gt;Worker: join всех дескрипторов worker</code></pre></div>
 <h2>8.4 block_on: управление Future в неасинхронном контексте</h2>
 <p><strong>Интуитивная модель</strong>：<code>block_on</code>— это «парадный вход» runtime. Он превращает текущий поток во временный исполнитель, многократно опрашивая переданный Future до завершения. Без него<code>main</code>функция не смогла бы запустить никакой асинхронный код.</p>
 <p><strong>Точка входа и упаковка</strong>。<code>Runtime::block_on</code>также сначала измеряет размер, по<code>SHOULD_BOX</code>решает, нужно ли<code>Box::pin</code>, затем входит в<code>block_on_inner</code> <span class="fact-pill" data-file="tokio/src/runtime/runtime.rs" data-lines="343-350" onclick="highlightFact('tokio/src/runtime/runtime.rs', '343-350')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/runtime.rs:343-350</code></span>。<code>block_on_inner</code>Внутри есть два условно компилируемых trace-обёртки (taskdump и tracing), затем<code>self.enter()</code>входит в контекст runtime, и наконец по типу планировщика выполняется диспетчеризация<span class="fact-pill" data-file="tokio/src/runtime/runtime.rs" data-lines="353-383" onclick="highlightFact('tokio/src/runtime/runtime.rs', '353-383')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/runtime.rs:353-383</code></span>：</p>
@@ -2493,10 +2493,10 @@ match &amp;self.scheduler {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-09" data-title="Глава 9: Магия макросов: генерация кода за #[tokio::main], select! и join!">
+      <section class="reader-chapter-section" id="ch-09" data-title="Глава 9: Магия макросов: кодогенерация за #[tokio::main], select! и join!">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 09</span>
-          <h2 class="reader-chapter-title">Глава 9: Магия макросов: генерация кода за #[tokio::main], select! и join!</h2>
+          <h2 class="reader-chapter-title">Глава 9: Магия макросов: кодогенерация за #[tokio::main], select! и join!</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -2521,16 +2521,16 @@ match &amp;self.scheduler {
 <p>Пятый шаг — генерация окончательного тела функции. В основе лежит<code>last_block</code>：<code>return #rt.enable_all().#build.expect("Failed building the Runtime").block_on(body)</code> <span class="fact-pill" data-file="tokio-macros/src/entry.rs" data-lines="509-522" onclick="highlightFact('tokio-macros/src/entry.rs', '509-522')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/entry.rs:509-522</code></span>. Обратите внимание на явный<code>return</code>, комментарий указывает на tokio-rs/tokio#4636, это сделано для исправления проблемы вывода типов<span class="fact-pill" data-file="tokio-macros/src/entry.rs" data-lines="508" onclick="highlightFact('tokio-macros/src/entry.rs', '508')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/entry.rs:508</code></span>。</p>
 <p>Шестой шаг — тело функции оборачивается в<code>async #body</code>и проходит проверку типов. На не-test пути, если возвращаемый тип не<code>!</code>и не содержит<code>impl Trait</code>, вставляется<code>if false { let _: &amp;dyn Future&lt;Output = #output_type&gt; = &amp;body; }</code>для проверки на этапе компиляции<span class="fact-pill" data-file="tokio-macros/src/entry.rs" data-lines="551-571" onclick="highlightFact('tokio-macros/src/entry.rs', '551-571')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/entry.rs:551-571</code></span>. На test-пути используется<code>pin!</code>Закрепить body на стеке и преобразовать в<code>Pin&lt;&amp;mut dyn Future&gt;</code>, комментарий объясняет, что это делается для уменьшения<code>block_on</code>затрат на компиляцию при мономорфизации обобщений<span class="fact-pill" data-file="tokio-macros/src/entry.rs" data-lines="526-548" onclick="highlightFact('tokio-macros/src/entry.rs', '526-548')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/entry.rs:526-548</code></span>。</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    entry["main(args, item)"] --&gt; parse_item{"syn::parse2(item) 成功?"}
-    parse_item --&gt;|否| err_ret["token_stream_with_error 返回原始 item + 编译错误"]
-    parse_item --&gt;|是| check_main{"ident == main 且有参数?"}
-    check_main --&gt;|是| err_args["报错: main 不能接受参数"]
-    check_main --&gt;|否| parse_args["AttributeArgs::parse_terminated"]
-    parse_args --&gt; build_cfg["build_config 校验 async 与各字段"]
-    build_cfg --&gt; cfg_ok{"config 构建成功?"}
-    cfg_ok --&gt;|否| fallback["parse_knobs(DEFAULT_ERROR_CONFIG) + 错误"]
-    cfg_ok --&gt;|是| knobs["parse_knobs 生成 Builder 链 + block_on"]
-    knobs --&gt; out["输出同步 fn main"]</code></pre></div>
+    entry["main(args, item)"] --&gt; parse_item{"syn::parse2(item) успешен?"}
+    parse_item --&gt;|нет| err_ret["token_stream_with_error возвращает исходный item + ошибка компиляции"]
+    parse_item --&gt;|да| check_main{"ident == main и есть параметры?"}
+    check_main --&gt;|да| err_args["ошибка: main не может принимать параметры"]
+    check_main --&gt;|нет| parse_args["AttributeArgs::parse_terminated"]
+    parse_args --&gt; build_cfg["build_config проверяет async и поля"]
+    build_cfg --&gt; cfg_ok{"config собран успешно?"}
+    cfg_ok --&gt;|нет| fallback["parse_knobs(DEFAULT_ERROR_CONFIG) + ошибка"]
+    cfg_ok --&gt;|да| knobs["parse_knobs генерирует цепочку Builder + block_on"]
+    knobs --&gt; out["вывод синхронной fn main"]</code></pre></div>
 <h3>Размышления о дизайне и подводные камни в продакшене</h3>
 <p><code>main</code>и<code>test</code>совместно используют<code>parse_knobs</code>, но flavor по умолчанию различается:<code>test</code>по умолчанию<code>CurrentThread</code>，<code>main</code>по умолчанию<code>Threaded</code> <span class="fact-pill" data-file="tokio-macros/src/entry.rs" data-lines="91-94" onclick="highlightFact('tokio-macros/src/entry.rs', '91-94')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/entry.rs:91-94</code></span>. Это объясняет, почему<code>#[tokio::test]</code>по умолчанию однопоточный — тестам обычно не нужны многоядерные процессоры, и в однопоточном режиме легче воспроизвести проблему.</p>
 <p>Легко упускаемый подводный камень: после раскрытия макроса каждый вызов функции создаёт новый Runtime. Документация явно предупреждает, что если функция вызывается часто, следует использовать Builder для переиспользования Runtime<span class="fact-pill" data-file="tokio-macros/src/lib.rs" data-lines="31-35" onclick="highlightFact('tokio-macros/src/lib.rs', '31-35')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-macros/src/lib.rs:31-35</code></span>. Использование<code>#[tokio::main]</code>на обычной функции допустимо, но каждый вызов оплачивает стоимость создания Runtime.</p>
@@ -2550,23 +2550,23 @@ match &amp;self.scheduler {
 <p>Шестой шаг — сопоставление с шаблоном. Если<code>out</code>совпадает с<code>$bind</code>, возвращается<code>Poll::Ready(Out::_i(out))</code> <span class="fact-pill" data-file="tokio/src/macros/select.rs" data-lines="727-733" onclick="highlightFact('tokio/src/macros/select.rs', '727-733')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/macros/select.rs:727-733</code></span>; если не совпадает,<code>continue</code>продолжается опрос других веток — именно это документация называет в шаге 5: «при несовпадении шаблона текущая ветка отключается»<span class="fact-pill" data-file="tokio/src/macros/select.rs" data-lines="44-47" onclick="highlightFact('tokio/src/macros/select.rs', '44-47')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/macros/select.rs:44-47</code></span>。</p>
 <p>Седьмой шаг — завершение цикла. Если<code>is_pending</code>истинно, возвращается<code>Pending</code>, иначе все ветки недействительны, возвращается<code>Out::Disabled</code> <span class="fact-pill" data-file="tokio/src/macros/select.rs" data-lines="740-745" onclick="highlightFact('tokio/src/macros/select.rs', '740-745')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/macros/select.rs:740-745</code></span>. Внешний<code>match output</code>отображает<code>Out::_i</code>на соответствующий handler,<code>Disabled</code>отображается на<code>else</code>выражение<span class="fact-pill" data-file="tokio/src/macros/select.rs" data-lines="749-755" onclick="highlightFact('tokio/src/macros/select.rs', '749-755')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/macros/select.rs:749-755</code></span>。</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["poll_fn 闭包被调用"] --&gt; budget{"poll_budget_available(cx)?"}
-    budget --&gt;|否| pending_budget["返回 Pending"]
-    budget --&gt;|是| init["is_pending = false; start = $start"]
+    start["замыкание poll_fn вызвано"] --&gt; budget{"poll_budget_available(cx)?"}
+    budget --&gt;|нет| pending_budget["возврат Pending"]
+    budget --&gt;|да| init["is_pending = false; start = $start"]
     init --&gt; loop{"i &lt; BRANCHES?"}
-    loop --&gt;|否| check_pending{"is_pending?"}
-    check_pending --&gt;|是| pending["返回 Pending"]
-    check_pending --&gt;|否| disabled_out["返回 Out::Disabled"]
-    loop --&gt;|是| branch["branch = (start+i) % BRANCHES"]
+    loop --&gt;|нет| check_pending{"is_pending?"}
+    check_pending --&gt;|да| pending["возврат Pending"]
+    check_pending --&gt;|нет| disabled_out["возврат Out::Disabled"]
+    loop --&gt;|да| branch["branch = (start+i) % BRANCHES"]
     branch --&gt; is_disabled{"disabled &amp; mask == mask?"}
-    is_disabled --&gt;|是| next_i["i += 1"]
-    is_disabled --&gt;|否| poll_fut["Pin::new_unchecked(fut).poll(cx)"]
-    poll_fut --&gt; poll_res{"Poll 结果?"}
+    is_disabled --&gt;|да| next_i["i += 1"]
+    is_disabled --&gt;|нет| poll_fut["Pin::new_unchecked(fut).poll(cx)"]
+    poll_fut --&gt; poll_res{"результат Poll?"}
     poll_res --&gt;|Pending| set_pending["is_pending = true; i += 1"]
     poll_res --&gt;|Ready| disable["disabled |= mask"]
-    disable --&gt; pat_match{"out 匹配 $bind?"}
-    pat_match --&gt;|否| next_i
-    pat_match --&gt;|是| ready_out["返回 Out::_i(out)"]
+    disable --&gt; pat_match{"out соответствует $bind?"}
+    pat_match --&gt;|нет| next_i
+    pat_match --&gt;|да| ready_out["возврат Out::_i(out)"]
     next_i --&gt; loop
     set_pending --&gt; loop</code></pre></div>
 <h3>Размышления о дизайне и подводные камни в продакшене</h3>
@@ -2582,24 +2582,24 @@ match &amp;self.scheduler {
 <h3>Пошаговый процесс</h3>
 <p><code>join!</code>логика опроса разделяет с<code>select!</code>каркас «кортеж хранит Future +<code>poll_fn</code>управляет», но семантика противоположна:<code>select!</code>— «возврат при готовности любого»,<code>join!</code>— «возврат только при готовности всех». На каждой итерации poll перебираются все незавершённые Future; если любой возвращает<code>Pending</code>, то весь<code>Pending</code>; если все<code>Ready</code>, то агрегированный возврат.</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart LR
-    subgraph input["输入"]
+    subgraph input["Вход"]
         f1["Future A"]
         f2["Future B"]
         f3["Future C"]
     end
-    subgraph poll["poll_fn 驱动"]
-        tuple["元组 (A, B, C)"]
-        state["完成状态元组"]
+    subgraph poll["управление poll_fn"]
+        tuple["кортеж (A, B, C)"]
+        state["кортеж состояний завершения"]
     end
-    subgraph output["输出"]
+    subgraph output["Выход"]
         result["(A::Output, B::Output, C::Output)"]
     end
     f1 --&gt; tuple
     f2 --&gt; tuple
     f3 --&gt; tuple
     tuple --&gt; state
-    state --&gt;|"全部 Ready"| result
-    state --&gt;|"任一 Pending"| pending["返回 Pending"]</code></pre></div>
+    state --&gt;|"все Ready"| result
+    state --&gt;|"любой Pending"| pending["возврат Pending"]</code></pre></div>
 <h3>Размышления о дизайне и подводные камни в продакшене</h3>
 <p><code>join!</code>семантика безопасности отмены отличается от<code>select!</code>:<code>join!</code>при drop все незавершённые Future также будут drop'нуты, что тоже может привести к потере данных. Но поскольку<code>join!</code>не отменяет активно ни одну из ветвей, он не ведёт себя как<code>select!</code>— «отмена этой ветви из-за готовности другой ветви». Реальный риск заключается в том, что<code>join!</code>целиком отменяется внешним<code>select!</code>или таймаутом.</p>
 <p><code>join!</code>и<code>try_join!</code>различие заслуживает внимания:<code>try_join!</code>немедленно возвращает управление, когда любой Future возвращает<code>Err</code>, отменяя остальные Future, поэтому он наследует<code>select!</code>риск безопасности отмены.</p>
@@ -2645,10 +2645,10 @@ match &amp;self.scheduler {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-10" data-title="Глава 10: Абстракции потокового I/O: AsyncRead/AsyncWrite и фреймворк кодеков">
+      <section class="reader-chapter-section" id="ch-10" data-title="Глава 10: Абстракции потокового I/O: AsyncRead, AsyncWrite и фреймворк кодеков">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 10</span>
-          <h2 class="reader-chapter-title">Глава 10: Абстракции потокового I/O: AsyncRead/AsyncWrite и фреймворк кодеков</h2>
+          <h2 class="reader-chapter-title">Глава 10: Абстракции потокового I/O: AsyncRead, AsyncWrite и фреймворк кодеков</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -2742,20 +2742,20 @@ poll_fn(|cx| {
 <p><code>Running</code>— это<code>poll_copy</code>, продвигается по состояниям:<code>ShuttingDown</code>。<code>ShuttingDown</code>Копирование<code>poll_shutdown</code>В состоянии<code>Done</code>。<code>Done</code>вызывается</p>
 <p>, который внутри циклически «читает блок, пишет блок», пока читающая сторона не достигнет EOF или пишущая сторона не заблокируется. При EOF возвращается общее число скопированных байт, состояние переходит в</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">вызывается</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["transfer_one_direction 进入 loop"] --&gt; match_state{"当前 TransferState?"}
+    start["transfer_one_direction входит в loop"] --&gt; match_state{"текущий TransferState?"}
     match_state --&gt;|Running| poll_copy["buf.poll_copy(cx, r, w)"]
-    poll_copy --&gt; copy_ready{"poll_copy 结果?"}
-    copy_ready --&gt;|Pending| ret_pending["返回 Poll::Pending&lt;br/&gt;状态保持 Running"]
-    copy_ready --&gt;|Err| ret_err["返回 Poll::Ready(Err)&lt;br/&gt;错误向上传播"]
+    poll_copy --&gt; copy_ready{"результат poll_copy?"}
+    copy_ready --&gt;|Pending| ret_pending["возврат Poll::Pending&lt;br/&gt;состояние остаётся Running"]
+    copy_ready --&gt;|Err| ret_err["возврат Poll::Ready(Err)&lt;br/&gt;ошибка распространяется вверх"]
     copy_ready --&gt;|Ok(count)| to_shutdown["state = ShuttingDown(count)"]
     to_shutdown --&gt; match_state
     match_state --&gt;|ShuttingDown| poll_shutdown["w.poll_shutdown(cx)"]
-    poll_shutdown --&gt; shutdown_ready{"shutdown 结果?"}
-    shutdown_ready --&gt;|Pending| ret_pending2["返回 Poll::Pending&lt;br/&gt;状态保持 ShuttingDown"]
+    poll_shutdown --&gt; shutdown_ready{"результат shutdown?"}
+    shutdown_ready --&gt;|Pending| ret_pending2["возврат Poll::Pending&lt;br/&gt;состояние остаётся ShuttingDown"]
     shutdown_ready --&gt;|Err| ret_err
     shutdown_ready --&gt;|Ok| to_done["state = Done(count)"]
     to_done --&gt; match_state
-    match_state --&gt;|Done| ret_done["返回 Poll::Ready(Ok(count))"]</code></pre></div>
+    match_state --&gt;|Done| ret_done["возврат Poll::Ready(Ok(count))"]</code></pre></div>
 <h3>для закрытия пишущей стороны (отправка FIN), после завершения переход в</h3>
 <div class="inference-box"><span class="inference-tag">напрямую возвращает счётчик.</span><p>Приведённая ниже блок-схема показывает логику продвижения однонаправленной машины состояний и ветви ошибок:<code>transfer_one_direction</code>Копирование<code>async fn</code>Размышления о дизайне: почему явная машина состояний, а не async fn<code>CopyBuffer</code>〔Проектные выводы и архитектурные компромиссы〕<code>copy_bidirectional</code>Если<strong>написать как</strong>, компилятор сгенерирует Future, внутреннее состояние которого (<code>async fn</code>, счётчик скопированного) скрыто в сгенерированной машине состояний. При однонаправленном использовании это нормально, но<code>select!</code>нужно в<code>TransferState</code>одном и том же цикле poll<code>poll_fn</code>одновременно продвигать оба направления — если использовать два</p></div>
 <p>плюс<code>poll_copy</code>, при завершении одного направления другой будет drop, его внутренний буфер и счётчик потеряются, что нарушает безопасность отмены. Явный<code>Err</code>выставляет состояние на стеке,<code>?</code>при каждом повторном входе состояние всё ещё на месте, что гарантирует «восстановление с точки останова после отмены».<span class="fact-pill" data-file="tokio/src/io/util/copy_bidirectional.rs" data-lines="32" onclick="highlightFact('tokio/src/io/util/copy_bidirectional.rs', '32')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/io/util/copy_bidirectional.rs:32</code></span>В обработке ошибок<span class="fact-pill" data-file="tokio/src/io/util/copy_bidirectional.rs" data-lines="67-70" onclick="highlightFact('tokio/src/io/util/copy_bidirectional.rs', '67-70')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/io/util/copy_bidirectional.rs:67-70</code></span>возвращаемый<strong>немедленно распространяется вверх через</strong>. Документация явно указывает<code>copy_bidirectional</code>: прерванные чтения-записи будут повторены, другие ошибки возвращаются немедленно, и</p>
@@ -2784,24 +2784,24 @@ poll_fn(|cx| {
 <p><code>Sink</code>цепочка вызовов реализации<span class="fact-pill" data-file="tokio-util/src/codec/framed.rs" data-lines="315-338" onclick="highlightFact('tokio-util/src/codec/framed.rs', '315-338')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/framed.rs:315-338</code></span>：<code>start_send</code>вызывает<code>codec.encode(item, &amp;mut write.buffer)</code>кодирует кадр в буфер записи;<code>poll_flush</code>сбрасывает<code>write.buffer</code>в нижележащий<code>AsyncWrite</code>；<code>poll_ready</code>проверяет<code>write.buffer.len() &gt;= backpressure_boundary</code>, при превышении порога сначала flush, затем возвращает готовность.</p>
 <p>Следующая диаграмма последовательности показывает<code>Framed</code>взаимодействие между компонентами в одном цикле «чтение кадра — запись кадра»:</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant App as 应用层
+    participant App as Прикладной уровень
     participant F as FramedImpl
     participant C as Decoder/Encoder
     participant IO as AsyncRead/AsyncWrite
 
     App-&gt;&gt;F: poll_next(cx)
     F-&gt;&gt;C: decode(&amp;mut read.buffer)
-    alt 缓冲中已有完整帧
+    alt в буфере уже есть полный кадр
         C--&gt;&gt;F: Some(frame)
         F--&gt;&gt;App: Poll::Ready(Some(frame))
-    else 半包
+    else полупакет
         C--&gt;&gt;F: None
         F-&gt;&gt;IO: poll_read(cx, &amp;mut read.buffer)
-        alt 数据就绪
+        alt данные готовы
             IO--&gt;&gt;F: Ready(Ok(()))
             F-&gt;&gt;C: decode(&amp;mut read.buffer)
-            C--&gt;&gt;F: Some(frame) 或 None
-        else 无数据
+            C--&gt;&gt;F: Some(frame) или None
+        else нет данных
             IO--&gt;&gt;F: Pending
             F--&gt;&gt;App: Poll::Pending
         end
@@ -2916,16 +2916,16 @@ Ok(Some(n))</code></pre></div>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
     entry["decode(src)"] --&gt; check_state{"self.state?"}
     check_state --&gt;|Head| head["decode_head(src)"]
-    head --&gt; head_result{"结果?"}
-    head_result --&gt;|Ok(None)| ret_none1["返回 Ok(None)&lt;br/&gt;等待更多数据"]
-    head_result --&gt;|Err| ret_err1["返回 Err&lt;br/&gt;长度超限或溢出"]
+    head --&gt; head_result{"результат?"}
+    head_result --&gt;|Ok(None)| ret_none1["возврат Ok(None)&lt;br/&gt;ожидание дополнительных данных"]
+    head_result --&gt;|Err| ret_err1["возврат Err&lt;br/&gt;превышение длины или переполнение"]
     head_result --&gt;|Ok(Some(n))| set_data["state = Data(n)"]
     set_data --&gt; decode_data
     check_state --&gt;|Data(n)| decode_data["decode_data(n, src)"]
     decode_data --&gt; data_result{"src.len() &gt;= n?"}
-    data_result --&gt;|否| ret_none2["返回 Ok(None)&lt;br/&gt;等待更多数据"]
-    data_result --&gt;|是| split["src.split_to(n)&lt;br/&gt;state = Head&lt;br/&gt;reserve 下一帧头部"]
-    split --&gt; ret_frame["返回 Ok(Some(frame))"]</code></pre></div>
+    data_result --&gt;|нет| ret_none2["возврат Ok(None)&lt;br/&gt;ожидание дополнительных данных"]
+    data_result --&gt;|да| split["src.split_to(n)&lt;br/&gt;state = Head&lt;br/&gt;reserve заголовка следующего кадра"]
+    split --&gt; ret_frame["возврат Ok(Some(frame))"]</code></pre></div>
 <h3>Проектное размышление: обрезка max_frame_len и защита от переполнения</h3>
 <p><code>Builder::adjust_max_frame_len</code>при создании codec обрезает<code>max_frame_len</code>до максимального значения, которое может представить поле длины<span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="1075-1081" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '1075-1081')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:1075-1081</code></span>。<code>max_allowed_frame_len</code>вычисляет<code>max_length_field_value + length_adjustment</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="1083-1089" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '1083-1089')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:1083-1089</code></span>, где<code>max_length_field_value</code>использует<code>checked_shl</code>для обработки<code>length_field_len == 8</code>переполнения сдвига<span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="1091-1096" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '1091-1096')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:1091-1096</code></span>. Эта обрезка предотвращает противоречивую конфигурацию, когда пользователь задаёт «поле длины 2 байта, но max_frame_len = 1MB» — 2 байта могут представить максимум 65535, после обрезки max_frame_len становится 65535.</p>
 <p>Симметричная защита на пути кодирования:<code>encode</code>проверяет<code>n &gt; max_frame_len</code>возвращает<code>InvalidInput</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="607-607" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '607-607')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:607-607</code></span>, корректировка длины также использует<code>checked_add</code>/<code>checked_sub</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="620-631" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '620-631')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:620-631</code></span>. Обратите внимание, что направление корректировки при кодировании противоположно декодированию: при декодировании «прочитанная длина ± adjustment = длина payload», при кодировании «длина payload ∓ adjustment = записываемое поле длины»<span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="620-624" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '620-624')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:620-624</code></span>。</p>
@@ -2976,10 +2976,10 @@ Ok(Some(n))</code></pre></div>
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-11" data-title="Глава 11: Экосистема Stream и слой инструментов: механизмы расширения tokio-stream и tokio-util">
+      <section class="reader-chapter-section" id="ch-11" data-title="Глава 11: Экосистема Stream и утилиты: механизмы расширения tokio-stream и tokio-util">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 11</span>
-          <h2 class="reader-chapter-title">Глава 11: Экосистема Stream и слой инструментов: механизмы расширения tokio-stream и tokio-util</h2>
+          <h2 class="reader-chapter-title">Глава 11: Экосистема Stream и утилиты: механизмы расширения tokio-stream и tokio-util</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -3330,24 +3330,10 @@ where
 }</code></pre></div>
 <p>Такой же шаблон, как и<code>merge_size_hints</code>: насыщающее сложение для нижней границы, проверяемое сложение для верхней границы, и если любая из них неизвестна, то всё неизвестно.</p>
 <p>Ниже приведена блок-схема, иллюстрирующая<code>poll_next_entry</code>путь принятия решений:</p>
-<div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["poll_next_entry(cx)"] --&gt; rand["start = thread_rng_n(len)"]
-    rand --&gt; loop{"遍历 len 次?"}
-    loop --&gt;|"未完成"| poll["Pin::new(stream).poll_next(cx)"]
-    poll --&gt;|"Ready(Some(val))"| ret_val["返回 Ready(Some((idx, val)))"]
-    poll --&gt;|"Ready(None)"| remove["entries.swap_remove(idx)"]
-    remove --&gt; wrap{"idx == entries.len()?"}
-    wrap --&gt;|"是"| set_zero["idx = 0"]
-    wrap --&gt;|"否"| check_swap{"idx &lt; start &amp;&amp; start &lt;= len?"}
-    check_swap --&gt;|"是"| skip["idx = idx.wrapping_add(1) % len"]
-    check_swap --&gt;|"否"| loop
-    set_zero --&gt; loop
-    skip --&gt; loop
-    poll --&gt;|"Pending"| advance["idx = idx.wrapping_add(1) % len"]
-    advance --&gt; loop
-    loop --&gt;|"遍历完成"| empty{"entries.is_empty()?"}
-    empty --&gt;|"是"| ret_none["返回 Ready(None)"]
-    empty --&gt;|"否"| ret_pending["返回 Pending"]</code></pre></div>
+<div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">)
+    Pipe-&gt;&gt;RtA: событие доступности для чтения
+    Pipe-&gt;&gt;RtB: событие доступности для чтения
+    Note over RtA,RtB: оба Runtime конкурируют за чтение, прочитать байт может только один</code></pre></div>
 <p>---</p>
 <h2>TaskTracker: кодирование всего состояния в одном AtomicUsize</h2>
 <h3>Интуитивная модель</h3>
@@ -3520,10 +3506,10 @@ fn notify_now(&amp;self) {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-12" data-title="Глава 12: Кооперативное планирование и бюджет: как механизм coop предотвращает голодание планировщика задачами">
+      <section class="reader-chapter-section" id="ch-12" data-title="Глава 12: Кооперативное планирование и бюджет: как coop предотвращает голодание планировщика">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 12</span>
-          <h2 class="reader-chapter-title">Глава 12: Кооперативное планирование и бюджет: как механизм coop предотвращает голодание планировщика задачами</h2>
+          <h2 class="reader-chapter-title">Глава 12: Кооперативное планирование и бюджет: как coop предотвращает голодание планировщика</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -3723,28 +3709,28 @@ const MAX_LIFO_POLLS_PER_TICK: usize = 3;</code></pre></div>
 <p><code>coop::set(self.budget)</code>Копировать<code>stop()</code>восстанавливает ранее сохранённый<code>block_in_place</code>бюджет. Таким образом, синхронный блокирующий код внутри</p>
 <p>не потребляет бюджет и не вызывает ложное уступление из-за исчерпания бюджета; после завершения блокировки задача продолжает выполнение с прежним остатком бюджета.</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Следующая диаграмма показывает полный поток управления от планирования задачи до уступки при исчерпании бюджета:</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["Context::run 主循环"] --&gt; next["core.next_task()"]
-    next --&gt; has_task{"有本地任务?"}
-    has_task --&gt;|是| run_task["run_task(task, core)"]
-    has_task --&gt;|否| steal["core.steal_work()"]
-    steal --&gt; stolen{"窃取到任务?"}
-    stolen --&gt;|是| run_task
-    stolen --&gt;|否| defer_check{"defer 队列非空?"}
-    defer_check --&gt;|是| park_yield["park_yield: 驱动 IO/timer 后唤醒"]
-    defer_check --&gt;|否| park["park: 阻塞等待"]
+    start["Context::run главный цикл"] --&gt; next["core.next_task()"]
+    next --&gt; has_task{"есть локальная задача?"}
+    has_task --&gt;|да| run_task["run_task(task, core)"]
+    has_task --&gt;|нет| steal["core.steal_work()"]
+    steal --&gt; stolen{"удалось украсть задачу?"}
+    stolen --&gt;|да| run_task
+    stolen --&gt;|нет| defer_check{"очередь defer не пуста?"}
+    defer_check --&gt;|да| park_yield["park_yield: пробудить после обработки IO/timer"]
+    defer_check --&gt;|нет| park["park: блокирующее ожидание"]
     park_yield --&gt; start
     park --&gt; start
 
-    run_task --&gt; budget["coop::budget 建立满额预算"]
-    budget --&gt; poll["task.run() 轮询"]
-    poll --&gt; lifo_check{"lifo_slot 有任务?"}
-    lifo_check --&gt;|否| done["返回 ControlFlow::Continue"]
-    lifo_check --&gt;|是| budget_rem{"coop::has_budget_remaining()?"}
-    budget_rem --&gt;|否| push_back["push_back_or_overflow 推回队列"]
+    run_task --&gt; budget["coop::budget создаёт полный бюджет"]
+    budget --&gt; poll["task.run() опрос"]
+    poll --&gt; lifo_check{"в lifo_slot есть задача?"}
+    lifo_check --&gt;|нет| done["вернуть ControlFlow::Continue"]
+    lifo_check --&gt;|да| budget_rem{"coop::has_budget_remaining()?"}
+    budget_rem --&gt;|нет| push_back["push_back_or_overflow вернуть в очередь"]
     push_back --&gt; done
-    budget_rem --&gt;|是| lifo_limit{"lifo_polls &gt;= 3?"}
-    lifo_limit --&gt;|是| disable["core.lifo_enabled = false"]
-    lifo_limit --&gt;|否| poll_lifo["task.run() 轮询 LIFO 任务"]
+    budget_rem --&gt;|да| lifo_limit{"lifo_polls &gt;= 3?"}
+    lifo_limit --&gt;|да| disable["core.lifo_enabled = false"]
+    lifo_limit --&gt;|нет| poll_lifo["task.run() опрос LIFO-задачи"]
     disable --&gt; poll_lifo
     poll_lifo --&gt; lifo_check
     done --&gt; start</code></pre></div>
@@ -3846,10 +3832,10 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
       </section>
         
 
-      <section class="reader-chapter-section" id="ch-13" data-title="Следующая глава: Глава 13 →">
+      <section class="reader-chapter-section" id="ch-13" data-title="Глава 13: Ловушки в продакшене: безопасность отмены, паники и порядок завершения">
         <div class="chapter-header">
           <span class="chapter-badge">CHAPTER 13</span>
-          <h2 class="reader-chapter-title">Следующая глава: Глава 13 →</h2>
+          <h2 class="reader-chapter-title">Глава 13: Ловушки в продакшене: безопасность отмены, паники и порядок завершения</h2>
           <div class="reader-chapter-meta">
             <span>Upstream: tokio-rs/tokio</span>
             <span>·</span>
@@ -3872,18 +3858,18 @@ assert!(err.is_panic());</code></pre></div>
 <p>Механизм перехвата panic находится в пути poll<code>RawTask</code>: при poll задачи используется<code>catch_unwind</code>для обёртки; после возникновения panic payload сохраняется в выходной слот задачи, состояние помечается как complete, затем пробуждается join waker.<code>JoinHandle::poll</code>Через<code>try_read_output</code>читается<code>Err(JoinError::panic(payload))</code>。</p>
 <h3>Пошаговый разбор на основе сценария: цепочка распространения panic</h3>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant App as 应用任务
-    participant Worker as Worker 线程
+    participant App as Прикладная задача
+    participant Worker as Поток Worker
     participant Raw as RawTask
     participant JH as JoinHandle
 
     App-&gt;&gt;Worker: spawn(async { panic!("boom") })
-    Worker-&gt;&gt;Raw: poll 任务 Future
-    Raw-&gt;&gt;Raw: catch_unwind 捕获 panic
-    Raw-&gt;&gt;Raw: 存储 panic payload 到输出槽
-    Raw-&gt;&gt;Raw: state 标记 complete
-    Raw-&gt;&gt;JH: 唤醒 join waker
-    JH-&gt;&gt;App: await 返回 Err(JoinError::panic)</code></pre></div>
+    Worker-&gt;&gt;Raw: опрос Future задачи
+    Raw-&gt;&gt;Raw: catch_unwind перехватывает panic
+    Raw-&gt;&gt;Raw: сохранение panic payload в выходной слот
+    Raw-&gt;&gt;Raw: state помечается как complete
+    Raw-&gt;&gt;JH: пробуждение join waker
+    JH-&gt;&gt;App: await возвращает Err(JoinError::panic)</code></pre></div>
 <p>Ключевой момент: payload panic сохраняется полностью,<code>JoinError</code>реализует<code>std::error::Error</code>, можно через<code>into_panic()</code>извлечь<code>Box&lt;dyn Any + Send&gt;</code>, а затем с помощью<code>downcast_ref::&lt;&amp;str&gt;()</code>извлечь сообщение panic.</p>
 <h3>Проектные соображения и подводные камни</h3>
 <p><strong>Камень 1:<code>JoinHandle</code>у<code>UnwindSafe</code>реализован вручную.</strong></p>
@@ -3975,20 +3961,20 @@ pub(super) struct Receiver {
 <p>3. При неудачном входе, если происходит panic, возвращает false (не паниковать во время panic); иначе паникует с чётким сообщением об ошибке.<code>block_on_timeout</code>4. При наличии timeout используется</p>
 <h3>, при тайм-ауте возвращает false; без timeout ожидает бесконечно.</h3>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Полный процесс порядка завершения</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["Runtime::drop 或 shutdown_timeout"] --&gt; sched{"scheduler 类型?"}
+    start["Runtime::drop или shutdown_timeout"] --&gt; sched{"тип scheduler?"}
     sched --&gt;|CurrentThread| ct["try_set_current + current_thread.shutdown"]
     sched --&gt;|MultiThread| mt["multi_thread.shutdown"]
-    ct --&gt; handle_drop["handle 字段 drop"]
+    ct --&gt; handle_drop["drop поля handle"]
     mt --&gt; handle_drop
-    handle_drop --&gt; bp_drop["blocking_pool 字段 drop"]
-    bp_drop --&gt; bp_wait{"shutdown_timeout 已调用?"}
-    bp_wait --&gt;|是| explicit["blocking_pool.shutdown(Some(duration))"]
-    bp_wait --&gt;|否| implicit["BlockingPool::drop 默认等待"]
-    explicit --&gt; wait_check{"try_enter_blocking_region 成功?"}
+    handle_drop --&gt; bp_drop["drop поля blocking_pool"]
+    bp_drop --&gt; bp_wait{"shutdown_timeout был вызван?"}
+    bp_wait --&gt;|да| explicit["blocking_pool.shutdown(Some(duration))"]
+    bp_wait --&gt;|нет| implicit["BlockingPool::drop ожидание по умолчанию"]
+    explicit --&gt; wait_check{"try_enter_blocking_region успешно?"}
     implicit --&gt; wait_check
-    wait_check --&gt;|否且在 panic| skip["返回 false 不等待"]
-    wait_check --&gt;|否且不在 panic| panic_err["panic: Cannot drop a runtime in async context"]
-    wait_check --&gt;|是| block_on["block_on 等待所有 Sender drop"]</code></pre></div>
+    wait_check --&gt;|нет и в panic| skip["вернуть false, не ждать"]
+    wait_check --&gt;|нет и не в panic| panic_err["panic: Cannot drop a runtime in async context"]
+    wait_check --&gt;|да| block_on["block_on ожидает drop всех Sender"]</code></pre></div>
 <h3>Копировать</h3>
 <p><strong>Проектные соображения и подводные камни</strong>Сообщение об ошибке очень чёткое: «Cannot drop a runtime in a context where blocking is not allowed»<span class="fact-pill" data-file="tokio/src/runtime/blocking/shutdown.rs" data-lines="51-54" onclick="highlightFact('tokio/src/runtime/blocking/shutdown.rs', '51-54')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/blocking/shutdown.rs:51-54</code></span>. Решение — использовать<code>shutdown_background()</code>, что эквивалентно<code>shutdown_timeout(Duration::from_nanos(0))</code> <span class="fact-pill" data-file="tokio/src/runtime/runtime.rs" data-lines="494-496" onclick="highlightFact('tokio/src/runtime/runtime.rs', '494-496')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/runtime.rs:494-496</code></span>, без ожидания блокирующих задач.</p>
 <p><strong>Ловушка 2:<code>shutdown_background</code>приводит к утечке блокирующих задач.</strong>Документация явно предупреждает: «this may result in a resource leak (in that any blocking tasks are still running until they return)»<span class="fact-pill" data-file="tokio/src/runtime/runtime.rs" data-lines="470-472" onclick="highlightFact('tokio/src/runtime/runtime.rs', '470-472')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/runtime.rs:470-472</code></span>. Блокирующие задачи продолжат выполняться до естественного возврата, но Runtime уже уничтожен, и ресурсы, которые они удерживают, могут стать недействительными.</p>
@@ -4046,21 +4032,18 @@ pub(super) struct Receiver {
 <p>Возникает проблема:<code>signal_enable</code>внутри<code>handle.check_inner()</code>проверяется<strong>текущего Runtime</strong>драйвер сигналов. Но<code>signal_hook_registry::register</code>зарегистрированный handler является<strong>процессным</strong>, и он пишет в<strong>глобальный</strong>pipe. Если Runtime A первым зарегистрировал SIGINT, а затем Runtime B тоже регистрирует SIGINT,<code>get_or_init</code>просто вернёт существующий<code>Ok(())</code>, не выполняя повторную регистрацию. Но драйвер сигналов Runtime B будет читать данные из глобального pipe — два Runtime будут конкурировать за байты одного и того же pipe.</p>
 <h3>Сценарный Walkthrough: конкуренция сигналов между несколькими Runtime</h3>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant OS as 操作系统
-    participant Handler as 全局 signal handler
-    participant Pipe as 全局 UnixStream pipe
-    participant RtA as Runtime A 信号驱动
-    participant RtB as Runtime B 信号驱动
+    participant OS as Операционная система
+    participant Handler as Глобальный signal handler
+    participant Pipe as Глобальный UnixStream pipe
+    participant RtA as Драйвер сигналов Runtime A
+    participant RtB as Драйвер сигналов Runtime B
 
-    Note over RtA: signal(SIGINT) 注册
+    Note over RtA: регистрация signal(SIGINT)
     RtA-&gt;&gt;Handler: signal_hook_registry::register(SIGINT, action)
-    Note over RtB: signal(SIGINT) 注册
-    RtB-&gt;&gt;Handler: get_or_init 返回已有 Ok，不重复注册
-    OS-&gt;&gt;Handler: 投递 SIGINT
-    Handler-&gt;&gt;Pipe: write(&amp;[1])
-    Pipe-&gt;&gt;RtA: 可读事件
-    Pipe-&gt;&gt;RtB: 可读事件
-    Note over RtA,RtB: 两个 Runtime 竞争读取，只有一个能读到字节</code></pre></div>
+    Note over RtB: регистрация signal(SIGINT)
+    RtB-&gt;&gt;Handler: get_or_init возвращает существующий Ok, повторная регистрация не выполняется
+    OS-&gt;&gt;Handler: доставка SIGINT
+    Handler-&gt;&gt;Pipe: write(&amp;</code></pre></div>
 <h3>Размышления о дизайне и подводные камни</h3>
 <p><strong>Ловушка 1: обработчик сигналов никогда не выгружается.</strong>Документация явно предупреждает: «Once a signal handler is registered with the process the underlying libc signal handler is never unregistered»<span class="fact-pill" data-file="tokio/src/signal/unix.rs" data-lines="379-380" onclick="highlightFact('tokio/src/signal/unix.rs', '379-380')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/signal/unix.rs:379-380</code></span>. Даже если экземпляр<code>Signal</code>уничтожен, последующие сигналы всё равно будут перехватываться Tokio, и поведение по умолчанию не восстановится<span class="fact-pill" data-file="tokio/src/signal/unix.rs" data-lines="338-340" onclick="highlightFact('tokio/src/signal/unix.rs', '338-340')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/signal/unix.rs:338-340</code></span>。</p>
 <p><strong>Ловушка 2: сигналы объединяются.</strong>Документация поясняет: «before<code>poll</code> is called, all signal notifications are coalesced into one item returned from <code>poll</code>」<span class="fact-pill" data-file="tokio/src/signal/unix.rs" data-lines="312-315" onclick="highlightFact('tokio/src/signal/unix.rs', '312-315')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/signal/unix.rs:312-315</code></span>. Если вы получили 10 SIGINT, но выполнили poll только один раз, вы увидите только одно событие. Это свойство самих Unix-сигналов (стандартные сигналы не ставятся в очередь), Tokio не выполняет дополнительного объединения.</p>
@@ -4269,20 +4252,20 @@ function could deadlock. This happens because the readiness event is received,
 <div class="inference-box"><span class="inference-tag">〔Выводы о дизайне и архитектурные компромиссы〕</span><p>Эта раскладка битов — классический пример «обмена пространства на корректность».<code>tick</code>инкрементируется при каждом<code>mio::poll()</code>,<code>ReadyEvent</code>несёт tick, прочитанный в момент чтения.<code>clear_readiness()</code>очищает состояние готовности только при совпадении tick — если tick не совпадает, значит за это время пришло новое событие, и очищать нельзя. Так гонка между «очисткой» и «приходом нового события» устраняется в одной атомарной операции чтения-изменения-записи.</p></div>
 <p>Приведённая ниже блок-схема описывает путь принятия решений между<code>readiness()</code>и<code>clear_readiness()</code>:</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">flowchart TD
-    start["readiness(interest).await"] --&gt; check_ready{"已知 readiness&lt;br/&gt;与 interest 有交集?"}
-    check_ready --&gt;|是| ret_event["返回 ReadyEvent&lt;br/&gt;携带当前 tick"]
-    check_ready --&gt;|否| wait["注册 Waiter 到&lt;br/&gt;ScheduledIo.waiters"]
-    wait --&gt; mio_poll["mio.poll() 收到事件&lt;br/&gt;tick 递增"]
-    mio_poll --&gt; notify["遍历 waiters&lt;br/&gt;interest 匹配者唤醒"]
+    start["readiness(interest).await"] --&gt; check_ready{"известная readiness&lt;br/&gt;пересекается с interest?"}
+    check_ready --&gt;|да| ret_event["вернуть ReadyEvent&lt;br/&gt;с текущим tick"]
+    check_ready --&gt;|нет| wait["зарегистрировать Waiter в&lt;br/&gt;ScheduledIo.waiters"]
+    wait --&gt; mio_poll["mio.poll() получает событие&lt;br/&gt;tick инкрементируется"]
+    mio_poll --&gt; notify["обход waiters&lt;br/&gt;пробуждение совпадающих по interest"]
     notify --&gt; ret_event
     ret_event --&gt; do_read["mio_socket.read(buf)"]
-    do_read --&gt; read_ok{"read 结果?"}
-    read_ok --&gt;|Ok| done["返回 Ok(v)"]
+    do_read --&gt; read_ok{"результат read?"}
+    read_ok --&gt;|Ok| done["вернуть Ok(v)"]
     read_ok --&gt;|WouldBlock| clear["clear_readiness(event)"]
-    read_ok --&gt;|其他 Err| err["返回 Err(e)"]
-    clear --&gt; tick_match{"event.tick ==&lt;br/&gt;当前 readiness.tick?"}
-    tick_match --&gt;|是| clear_ok["清除 readiness 位"]
-    tick_match --&gt;|否| skip["跳过清除&lt;br/&gt;保留新事件"]
+    read_ok --&gt;|другая Err| err["вернуть Err(e)"]
+    clear --&gt; tick_match{"event.tick ==&lt;br/&gt;текущий readiness.tick?"}
+    tick_match --&gt;|да| clear_ok["сбросить биты readiness"]
+    tick_match --&gt;|нет| skip["пропустить сброс&lt;br/&gt;сохранить новое событие"]
     clear_ok --&gt; start
     skip --&gt; start</code></pre></div>
 <p>Ключевое ветвление на этой схеме —<code>tick_match</code>: если tick не совпадает,<code>clear_readiness</code>должен отказаться от очистки, иначе потеряет только что пришедшее событие, что приведёт к вечной блокировке следующего<code>readiness()</code>.</p>
@@ -4345,22 +4328,22 @@ memory leaks.</code></pre></div>
 <div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>Здесь runtime Tokio создаётся, но<strong>не<code>block_on</code>управляется</strong>— он просто «существует», предоставляя I/O-драйвер и таймеры. Реальное планирование задач выполняет<code>futures::executor::ThreadPool</code>. В этом режиме worker-потоки Tokio фактически простаивают (ожидая событий I/O), а выполнение задач происходит в пуле потоков futures.</p></div>
 <h3>Поток данных: путешествие TcpListener::bind между исполнителями</h3>
 <div class="code-block-wrapper"><div class="code-block-header"><span>mermaid</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">Копировать</button></div><pre class="source-code-block"><code class="language-mermaid">sequenceDiagram
-    participant App as "应用 (main)"
+    participant App as "Приложение (main)"
     participant FE as "futures::ThreadPool"
     participant TC as "TokioContext"
-    participant TR as "tokio::Runtime (后台线程)"
-    participant IO as "I/O 驱动 (mio)"
+    participant TR as "tokio::Runtime (фоновый поток)"
+    participant IO as "Драйвер I/O (mio)"
 
     App-&gt;&gt;FE: spawn_ok(TokioContext::new(f, handle))
     FE-&gt;&gt;TC: poll(cx)
-    TC-&gt;&gt;TC: enter(handle) 设置线程局部上下文
-    TC-&gt;&gt;TC: f.poll(cx) 执行 TcpListener::bind
-    TC-&gt;&gt;TR: 通过 Handle 访问 I/O 驱动
-    TR-&gt;&gt;IO: Registration::new 注册 fd
-    IO--&gt;&gt;TR: 注册完成
-    TR--&gt;&gt;TC: 返回 Pending 或 Ready
-    TC--&gt;&gt;FE: 返回 poll 结果
-    Note over FE,TR: I/O 就绪时，Tokio 驱动唤醒 waker&lt;br/&gt;FE 重新调度该任务</code></pre></div>
+    TC-&gt;&gt;TC: enter(handle) устанавливает локальный контекст потока
+    TC-&gt;&gt;TC: f.poll(cx) выполняет TcpListener::bind
+    TC-&gt;&gt;TR: доступ к драйверу I/O через Handle
+    TR-&gt;&gt;IO: Registration::new регистрирует fd
+    IO--&gt;&gt;TR: регистрация завершена
+    TR--&gt;&gt;TC: возврат Pending или Ready
+    TC--&gt;&gt;FE: возврат результата poll
+    Note over FE,TR: при готовности I/O драйвер Tokio пробуждает waker&lt;br/&gt;FE перепланирует эту задачу</code></pre></div>
 <p>Ключевой момент этой диаграммы последовательности:<strong>poll задачи происходит в пуле потоков futures, но ожидание событий I/O происходит в фоновом потоке Tokio</strong>. Оба соединяются через<code>Handle</code>и waker.</p>
 <h3>Проектные размышления: когда стоит обходить Tokio</h3>
 <div class="inference-box"><span class="inference-tag">〔Проектные выводы и архитектурные компромиссы〕</span><p>Само существование этого примера — сигнал: архитектура Tokio допускает «использовать только I/O-драйвер, без планировщика». Критерии можно свести к трём:</p></div>

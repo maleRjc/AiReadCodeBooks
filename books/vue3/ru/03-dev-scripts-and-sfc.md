@@ -1,4 +1,4 @@
-# Наверх ↑
+# Глава 3: Скрипты разработки и протокол прекомпиляции SFC
 
 Прогресс книги: Глава 3 / 14`scripts/dev.js`Статус проверки: FACT — номера строк реально привязаны`scripts/pre-dev-sfc.js`В предыдущей главе мы проследили полный путь производственной сборки от разбора аргументов до записи артефактов в нескольких форматах; тот путь нацелен на полноту и соответствие стандартам артефактов. А основное требование режима разработки только одно: изменить строку кода — и сразу увидеть эффект в браузере. Цепочка производственной сборки «разбор аргументов → генерация конфигурации → полная упаковка → запись на диск» занимает десятки секунд и совершенно не удовлетворяет этому требованию. Репозиторий Vue core поддерживает для этого отдельную цепочку в режиме разработки:
 
@@ -60,35 +60,35 @@
 
 ```mermaid
 flowchart TD
-    start["parseArgs 解析 format/prod/inline"] --> targets{"positionals 为空?"}
-    targets -->|是| def["targets = ['vue']"]
-    targets -->|否| use["targets = positionals"]
-    def --> loop["遍历每个 target"]
+    start["parseArgs разбирает format/prod/inline"] --> targets{"positionals пуст?"}
+    targets -->|да| def["targets = ['vue']"]
+    targets -->|нет| use["targets = positionals"]
+    def --> loop["перебор каждого target"]
     use --> loop
-    loop --> priv{"target 在 packages-private?"}
-    priv -->|是| pbase["pkgBase = packages-private"]
-    priv -->|否| pub["pkgBase = packages"]
+    loop --> priv{"target в packages-private?"}
+    priv -->|да| pbase["pkgBase = packages-private"]
+    priv -->|нет| pub["pkgBase = packages"]
     pbase --> req["require package.json"]
     pub --> req
-    req --> ext{"inline 开启?"}
-    ext -->|是| noext["external = []"]
-    ext -->|否| fmt{"format 是 cjs 或 esm-bundler?"}
-    fmt -->|是| deps["加入 dependencies/peerDependencies + path/url/stream"]
-    fmt -->|否| sfc{"target == compiler-sfc?"}
+    req --> ext{"inline включён?"}
+    ext -->|да| noext["external = []"]
+    ext -->|нет| fmt{"format — cjs или esm-bundler?"}
+    fmt -->|да| deps["добавить dependencies/peerDependencies + path/url/stream"]
+    fmt -->|нет| sfc{"target == compiler-sfc?"}
     deps --> sfc
-    sfc -->|是| cons["加入 consolidate devDeps + fs/vm/crypto"]
-    sfc -->|否| noext
-    cons --> ctx["esbuild.context 创建上下文"]
+    sfc -->|да| cons["добавить consolidate devDeps + fs/vm/crypto"]
+    sfc -->|нет| noext
+    cons --> ctx["esbuild.context создаёт контекст"]
     noext --> ctx
-    ctx --> watch["ctx.watch() 启动监听"]
-    watch --> onend["onEnd 打印 built: 相对路径"]
+    ctx --> watch["ctx.watch() запускает наблюдение"]
+    watch --> onend["onEnd выводит built: относительный путь"]
 ```
 
 # 3.2 pre-dev-sfc.js: предкомпиляционный страж, разрубающий циклические зависимости
 
 ## Интуитивная модель
 
-Представьте дилемму «курица и яйцо»:`compiler-sfc`В исходном коде`compiler-core`импортирует`compiler-core`, а`compiler-sfc`в режиме разработки нуждается в`.vue`для обработки файлов`pre-dev-sfc.js`. Если оба полагаются на实时-компиляцию esbuild watch, кто скомпилируется первым, тот и застрянет.
+Представьте дилемму «курица и яйцо»:`compiler-sfc`В исходном коде`compiler-core`импортирует`compiler-core`, а`compiler-sfc`в режиме разработки нуждается в`.vue`для обработки файлов`pre-dev-sfc.js`. Если оба полагаются на компиляцию в реальном времени через esbuild watch, кто скомпилируется первым, тот и застрянет.
 
 ## Роль
 
@@ -102,13 +102,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    start["遍历 packagesToCheck 清单"] --> check{"dist/pkg.cjs.js 存在?"}
-    check -->|是| next{"还有下一个包?"}
-    next -->|是| check
-    next -->|否| ok["allFilesPresent 保持 true"]
-    check -->|否| fail["allFilesPresent = false 并 break"]
-    ok --> exit0["正常退出 退出码 0"]
-    fail --> exit1["process.exit(1) 退出码 1"]
+    start["перебор списка packagesToCheck"] --> check{"dist/pkg.cjs.js существует?"}
+    check -->|да| next{"есть ещё следующий пакет?"}
+    next -->|да| check
+    next -->|нет| ok["allFilesPresent остаётся true"]
+    check -->|нет| fail["allFilesPresent = false и break"]
+    ok --> exit0["нормальный выход, код возврата 0"]
+    fail --> exit1["process.exit(1), код возврата 1"]
 ```
 
 # в npm script или CI-скрипта): артефакты неполны, нужно сначала запустить полную сборку. Если всё существует, происходит нормальный выход (код выхода 0), и основная сборка продолжается.
@@ -132,30 +132,30 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant Dev as 开发者
+    participant Dev as Разработчик
     participant NPM as npm script
     participant Pre as pre-dev-sfc.js
     participant DevJS as dev.js
     participant ESB as esbuild context
-    participant FS as 文件系统
+    participant FS as Файловая система
 
-    Dev->>NPM: 启动开发
-    NPM->>Pre: 检查 SFC 产物
+    Dev->>NPM: запуск разработки
+    NPM->>Pre: проверка артефактов SFC
     Pre->>FS: existsSync(dist/*.cjs.js)
-    alt 产物缺失
+    alt артефакты отсутствуют
         FS-->>Pre: false
         Pre-->>NPM: exit(1)
-        NPM-->>Dev: 提示先跑完整构建
-    else 产物齐全
+        NPM-->>Dev: подсказка сначала запустить полную сборку
+    else артефакты на месте
         FS-->>Pre: true
         Pre-->>NPM: exit(0)
-        NPM->>DevJS: 启动 dev.js
+        NPM->>DevJS: запуск dev.js
         DevJS->>ESB: context(...).watch()
-        ESB->>FS: 监听源码变化
-        Dev->>FS: 修改 src/index.ts
-        FS-->>ESB: 文件变更事件
-        ESB->>ESB: 增量重建
-        ESB-->>Dev: onEnd 打印 built: 路径
+        ESB->>FS: наблюдение за изменениями исходников
+        Dev->>FS: изменение src/index.ts
+        FS-->>ESB: событие изменения файла
+        ESB->>ESB: инкрементальная пересборка
+        ESB-->>Dev: onEnd выводит built: путь
     end
 ```
 
@@ -196,7 +196,7 @@ Q1: Если убрать`scripts/pre-dev-sfc.js`в`break`(то есть про�
 
 3. **Опыт разработчика**: на самом деле ухудшается «сообщение об ошибке». Текущий скрипт не печатает, какой пакет отсутствует, разработчик видит только код выхода 1. Если убрать`break`и добавить логирование, можно было бы сообщить разработчику «отсутствуют compiler-core и shared» — но это требует дополнительного кода. Автор выбрал минимальную реализацию, оставив диагностику «чего не хватает» на ошибки верхнего скрипта сборки.
 
-Поэтому`break`的核心动机 — «семантика утверждения + производительность», а не оптимизация опыта.
+Поэтому`break`ключевая мотивация — «семантика утверждения + производительность», а не оптимизация опыта.
 
 Q2: `scripts/dev.js`В`__BROWSER__`вывод`format !== 'cjs' && !pkg.buildOptions?.enableNonBrowserBranches`. Предположим, у некоторого пакета`buildOptions.enableNonBrowserBranches`равно`true`, и разработчик собирает с помощью`-f global`, тогда`__BROWSER__`равно`false`. Каковы последствия? Что будет, если ошибочно изменить на`true`?
 

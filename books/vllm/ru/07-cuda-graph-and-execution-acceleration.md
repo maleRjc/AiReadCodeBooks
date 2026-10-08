@@ -1,4 +1,4 @@
-# Глава 7: Сэмплирование и вывод: обработка Logits, структурированный вывод и потоковый возврат
+# Глава 7: CUDA Graph и аппаратное ускорение: устранение накладных расходов запуска
 
 В предыдущей главе мы проследили, как бэкенд внимания преобразует block table в параметры ядра и выполняет gather-вычисление внимания на несмежной видеопамяти. Но внимание производит лишь скрытые состояния — модель на самом деле должна доставить пользователю текст следующего token. В этой главе мы проследим эту последнюю милю: как скрытые состояния после проекции через lm_head в logits проходят через тщательно упорядоченную цепочку процессоров (температура, штрафы, top-k/top-p, структурные ограничения), сэмплируются в token id, затем через detokenizer восстанавливаются в текст и отправляются потоком. Любой сбой порядка или утечка состояния на этом пути приведут к тихой деградации качества вывода.
 
@@ -28,24 +28,24 @@
 
 ```mermaid
 flowchart TD
-    in_logits["logits (bf16/fp16)"] --> snap{"需要 logprobs?"}
-    snap -->|是| raw["compute_logprobs / cloneraw_logprobs 快照"]
-    snap -->|否| f32
+    in_logits["logits (bf16/fp16)"] --> snap{"нужны logprobs?"}
+    snap -->|да| raw["compute_logprobs / cloneснимок raw_logprobs"]
+    snap -->|нет| f32
     raw --> f32["logits.to(float32)"]
     f32 --> proc["apply_logits_processors"]
     proc --> mask{"allowed_token_ids_mask?"}
-    mask -->|是| fill["masked_fill_(-inf)"]
-    mask -->|否| bad
+    mask -->|да| fill["masked_fill_(-inf)"]
+    mask -->|нет| bad
     fill --> bad{"bad_words_token_ids?"}
-    bad -->|是| apply_bad["apply_bad_words"]
-    bad -->|否| noninv
-    apply_bad --> noninv["non_argmax_invariant 处理器"]
+    bad -->|да| apply_bad["apply_bad_words"]
+    bad -->|нет| noninv
+    apply_bad --> noninv["non_argmax_invariant процессоры"]
     noninv --> pen["apply_penalties"]
     pen --> sample["sample()"]
     sample --> allg{"all_greedy?"}
-    allg -->|是| greedy["greedy_sample (argmax)"]
-    allg -->|否| temp["apply_temperature"]
-    temp --> arginv["argmax_invariant 处理器"]
+    allg -->|да| greedy["greedy_sample (argmax)"]
+    allg -->|нет| temp["apply_temperature"]
+    temp --> arginv["argmax_invariant процессоры"]
     arginv --> topp["topk_topp_sampler"]
     topp --> where["torch.where(temp  out
     where --> out["SamplerOutputsampled_token_ids"]
@@ -91,29 +91,29 @@ sequenceDiagram
 
     Sched->>Mgr: grammar_bitmask(requests, ids, spec_tokens)
     Mgr->>Mgr: allocate_token_bitmask(max_batch*(1+spec))
-    alt batch > 128 且无投机
+    alt batch > 128 и без спекуляции
         Mgr->>Pool: _async_submit_fill_bitmask(batch)
         Pool->>Gram: fill_bitmask(bitmask, index)
-        Gram-->>Pool: 写入合法 token 位
+        Gram-->>Pool: записать биты допустимых token
         Pool-->>Mgr: Future.result()
-    else 小 batch 或含投机
-        loop 每个 req 的每个 spec token
+    else малый batch или со спекуляцией
+        loop для каждого spec token каждого req
             Mgr->>Gram: fill_bitmask(bitmask, cumulative_index)
             Mgr->>Gram: accept_tokens(req_id, [token])
             Gram-->>Mgr: True/False
-            Note over Mgr: 失败则记录 failed_index后续行复制该行
+            Note over Mgr: при неудаче записать failed_indexпоследующие строки копируют эту строку
         end
         Mgr->>Gram: rollback(state_advancements)
     end
     Mgr-->>Sched: bitmask.numpy() (NDArray int32)
-    Sched->>GPU: 传入采样内核
+    Sched->>GPU: передать в ядро сэмплирования
 ```
 
 ## Размышления о дизайне и подводные камни
 
 **Почему external_launcher требует синхронной компиляции?**Комментарий даёт точную причину: асинхронная компиляция приводит к тому, что переходы состояния`WAITING_FOR_STRUCTURED_OUTPUT_GRAMMAR → WAITING`происходят в разные моменты на разных TP rank, нарушая предположение о детерминизме, на которое опирается external_launcher[FACT:vllm/v1/structured_output/__init__.py:47-56]. Это типичный случай конфликта между распределённой детерминированностью и асинхронной оптимизацией.
 
-**Ограничение начальной точки в推理-моделях.** `_get_constraint_start`Определяет, с какого токена начинать применение синтаксических ограничений[FACT:vllm/v1/structured_output/__init__.py:220-292]. Для моделей с цепочкой рассуждений этап reasoning не должен ограничиваться JSON, ограничения включаются только после завершения reasoning.`enable_in_reasoning`При значении True сразу возвращается 0 (ограничения на всём протяжении)[FACT:vllm/v1/structured_output/__init__.py:235-236]. Если reasoner поддерживает`find_reasoning_end_offset`, использовать его для точного определения[FACT:vllm/v1/structured_output/__init__.py:261-267]; иначе откатиться к пошаговому поиску с возвратом[FACT:vllm/v1/structured_output/__init__.py:287-291]。
+**Ограничение начальной точки в моделях вывода.** `_get_constraint_start`Определяет, с какого токена начинать применение синтаксических ограничений[FACT:vllm/v1/structured_output/__init__.py:220-292]. Для моделей с цепочкой рассуждений этап reasoning не должен ограничиваться JSON, ограничения включаются только после завершения reasoning.`enable_in_reasoning`При значении True сразу возвращается 0 (ограничения на всём протяжении)[FACT:vllm/v1/structured_output/__init__.py:235-236]. Если reasoner поддерживает`find_reasoning_end_offset`, использовать его для точного определения[FACT:vllm/v1/structured_output/__init__.py:261-267]; иначе откатиться к пошаговому поиску с возвратом[FACT:vllm/v1/structured_output/__init__.py:287-291]。
 
 **`validate_tokens`семантика префикса.**При спекулятивном декодировании draft-токены могут нарушать грамматику,`validate_tokens`возвращается "наидлиннейший допустимый префикс"[FACT:vllm/v1/structured_output/__init__.py:294-312]. Обратите внимание: сначала удаляется спекулятивное заполнение (-1), затем вычисляется начальная точка ограничений, и только после этого выполняется синтаксическая проверка токенов в интервале ограничений.
 
@@ -137,13 +137,13 @@ sequenceDiagram
 
 **в соответствии с параметром** `get_next_output_text`определяется, возвращать полный объём или приращение`delta`. При незавершённости сохраняются[FACT:vllm/v1/engine/detokenizer.py:148-163]символов, не выдаваемых наружу`stop_buffer_length`, с помощью[FACT:vllm/v1/engine/detokenizer.py:145-146]фиксируется отправленная позиция`_last_output_text_offset`восстановление после исключений.[FACT:vllm/v1/engine/detokenizer.py:148-163]。
 
-**Обрабатываются два типа исключений: OverflowError/TypeError логируются и возвращается None** `FastIncrementalDetokenizer._protected_step`; при ошибке "Invalid prefix" выполняется[FACT:vllm/v1/engine/detokenizer.py:225-229]пересоздание DecodeStream**и повторная попытка**. Последнее应对 граничные случаи, когда tokenizer порождает немонотонный вывод UTF-8.[FACT:vllm/v1/engine/detokenizer.py:222-246]Размышления о дизайне и подводные камни
+**Обрабатываются два типа исключений: OverflowError/TypeError логируются и возвращается None** `FastIncrementalDetokenizer._protected_step`; при ошибке "Invalid prefix" выполняется[FACT:vllm/v1/engine/detokenizer.py:225-229]пересоздание DecodeStream**и повторная попытка**. Последнее обрабатывает граничные случаи, когда tokenizer порождает немонотонный вывод UTF-8.[FACT:vllm/v1/engine/detokenizer.py:222-246]Размышления о дизайне и подводные камни
 
 ## Компромисс по stop_buffer_length.
 
 **Чем длиннее буфер, тем больше задержка потоковой передачи (пользователь видит текст позже), но тем меньше вероятность пропустить stop string, охватывающий несколько токенов. Значение "длина самого длинного stop string минус один" является точной нижней границей: любой префикс stop string имеет длину не более этой.**min_tokens и stop_check_offset.
 
-**Когда число выходных токенов не достигает**,`min_tokens`продолжает сдвигаться к концу текста`stop_check_offset`,这意味着 этот текст не будет проверяться на stop. Это предотвращает ситуацию, когда модель в самом начале натыкается на stop string и выдаёт пустой вывод.[FACT:vllm/v1/engine/detokenizer.py:120-122]Кэш added_token_ids быстрого пути.
+**Когда число выходных токенов не достигает**,`min_tokens`продолжает сдвигаться к концу текста`stop_check_offset`, это означает, что данный текст не будет проверяться на stop. Это предотвращает ситуацию, когда модель в самом начале натыкается на stop-строку и выдаёт пустой вывод.[FACT:vllm/v1/engine/detokenizer.py:120-122]Кэш added_token_ids быстрого пути.
 
 **Когда**равно False, необходимо подавлять пробелы между специальными токенами`spaces_between_special_tokens`. Код кэширует[FACT:vllm/v1/engine/detokenizer.py:192-207]в объекте tokenizer`added_token_ids`, избегая пересоздания словаря при каждом decode.[FACT:vllm/v1/engine/detokenizer.py:195-200]Размышления о дизайне
 
@@ -155,7 +155,7 @@ sequenceDiagram
 
 # Цепочка обработчиков Sampler строго упорядочена: снимок исходных logprobs → float32 → белый список/bad words → non-argmax-invariant → штрафы → температура → argmax-invariant → top-k/top-p.
 
-- Sampler 的处理器链严格排序：原始 logprobs 快照 → float32 → 白名单/bad words → non-argmax-invariant → 惩罚 → 温度 → argmax-invariant → top-k/top-p。
+- Цепочка обработчиков Sampler строго упорядочена: снимок исходных logprobs → float32 → белый список/bad words → non-argmax-invariant → штрафы → температура → argmax-invariant → top-k/top-p.
 - Структурированный вывод использует битовую маску для передачи состояния синтаксиса со стороны CPU на GPU, а при спекулятивном декодировании через`failed_index`копирование и`rollback`обеспечивается согласованность состояния.
 - Detokenizer использует`stop_buffer_length`буфер отката для балансировки задержки потоковой передачи и обнаружения stop string через границы токенов; быстрый путь зависит от tokenizers ≥ 0.22.0`DecodeStream`。
 

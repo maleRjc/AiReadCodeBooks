@@ -1,3 +1,5 @@
+# Глава 13: Сетевая передача InfiniBand: прямая интеграция Verbs и GPUDirect RDMA
+
 # Глава 13: Передача по сети InfiniBand: как net_ib инкапсулирует verbs и GPUDirect RDMA
 
 В предыдущей главе мы увидели, как proxy-поток отделяет сетевой I/O от GPU kernel, позволяя вычислениям и коммуникации действительно работать параллельно. Но proxy — лишь «драйвер» — он вызывает абстрактные интерфейсы ncclNet->isend/irecv, но не знает, что под ними: TCP, InfiniBand или что-то ещё. В этой главе мы приоткроем эту абстракцию и заглянем в src/transport/net_ib и src/misc/ibvwrap.cc, чтобы увидеть, как NCCL инкапсулирует библиотеку libibverbs в подключаемую таблицу символов, как создаёт Queue Pair (QP), и как GPUDirect RDMA позволяет сетевой карте обходить host-память и напрямую читать и записывать память GPU.
@@ -624,22 +626,22 @@ enum ibv_access_flags {
 	IBV_ACCESS_LOCAL_WRITE		= 1,
 	IBV_ACCESS_REMOTE_WRITE		= (1(device ptr)"]
     end
-    subgraph Host["Host 进程"]
+    subgraph Host["Процесс Host"]
         dmabuf["DMA-BUF fd(cuMemGetHandleForAddressRange)"]
         mr["ibv_mr{addr, lkey, rkey}"]
         wr["ibv_send_wr{opcode=RDMA_WRITE,sg_list, wr.rdma.remote_addr, rkey}"]
     end
-    subgraph NIC["网卡 mlx5"]
+    subgraph NIC["Сетевая карта mlx5"]
         qp["ibv_qp(SQ + RQ)"]
-        wqe["WQE(硬件工作队列元素)"]
+        wqe["WQE(элемент аппаратной рабочей очереди)"]
     end
-    buf -->|导出| dmabuf
+    buf -->|Экспорт| dmabuf
     dmabuf -->|ibv_reg_dmabuf_mr| mr
-    mr -->|填充 sge.lkey| wr
+    mr -->|Заполнение sge.lkey| wr
     wr -->|ibv_post_send| qp
-    qp -->|DMA 读取| wqe
+    qp -->|DMA-чтение| wqe
     wqe -->|PCIe P2P| buf
-    wqe -->|网络| remote["对端 GPU 显存(remote_addr + rkey)"]
+    wqe -->|Сеть| remote["Видеопамять GPU партнёра(remote_addr + rkey)"]
 ```
 
 Каждый узел на схеме соответствует реальному типу в исходном коде:`ibv_mr`из[FACT:src/include/ibvcore.h:402-410]，`ibv_send_wr`из[FACT:src/include/ibvcore.h:704-738]，`ibv_qp`из[FACT:src/include/ibvcore.h:787-802]。
@@ -856,7 +858,7 @@ ncclResult_t wrap_ibv_dereg_mr(
 
 **Вторая — бремя совместимости ABI**。`ibvcore.h`переопределяет все структуры, а также обрабатывает определение версии`verbs_context`. Это делается для того, чтобы не зависеть от заголовочных файлов IB на этапе компиляции и быть совместимым с любой версией во время выполнения.
 
-**Третья — ценность диагностической информации**。`ibvModifyQpLog`、`printIbModifyQpHint`、`ibvWcStatusStr`эти функции не вызываются на нормальном пути, но при диагностике сбоев их ценность огромна. NCCL предпочитает «заранее встроить» диагностическую информацию в слой инкапсуляции, а не собирать её临时 при возникновении ошибки.
+**Третья — ценность диагностической информации**。`ibvModifyQpLog`、`printIbModifyQpHint`、`ibvWcStatusStr`这些函数在正常路径下不会被调用，但在故障诊断时其价值巨大。NCCL倾向于将诊断信息“预先嵌入”封装层，而不是在错误发生时临时收集。
 
 Цена такой «толстой инкапсуляции» — большой объём кода и высокие затраты на сопровождение. Но выгода в том, что верхний уровень`net_ib.cc`может быть написан с использованием единого интерфейса`ncclResult_t`, не заботясь о различных причудах libibverbs. Это типичный дизайн «изоляции сложности».
 

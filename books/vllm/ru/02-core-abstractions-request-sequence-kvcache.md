@@ -1,15 +1,15 @@
-# 第 2 章：核心抽象：Request、Sequence 与 KV Cache 数据结构
+# Глава 2: Базовые абстракции и структуры данных: Request, Sequence и KV Cache
 
-上一章我们建立了 vLLM v1 的分层心智模型，知道请求从 API Server 出发，穿过 EngineCore，最终抵达 Worker 执行。但一个 HTTP 请求体里的 JSON 字符串，是如何变成引擎内部可以调度、可以追踪、可以中断的对象的？这就是 Request 类要回答的问题。
+В предыдущей главе мы построили многоуровневую ментальную модель vLLM v1 и знаем, что запрос начинается с API Server, проходит через EngineCore и в конечном итоге достигает Worker для выполнения. Но как строка JSON из тела HTTP-запроса превращается в объект внутри движка, который можно планировать, отслеживать и прерывать? Именно на этот вопрос призван ответить класс Request.
 
-# KV Cache 的规格体系：从 KVCacheSpec 到注册表
+# Система спецификаций KV Cache: от KVCacheSpec до реестра
 
-Request 解决了「谁要计算」的问题，而`KVCacheSpec`解决的是「在哪里计算」的问题。在 PagedAttention 的世界里，每个模型层的 KV cache 都需要被精确地描述：它有多少个 head、每个 head 多大、一个 block 能存多少 token、是否需要量化。这些信息被编码在`KVCacheSpec`的继承体系中。
+Request решает вопрос «кто должен вычислять», а`KVCacheSpec`решает вопрос «где вычислять». В мире PagedAttention каждый слой модели требует точного описания KV cache: сколько у него голов, каков размер каждой головы, сколько токенов может хранить один блок, нужна ли квантизация. Эта информация закодирована в`KVCacheSpec`иерархии наследования.
 
-## 直觉模型：KVCacheSpec 是显存的「户型图」
+## Интуитивная модель: KVCacheSpec — это «план этажа» видеопамяти
 
 > **[Design Inference & Architectural Trade-offs]**
-> 如果把 GPU 显存想象成一块待开发的土地，`KVCacheSpec`就是每栋楼（每个 cache group）的户型图：它规定了每层楼（每个 block）有多少个房间（head slot）、每个房间多大（head_size）、能住多少人（block_size 个 token）。而`KVCacheConfig`— это план застройки всего микрорайона: сколько всего зданий, сколько земли занимает каждое здание, какие здания используют один и тот же фундамент (block table).
+> Если представить видеопамять GPU как участок земли под застройку,`KVCacheSpec`— это планировка каждого здания (каждой cache group): она определяет, сколько комнат (head slot) на каждом этаже (в каждом блоке), какова площадь каждой комнаты (head_size), сколько человек может проживать (block_size токенов). А`KVCacheConfig`— это план застройки всего микрорайона: сколько всего зданий, сколько земли занимает каждое здание, какие здания используют один и тот же фундамент (block table).
 
 Без этой системы спецификаций распределение KV cache могло бы опираться только на жёстко закодированные предположения и не смогло бы поддерживать разнообразные требования моделей — от стандартного MHA до MLA, от полного внимания до скользящего окна, от FP16 до FP8-квантования.
 
@@ -35,13 +35,13 @@ Request 解决了「谁要计算」的问题，而`KVCacheSpec`解决的是「�
 
 ```mermaid
 flowchart LR
-    subgraph spec["KVCacheSpec 层"]
+    subgraph spec["Уровень KVCacheSpec"]
         fas["FullAttentionSpecnum_kv_heads=32head_size=128block_size=16"]
     end
-    subgraph tensor["KVCacheTensor 层"]
+    subgraph tensor["Уровень KVCacheTensor"]
         kt["KVCacheTensorsize=2GBlayer_stride=page*num_blocksblock_stride=page"]
     end
-    subgraph view["torch.Tensor 视图"]
+    subgraph view["Представление torch.Tensor"]
         v1["layer_0: [B, H, N, C]"]
         v2["layer_1: [B, H, N, C]"]
         v3["layer_N: [B, H, N, C]"]

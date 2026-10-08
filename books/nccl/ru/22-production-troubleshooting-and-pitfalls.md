@@ -1,4 +1,4 @@
-# Ключевых ручек всего три: алгоритм, протокол, количество каналов. Остальные параметры в основном служат вспомогательной диагностике или оптимизации для конкретных сценариев. Освоив этот путь настройки, вы уже сможете заставить NCCL в большинстве сценариев работать с производительностью, близкой к аппаратной. Но помимо производительности, в производственной среде есть и другой, более сложный класс проблем: код, который выглядит нормально, может зависнуть или дать сбой при определённых условиях. В следующей главе мы соберём типичные случаи проблем NCCL в производстве — взаимоблокировки, тайм-ауты, несовпадение версий и распространённые ошибки использования, а также посмотрим, как NCCL внутренне обнаруживает и сообщает об этих проблемах.
+# Глава 22: Производственный траблшутинг: распространенные ловушки и диагностика зависаний
 
 # Глава 22: Глава 22: Производственная диагностика и подводные камни: типичные взаимоблокировки, тайм-ауты, несовпадение версий и решения по диагностике
 
@@ -161,17 +161,17 @@ thread_local int ncclGroupBlocking = -1; /* default mode */
 ```mermaid
 flowchart TD
     start["ncclGroupEnd()"] --> depth_check{"ncclGroupDepth == 0?"}
-    depth_check -->|是| err_usage["WARN not in a group callreturn ncclInvalidUsage"]
-    depth_check -->|否| dec["--ncclGroupDepth"]
+    depth_check -->|да| err_usage["WARN not in a group callreturn ncclInvalidUsage"]
+    depth_check -->|нет| dec["--ncclGroupDepth"]
     dec --> nested{"depth > 0?"}
-    nested -->|是| exit_ok["goto exit 返回"]
-    nested -->|否| err_check{"ncclGroupError == success?"}
-    err_check -->|否| fail_clean["groupCleanup 清理所有 comm 与 asyncJobs"]
-    err_check -->|是| blocking_check{"ncclGroupBlocking in {0,1}?"}
-    blocking_check -->|否| err_internal["WARN Invalid group blocking statereturn ncclInternalError"]
-    blocking_check -->|是| mode_split{"ncclGroupBlocking == 0?"}
-    mode_split -->|是 非阻塞| async_launch["STDTHREADCREATE groupLaunchNonBlockingret = ncclInProgress"]
-    mode_split -->|否 阻塞| sync_launch["groupLaunch 同步下发delete groupJob"]
+    nested -->|да| exit_ok["goto exit возврат"]
+    nested -->|нет| err_check{"ncclGroupError == success?"}
+    err_check -->|нет| fail_clean["groupCleanup очищает все comm и asyncJobs"]
+    err_check -->|да| blocking_check{"ncclGroupBlocking in {0,1}?"}
+    blocking_check -->|нет| err_internal["WARN Invalid group blocking statereturn ncclInternalError"]
+    blocking_check -->|да| mode_split{"ncclGroupBlocking == 0?"}
+    mode_split -->|да неблокирующий| async_launch["STDTHREADCREATE groupLaunchNonBlockingret = ncclInProgress"]
+    mode_split -->|нет блокирующий| sync_launch["groupLaunch синхронная отправкаdelete groupJob"]
     async_launch --> reset["groupLocalResetJobState"]
     sync_launch --> reset
     reset --> exit_ok
@@ -577,17 +577,17 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
 ```mermaid
 flowchart TD
     entry["ncclEpDispatch(inputs, outputs, layout_info, config)"] --> req_inputs{"EP_REQUIRE_STRUCT(inputs)size == sizeof?"}
-    req_inputs -->|否| err_size["assert 失败 / 返回错误"]
-    req_inputs -->|是| req_outputs{"EP_REQUIRE_STRUCT(outputs)"}
-    req_outputs -->|否| err_size
-    req_outputs -->|是| opt_layout{"layout_info != nullptr?"}
-    opt_layout -->|否| skip_layout["跳过 layout 校验"]
-    opt_layout -->|是| range_check{"size in [min, sizeof]?"}
-    range_check -->|否| err_range["fprintf size out of rangereturn ncclInvalidArgument"]
-    range_check -->|是| magic_check{"magic == NCCL_EP_MAGIC?"}
-    magic_check -->|否| err_magic["fprintf magic mismatchreturn ncclInvalidArgument"]
-    magic_check -->|是| read_field["layoutInfoRecvTopkIdxKindsize  read_field
-    read_field --> proceed["继续执行 dispatch 逻辑"]
+    req_inputs -->|нет| err_size["assert не выполнен / возврат ошибки"]
+    req_inputs -->|да| req_outputs{"EP_REQUIRE_STRUCT(outputs)"}
+    req_outputs -->|нет| err_size
+    req_outputs -->|да| opt_layout{"layout_info != nullptr?"}
+    opt_layout -->|нет| skip_layout["пропустить проверку layout"]
+    opt_layout -->|да| range_check{"size in [min, sizeof]?"}
+    range_check -->|нет| err_range["fprintf size out of rangereturn ncclInvalidArgument"]
+    range_check -->|да| magic_check{"magic == NCCL_EP_MAGIC?"}
+    magic_check -->|нет| err_magic["fprintf magic mismatchreturn ncclInvalidArgument"]
+    magic_check -->|да| read_field["layoutInfoRecvTopkIdxKindsize  read_field
+    read_field --> proceed["продолжить выполнение логики dispatch"]
 ```
 
 # Тайм-аут, повтор и прерывание: от NCCLWAIT до timeout_cycles в nccl_ep

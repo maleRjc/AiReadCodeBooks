@@ -1,4 +1,4 @@
-# Глава 14: Будущая эволюция: от 3.x к инженерной системе следующего поколения
+# Глава 14: Будущая эволюция: от Vue 3.x к инженерной системе следующего поколения
 
 В предыдущей главе мы разобрали «границы безопасности» инженерной системы Vue core — двойной каталог-контракт, определение принадлежности сборочных скриптов, вторичную фильтрацию скриптов публикации. Эти механизмы не были спроектированы за один раз, а многократно оттачивались в итерациях с 3.0 по 3.4. В этой главе мы сменим ракурс: посмотрим не на то, «как это выглядит сейчас», а на то, «как оно стало таким», и на основе этого выведем, куда движется инженерная система следующего поколения. Исходными материалами этой главы являются changelogs/CHANGELOG-3.3.md, changelogs/CHANGELOG-3.4.md и package.json в корне репозитория. Журнал изменений выглядит как простая летопись «что за баг исправили», но на самом деле это самый достоверный отчёт о состоянии инженерной системы: каждый коммит с префиксом build:, каждое изменение с префиксом types:, каждый откат версии зависимости — всё это обнажает точки напряжения текущей архитектуры. Наша задача — прочитать направление эволюции из этих точек напряжения. Рассматривать журнал изменений как «окно наблюдения за инженерной системой», а не как «список функций» — это ключевая методология данной главы. Функциональные изменения говорят нам, что умеет Vue, а изменения, связанные со сборкой, типами и CI, говорят нам, «где болит» инженерная система Vue.
 
@@ -10,7 +10,7 @@
 
 Без этого давления эволюции система столкнулась бы с «катастрофой» не в виде краха, а в виде**линейного роста времени сборки с числом пакетов**: с каждым новым подпакетом приходится запускать ещё один процесс Rollup, ещё раз сканировать кэш enum, ещё раз прогонять генерацию dts.
 
-## Структуры данных и布局 зависимостей
+## Структуры данных и схема зависимостей
 
 Сначала посмотрим на статический снимок текущей цепочки инструментов.`package.json`В`devDependencies`находится
 
@@ -76,23 +76,23 @@
 
 ```mermaid
 flowchart TD
-    start["node scripts/build.js"] --> scan["scanEnums() 全局扫描"]
-    scan --> cache_ok{"enum 缓存就绪?"}
-    cache_ok -->|否| err_enum["抛出错误 / 中断构建"]
-    cache_ok -->|是| build_all["buildAll() 并发启动"]
-    build_all --> rollup_proc["每个包一个 Rollup 进程"]
-    rollup_proc --> inline["inlineEnums() 顶层调用"]
-    inline --> esbuild_plugin["rollup-plugin-esbuild 转译 TS"]
-    esbuild_plugin --> external_check{"external 判定"}
-    external_check -->|ESM 格式| ext_ok["静态 import 识别成功"]
-    external_check -->|CJS 格式| ext_risk["require 动态性导致漏判"]
-    ext_risk --> pollution["runtime-core 被打进 server-renderer"]
-    ext_ok --> output["产物输出"]
+    start["node scripts/build.js"] --> scan["scanEnums() глобальное сканирование"]
+    scan --> cache_ok{"кэш enum готов?"}
+    cache_ok -->|нет| err_enum["выбросить ошибку / прервать сборку"]
+    cache_ok -->|да| build_all["buildAll() параллельный запуск"]
+    build_all --> rollup_proc["один процесс Rollup на каждый пакет"]
+    rollup_proc --> inline["inlineEnums() вызов верхнего уровня"]
+    inline --> esbuild_plugin["rollup-plugin-esbuild транспиляция TS"]
+    esbuild_plugin --> external_check{"определение external"}
+    external_check -->|формат ESM| ext_ok["статический import распознан успешно"]
+    external_check -->|формат CJS| ext_risk["динамичность require приводит к пропуску"]
+    ext_risk --> pollution["runtime-core попадает в server-renderer"]
+    ext_ok --> output["вывод артефактов"]
     pollution --> output
-    output --> dts["build-dts 两段式生成"]
-    dts --> tsc_emit["tsc --noCheck 生成原始 d.ts"]
-    tsc_emit --> rollup_dts["rollup-plugin-dts 打包"]
-    rollup_dts --> done["构建完成"]
+    output --> dts["build-dts двухэтапная генерация"]
+    dts --> tsc_emit["tsc --noCheck генерирует исходные d.ts"]
+    tsc_emit --> rollup_dts["rollup-plugin-dts упаковка"]
+    rollup_dts --> done["сборка завершена"]
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
@@ -178,23 +178,23 @@ Node 20 — жёсткий минимум. Rolldown как нативный мо
 
 ```mermaid
 flowchart LR
-    subgraph current["当前：分离的两条链路"]
+    subgraph current["Текущее: две раздельные цепочки"]
         src["packages/*/src/*.ts"] --> tsc_build["tsc -p tsconfig.build.json --noCheck"]
-        tsc_build --> raw_dts["散落的 .d.ts"]
+        tsc_build --> raw_dts["разрозненные .d.ts"]
         raw_dts --> rollup_dts["rollup -c rollup.dts.config.js"]
-        rollup_dts --> built_dts["打包后的 .d.ts"]
+        rollup_dts --> built_dts["упакованные .d.ts"]
         built_dts --> dts_built_test["dts-built-test/tsconfig.json"]
         src --> dts_test["dts-test/tsconfig.test.json"]
         src --> vitest_unit["vitest --project unit*"]
-        dts_built_test --> report_a["类型报告"]
+        dts_built_test --> report_a["отчёт по типам"]
         dts_test --> report_a
-        vitest_unit --> report_b["运行时报告"]
+        vitest_unit --> report_b["отчёт по runtime"]
     end
-    subgraph future["融合目标：单一 runner"]
-        src2["源码"] --> vitest_all["vitest --project unit --project dts"]
-        vitest_all --> unified["统一报告 + 类型断言"]
+    subgraph future["Цель объединения: единый runner"]
+        src2["исходный код"] --> vitest_all["vitest --project unit --project dts"]
+        vitest_all --> unified["унифицированный отчёт + утверждения типов"]
     end
-    current -.演进.-> future
+    current -.эволюция.-> future
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
@@ -285,30 +285,30 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    pr["PR 提交"] --> checkout["checkout 代码"]
-    checkout --> cache_deps{"pnpm store 缓存命中?"}
-    cache_deps -->|是| install_fast["pnpm install --offline"]
-    cache_deps -->|否| install_slow["pnpm install 全量下载"]
+    pr["Отправка PR"] --> checkout["checkout кода"]
+    checkout --> cache_deps{"попадание в кэш pnpm store?"}
+    cache_deps -->|да| install_fast["pnpm install --offline"]
+    cache_deps -->|нет| install_slow["pnpm install полная загрузка"]
     install_fast --> lint_step["pnpm lint"]
     install_slow --> lint_step
-    lint_step --> cache_eslint{".eslintcache 命中?"}
-    cache_eslint -->|是| lint_inc["增量 lint"]
-    cache_eslint -->|否| lint_full["全量 lint"]
+    lint_step --> cache_eslint{"попадание в .eslintcache?"}
+    cache_eslint -->|да| lint_inc["инкрементальный lint"]
+    cache_eslint -->|нет| lint_full["полный lint"]
     lint_inc --> check_step["pnpm check"]
     lint_full --> check_step
-    check_step --> cache_tsbuild{".tsbuildinfo 命中?"}
-    cache_tsbuild -->|是| check_inc["增量类型检查"]
-    cache_tsbuild -->|否| check_full["全量类型检查"]
+    check_step --> cache_tsbuild{"попадание в .tsbuildinfo?"}
+    cache_tsbuild -->|да| check_inc["инкрементальная проверка типов"]
+    cache_tsbuild -->|нет| check_full["полная проверка типов"]
     check_inc --> test_unit["pnpm test-unit"]
     check_full --> test_unit
     test_unit --> build_dts["pnpm build-dts"]
-    build_dts --> cache_dist{"packages/*/dist 命中?"}
-    cache_dist -->|是| dts_cached["复用 dts 产物"]
-    cache_dist -->|否| dts_rebuild["重新生成 dts"]
+    build_dts --> cache_dist{"попадание в packages/*/dist?"}
+    cache_dist -->|да| dts_cached["переиспользование артефактов dts"]
+    cache_dist -->|нет| dts_rebuild["повторная генерация dts"]
     dts_cached --> test_dts["pnpm test-dts-only"]
     dts_rebuild --> test_dts
     test_dts --> size_check["pnpm size"]
-    size_check --> done["CI 通过"]
+    size_check --> done["CI пройден"]
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
@@ -362,7 +362,7 @@ flowchart TD
 
 1. **Резюме главы**：Текущая комбинация Rollup 4.x + esbuild + rollup-plugin-dts, её точки напряжения проявляются в`build:`коммитах с префиксом (выравнивание конфигурации minify, откат версии entities, пропуск определения CJS external). Потенциал миграции на Rolldown исходит из замены «многопроцессной конкурентности» на «однопроцессный параллелизм», сопротивление — из экосистемы плагинов и кросс-платформенного распространения бинарников.
 
-2. **Слияние типовых тестов**：`test-dts`的`run-s build-dts test-dts-only`последовательная структура, а также`dts-built-test`и`dts-test`двойной`tsc`процесс — это физическое доказательство текущей раздельной формы. Технический путь слияния — использование механизма`--project`Vitest, сопротивление —`tsc`полная проверка несовместима с инкрементальной стратегией тестирования по файлам в Vitest.
+2. **Слияние типовых тестов**：`test-dts`из`run-s build-dts test-dts-only`последовательная структура, а также`dts-built-test`и`dts-test`двойной`tsc`процесс — это физическое доказательство текущей раздельной формы. Технический путь слияния — использование механизма`--project`Vitest, сопротивление —`tsc`полная проверка несовместима с инкрементальной стратегией тестирования по файлам в Vitest.
 
 3. **Детализация кэша CI**：`packageManager`фиксация pnpm,`clean`очистка трёх типов артефактов,`check`использование`--incremental`、`size`агрегация по префиксу — всё это критерии классификации кэшируемых объектов. Основное противоречие — гранулярность ключа кэша, разумная стратегия — «шардирование по пакетам».
 
@@ -370,15 +370,15 @@ flowchart TD
 
 # Размышления и самопроверка в этой главе
 
-Q1: `package.json:9`的`build-dts`использует`tsc -p tsconfig.build.json --noCheck`. Если убрать`--noCheck`, какие цепные реакции это вызовет после миграции на Rolldown?
+Q1: `package.json:9`из`build-dts`использует`tsc -p tsconfig.build.json --noCheck`. Если убрать`--noCheck`, какие цепные реакции это вызовет после миграции на Rolldown?
 
 **Справочный анализ**：`--noCheck`Назначение — пропустить проверку типов и выполнить только emit. После его удаления`tsc`перед генерацией`.d.ts`будет выполнять полную проверку типов. В текущей архитектуре Rollup это лишь замедлит`build-dts`; но после миграции на Rolldown проблема усилится: ключевое преимущество Rolldown — «однопроцессная параллельная сборка», и если на этапе`build-dts`вводится полная проверка`tsc`, она становится последовательным узким местом всего конвейера — сборка всех пакетов должна ждать завершения этой проверки. Что ещё серьёзнее,`tsc`проверка типов однопоточна и не может использовать параллельные возможности Rolldown. Правильный подход — сохранить`--noCheck`, передав проверку типов независимым`pnpm check`（`package.json:15`) и`test-dts`（`package.json:22`), развязав сборку и проверку.
 
 Q2: Журнал изменений 3.4.37 последовательно откатил два`types/ref`исправления (`CHANGELOG-3.4.md:23-24`), хотя эти два исправления были только что включены в 3.4.35 (`CHANGELOG-3.4.md:30,55`). Если бы типовые тесты и runtime-тесты уже были слиты, можно ли было бы избежать этого цикла «включение-откат»? Почему?
 
-**Справочный анализ**: Полностью избежать нельзя, но можно сократить цикл. Слитые типовые тесты по-прежнему могут проверять лишь «соответствие сигнатуры типа утверждению», а проблема таких исправлений, как`allow getter and setter types to be unrelated`, заключается в том, что «сигнатура типа слишком широка и нарушает типобезопасность downstream-кода» — это проблема**downstream-использования**, а не**самой сигнатуры**. Слияние может сократить цикл в том случае, если типовые утверждения и runtime-утверждения записаны в одном тестовом файле — разработчик быстрее обнаружит несоответствие «сигнатура типа изменилась, а runtime-поведение — нет». Но чтобы действительно избежать откатов, нужно引入 проверку типов реальных downstream-проектов (например, расширить`packages-private/dts-test`до набора тестов «имитация downstream-использования»), что выходит за рамки простого «слияния runner».
+**Справочный анализ**: Полностью избежать нельзя, но можно сократить цикл. Слитые типовые тесты по-прежнему могут проверять лишь «соответствие сигнатуры типа утверждению», а проблема таких исправлений, как`allow getter and setter types to be unrelated`, заключается в том, что «сигнатура типа слишком широка и нарушает типобезопасность downstream-кода» — это проблема**downstream-использования**, а не**самой сигнатуры**. Объединение может сократить цикл в том случае, если утверждения типов и runtime-утверждения записаны в одном тестовом файле — разработчик быстрее обнаружит несоответствие «сигнатура типа изменилась, а runtime-поведение — нет». Но чтобы действительно избежать откатов, нужно внедрить проверку типов реальных downstream-проектов (например, расширить`packages-private/dts-test`до набора тестов «имитация downstream-использования»), что выходит за рамки простого «слияния runner».
 
-Q3: `package.json:10`的`clean`скрипт очищает`packages/*/dist`, но не очищает`packages-private/*/dist`. Если CI применяет стратегию детализированного кэширования «шардирование по пакетам», какую производственную ловушку создаст эта асимметрия?
+Q3: `package.json:10`из`clean`скрипт очищает`packages/*/dist`, но не очищает`packages-private/*/dist`. Если CI применяет стратегию детализированного кэширования «шардирование по пакетам», какую производственную ловушку создаст эта асимметрия?
 
 **Справочный анализ**: Ловушка в «кэшировании старых артефактов`packages-private`».`packages-private`содержит`sfc-playground`、`template-explorer`и другие инструменты отладки, их артефакты сборки (например,`packages-private/sfc-playground/dist`) если кэшируются CI, а`clean`их не очищает, возникает ситуация: исходный код обновлён, но CI переиспользует старые артефакты playground, что приводит к искажению результатов проверки`build-sfc-playground`（`package.json:39`). Что ещё более скрыто:`dev-sfc-prepare`（`package.json:34`) проверяет, существуют ли артефакты`packages-private`, и если старые артефакты закэшированы, он пропустит пересборку, заставив разработчика думать, что окружение новое. При проектировании детализированного кэша необходимо определить отдельный ключ кэша для`packages-private`, или вообще не кэшировать его артефакты — поскольку это инструмент отладки, стоимость пересборки низка, а выгода от кэширования мала.
 

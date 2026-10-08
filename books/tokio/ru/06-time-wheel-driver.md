@@ -1,18 +1,18 @@
-# 第 6 章：时间驱动：时间轮、Sleep 与超时如何被唤醒
+# Глава 6: Драйвер времени: как колесо времени, Sleep и тайм-ауты пробуждают задачи
 
-上一章我们追踪了 TcpStream::read 的完整链路，看到 ScheduledIo 如何把 epoll 的 fd 就绪事件翻译成 Waker 唤醒。但异步运行时还需要处理另一类「就绪」：一个 sleep(100ms) 的 Future，在 100ms 后必须被唤醒。这类事件不来自内核 fd，而来自「时间本身」。Tokio 的设计选择是把时间也当作一种 I/O 事件：Driver 结构体里只有一个字段 park: IoStack，它复用了 I/O driver 的 park/unpark 机制。当时间轮算出「下一次到期时刻」时，driver 就调用 park_timeout 让线程睡到那个时刻；被唤醒后再从时间轮里取出到期条目、触发它们的 Waker。这样，调度器只需要一个统一的 park 入口，就能同时等待「fd 就绪」和「定时器到期」两类事件。本章要回答三个问题：定时器如何被插入时间轮？时间轮如何按到期时间分级？driver 如何计算下一次 park 的超时并触发到期任务？
+В предыдущей главе мы проследили полный путь TcpStream::read и увидели, как ScheduledIo преобразует события готовности fd из epoll в пробуждение через Waker. Однако асинхронной среде выполнения необходимо обрабатывать ещё один тип «готовности»: Future от sleep(100ms) должен быть разбужен через 100 мс. Такие события исходят не от файловых дескрипторов ядра, а от «самого времени». Архитектурное решение Tokio заключается в том, чтобы рассматривать время как разновидность событий ввода-вывода: в структуре Driver есть только одно поле park: IoStack, которое переиспользует механизм park/unpark драйвера ввода-вывода. Когда колесо времени вычисляет «момент следующего срабатывания», драйвер вызывает park_timeout, чтобы усыпить поток до этого момента; после пробуждения он извлекает из колеса времени сработавшие записи и активирует их Waker. Таким образом, планировщику достаточно единой точки входа park, чтобы одновременно ожидать события двух типов: «готовность fd» и «истечение таймера». В этой главе мы ответим на три вопроса: как таймеры вставляются в колесо времени? Как колесо времени распределяет таймеры по уровням в зависимости от времени срабатывания? Как драйвер вычисляет тайм-аут следующего park и активирует сработавшие задачи?
 
-# 一、时间轮：六层 64 槽的哈希分级结构
+# I. Колесо времени: шестиуровневая хеш-структура с 64 слотами на каждом уровне
 
-## 直觉模型
+## Интуитивная модель
 
-想象一个机械钟表：秒针转一圈带动分针，分针转一圈带动时针。如果只有一根秒针，要表示「12 天后」就得数 100 万格；而分层之后，秒针只管 64 秒内的精度，分针管 64 分钟，时针管 64 小时——每一层只需 64 个槽位，就能覆盖到 2 年之后。
+Представьте механические часы: секундная стрелка, совершая оборот, движет минутную, а минутная, совершая оборот, движет часовую. Если бы была только одна секундная стрелка, для отображения «через 12 дней» пришлось бы отсчитать миллион делений; но с многоуровневой структурой секундная стрелка отвечает лишь за точность в пределах 64 секунд, минутная — за 64 минуты, часовая — за 64 часа — каждому уровню достаточно всего 64 слотов, чтобы охватить период более 2 лет.
 
-若没有分层，插入一个远期定时器要么需要 O(N) 遍历，要么需要巨大的数组。时间轮用「按到期时间分级」把插入和触发都压到近似 O(1)。
+Без многоуровневой структуры вставка отдалённого таймера потребовала бы либо обхода за O(N), либо огромного массива. Колесо времени использует «распределение по уровням в зависимости от времени срабатывания», сводя и вставку, и срабатывание к почти O(1).
 
-## 内存布局与字段
+## Структура памяти и поля
 
-`Wheel`的核心字段只有三个[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
+`Wheel`Основных полей всего три[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
 
 ```rust
 pub(crate) struct Wheel {
@@ -22,11 +22,11 @@ pub(crate) struct Wheel {
 }
 ```
 
-`NUM_LEVELS = 6`，`BITS_PER_LEVEL = 6`（即每层 64 槽）[FACT:tokio/src/runtime/time/wheel/mod.rs:45-47]。`MAX_DURATION = 1 << (6 * 6) = 1 << 36`毫秒，约 2 年[FACT:tokio/src/runtime/time/wheel/mod.rs:50]。
+`NUM_LEVELS = 6`，`BITS_PER_LEVEL = 6`(то есть по 64 слота на каждом уровне)[FACT:tokio/src/runtime/time/wheel/mod.rs:45-47]。`MAX_DURATION = 1 << (6 * 6) = 1 << 36`миллисекунд, примерно 2 года[FACT:tokio/src/runtime/time/wheel/mod.rs:50]。
 
-六层的粒度按文档注释是[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
+Гранулярность шести уровней согласно комментариям в документации:[FACT:tokio/src/runtime/time/wheel/mod.rs:22-40]：
 
-| 层 | 槽粒度 | 覆盖范围 |
+| Уровень | Гранулярность слота | Диапазон покрытия |
 | --- | --- | --- |
 | 0 | 1 ms | 64 ms |
 | 1 | 64 ms | ~4 s |
@@ -35,13 +35,13 @@ pub(crate) struct Wheel {
 | 4 | ~4 hr | ~12 day |
 | 5 | ~12 day | ~2 yr |
 
-`pending`是一个侵入式链表（`LinkedList<TimerShared>`），存放已经从轮中取出、等待触发 Waker 的条目。注意它是`LinkedList`而非`Vec`：条目本身内嵌在`TimerShared`里，插入/移除不需要分配。
+`pending`представляет собой интрузивный связный список (`LinkedList<TimerShared>`), хранящий записи, уже извлечённые из очереди и ожидающие пробуждения Waker. Обратите внимание, что это`LinkedList`, а не`Vec`: сами записи встроены в`TimerShared`, вставка/удаление не требует выделения памяти.
 
-## 场景驱动：插入一个 100ms 的 sleep
+## Сценарий: вставка sleep на 100 мс
 
-当`sleep(100ms)`首次被 poll 时，`Sleep::poll_elapsed`会构造`Timer::new`并调用`init` [FACT:tokio/src/time/sleep.rs:436-440]。`init`最终调用`Handle::reregister`，进而调用`Wheel::insert`。
+Когда`sleep(100ms)`впервые подвергается poll,`Sleep::poll_elapsed`конструирует`Timer::new`и вызывает`init` [FACT:tokio/src/time/sleep.rs:436-440]。`init`в конечном итоге вызывает`Handle::reregister`, что в свою очередь вызывает`Wheel::insert`。
 
-`insert`的第一步是检查是否已过期[FACT:tokio/src/runtime/time/wheel/mod.rs:90-98]：
+`insert`, первым шагом является проверка, истёк ли срок[FACT:tokio/src/runtime/time/wheel/mod.rs:90-98]：
 
 ```rust
 let when = unsafe { item.sync_when() };
@@ -53,9 +53,9 @@ if when  usize {
 }
 ```
 
-这里用`elapsed ^ when`而非`when - elapsed`，是一个精妙的技巧：XOR 的最高有效位反映了「两个时间戳从哪一位开始不同」，也就是「需要多粗的粒度才能区分它们」。`| SLOT_MASK`把低 6 位强制置 1，避免`ilog2`落在同一槽内时算出过小的层。`ilog2() / 6`把位宽映射到层号。如果 XOR 结果超过`MAX_DURATION`（即超过 2 年），就强制塞进最高层——这就是「fudge the timer into the top level」。
+Здесь используется`elapsed ^ when`вместо`when - elapsed`, это изящный приём: старший значащий бит XOR отражает «с какого бита два временных штампа начинают различаться», то есть «насколько грубая гранулярность нужна, чтобы их различить».`| SLOT_MASK`Принудительно устанавливаем младшие 6 бит в 1, чтобы избежать`ilog2`вычисления слишком малого уровня при попадании в один и тот же слот.`ilog2() / 6`Отображаем разрядность в номер уровня. Если результат XOR превышает`MAX_DURATION`(то есть превышает 2 года), принудительно помещаем в самый верхний уровень — это и есть «fudge the timer into the top level».
 
-对于 100ms 的 sleep，假设`elapsed`接近 0，`when ≈ 100`，`elapsed ^ when ≈ 100`，`ilog2(100) = 6`，`6 / 6 = 1`, поэтому он попадает на уровень 1 (гранулярность 64 мс). Это означает, что он будет ждать в одном из слотов уровня 1, пока время не дойдёт до границы этого слота, и только тогда будет опущен на уровень 0.
+Для sleep длительностью 100ms, предположим,`elapsed`близко к 0,`when ≈ 100`，`elapsed ^ when ≈ 100`，`ilog2(100) = 6`，`6 / 6 = 1`, поэтому он попадает на уровень 1 (гранулярность 64 мс). Это означает, что он будет ждать в одном из слотов уровня 1, пока время не дойдёт до границы этого слота, и только тогда будет опущен на уровень 0.
 
 ## Каскадное опускание: process_expiration
 
@@ -126,20 +126,20 @@ fn next_expiration(&self) -> Option {
 
 ```mermaid
 flowchart TD
-    start["Wheel::poll(now)"] --> check_pending{"pending 非空?"}
-    check_pending -->|是| pop["pop_back 返回 TimerHandle"]
-    check_pending -->|否| next_exp{"next_expiration() 有到期点?"}
-    next_exp -->|无| set_elapsed["set_elapsed(now) 后 break"]
-    next_exp -->|有| cmp{"expiration.deadline |否| set_elapsed
-    cmp -->|是| proc["process_expiration(expiration)"]
-    proc --> take["take_entries 取出整槽"]
+    start["Wheel::poll(now)"] --> check_pending{"pending не пуст?"}
+    check_pending -->|да| pop["pop_back возвращает TimerHandle"]
+    check_pending -->|нет| next_exp{"next_expiration() есть точка истечения?"}
+    next_exp -->|нет| set_elapsed["set_elapsed(now) затем break"]
+    next_exp -->|да| cmp{"expiration.deadline |нет| set_elapsed
+    cmp -->|да| proc["process_expiration(expiration)"]
+    proc --> take["take_entries извлекает весь слот"]
     take --> mark{"item.mark_pending()"}
-    mark -->|Ok 已到期| push_pending["pending.push_front(item)"]
-    mark -->|Err 未到期| reinsert["level_for 后 add_entry 下沉"]
+    mark -->|Ok истёк| push_pending["pending.push_front(item)"]
+    mark -->|Err не истёк| reinsert["level_for затем add_entry с понижением"]
     push_pending --> set_elapsed2["set_elapsed(expiration.deadline)"]
     reinsert --> set_elapsed2
     set_elapsed2 --> check_pending
-    set_elapsed --> pop2["pending.pop_back() 返回"]
+    set_elapsed --> pop2["pending.pop_back() возврат"]
 ```
 
 ---
@@ -271,21 +271,21 @@ sequenceDiagram
 
     Sleep->>Handle: reregister(unpark, new_tick, entry)
     Handle->>Handle: lock.inner.lock()
-    Handle->>Wheel: wheel.remove(entry) [若已注册]
+    Handle->>Wheel: wheel.remove(entry) [если уже зарегистрирован]
     Handle->>Wheel: wheel.insert(entry)
     Wheel-->>Handle: Ok(when)
     alt when >IoStack: unpark.unpark()
     end
     Handle->>Handle: drop(lock)
-    Handle-->>Sleep: 返回 waker (若有)
+    Handle-->>Sleep: возврат waker (если есть)
 
-    Note over Driver: 另一线程
+    Note over Driver: другой поток
     Driver->>Handle: lock.inner.lock()
     Driver->>Wheel: next_expiration_time()
     Wheel-->>Driver: Some(when)
     Driver->>Driver: drop(lock)
     Driver->>IoStack: park_timeout(duration)
-    IoStack-->>Driver: 被 unpark 或超时
+    IoStack-->>Driver: разбужен unpark или таймаут
     Driver->>Handle: process(clock)
     Handle->>Wheel: poll(now)
     Wheel-->>Handle: TimerHandle

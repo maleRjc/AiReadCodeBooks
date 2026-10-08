@@ -1,4 +1,4 @@
-# Глава 4: Планировщик: непрерывная батчевая обработка и организация запросов с учётом видеопамяти
+# Глава 4: Управление памятью и PagedAttention: виртуализация KV Cache
 
 После входа запроса во входную очередь EngineCore он не выполняется немедленно. Какие запросы обрабатывать на каждом шаге, сколько token-бюджета выделять каждому запросу, кого в первую очередь принести в жертву при нехватке видеопамяти — все эти решения сосредоточены в методе`Scheduler.schedule()`. Эта глава начинается со структур данных планировщика и отслеживает, как один вызов`schedule()`организует очередь waiting, список running и пул KV cache в исполняемый батч.
 
@@ -18,7 +18,7 @@
 
 ```mermaid
 flowchart LR
-    subgraph Sched["Scheduler 状态"]
+    subgraph Sched["Состояние Scheduler"]
         W["waitingRequestQueue"]
         SW["skipped_waitingRequestQueue"]
         R["runninglist[Request]"]
@@ -85,36 +85,36 @@ num_new_tokens = request.num_tokens_with_spec
 
 ```mermaid
 flowchart TD
-    start["schedule() 开始"] --> init["初始化 token_budget / input_budget"]
-    init --> run_loop{"running 循环req_index 且 token_budget > 0?"}
-    run_loop -->|是| skip_check{"跳过条件?max_tokens 已达 /decode_eligible / defer_prefills"}
-    skip_check -->|跳过| run_inc["req_index += 1"]
+    start["schedule() начало"] --> init["инициализация token_budget / input_budget"]
+    init --> run_loop{"цикл runningreq_index и token_budget > 0?"}
+    run_loop -->|да| skip_check{"условие пропуска?max_tokens достигнут /decode_eligible / defer_prefills"}
+    skip_check -->|пропустить| run_inc["req_index += 1"]
     run_inc --> run_loop
-    skip_check -->|不跳过| calc["计算 num_new_tokens受多约束裁剪"]
-    calc --> alloc{"allocate_slots返回 None?"}
-    alloc -->|成功| admit_run["加入 scheduled_running_reqs扣减预算"]
+    skip_check -->|не пропускать| calc["вычислить num_new_tokensс учётом множества ограничений"]
+    calc --> alloc{"allocate_slotsвернул None?"}
+    alloc -->|успех| admit_run["добавить в scheduled_running_reqsуменьшить бюджет"]
     admit_run --> run_inc
-    alloc -->|失败| can_preempt{"有可抢占请求?_request_blocks_can_be_freed"}
-    can_preempt -->|否| break_run["跳出 running 循环"]
-    can_preempt -->|是| preempt["_preempt_request踢回 waiting"]
+    alloc -->|неудача| can_preempt{"есть вытесняемые запросы?_request_blocks_can_be_freed"}
+    can_preempt -->|нет| break_run["выйти из цикла running"]
+    can_preempt -->|да| preempt["_preempt_requestвернуть в waiting"]
     preempt --> alloc
-    break_run --> wait_loop{"无抢占且未暂停?waiting 非空且 token_budget > 0?"}
-    run_loop -->|否| wait_loop
-    wait_loop -->|是| blocked{"blocked 状态?_is_blocked_waiting_status"}
-    blocked -->|是且无法提升| skip_wait["移入 skipped_waiting"]
+    break_run --> wait_loop{"нет вытеснения и не приостановлено?waiting непуст и token_budget > 0?"}
+    run_loop -->|нет| wait_loop
+    wait_loop -->|да| blocked{"состояние blocked?_is_blocked_waiting_status"}
+    blocked -->|да и невозможно повысить| skip_wait["переместить в skipped_waiting"]
     skip_wait --> wait_loop
-    blocked -->|否| prefix{"num_computed_tokens == 0?查找前缀缓存"}
-    prefix -->|命中| alloc_wait["allocate_slots带 new_computed_blocks"]
-    prefix -->|未命中| alloc_wait
-    alloc_wait --> wait_ok{"分配成功?"}
-    wait_ok -->|是| admit_wait["加入 running状态设为 RUNNING"]
+    blocked -->|нет| prefix{"num_computed_tokens == 0?поиск префиксного кэша"}
+    prefix -->|попадание| alloc_wait["allocate_slotsс new_computed_blocks"]
+    prefix -->|промах| alloc_wait
+    alloc_wait --> wait_ok{"выделение успешно?"}
+    wait_ok -->|да| admit_wait["добавить в runningустановить статус RUNNING"]
     admit_wait --> wait_loop
-    wait_ok -->|否| break_wait["跳出 waiting 循环"]
-    wait_loop -->|否| build["构建 SchedulerOutput"]
+    wait_ok -->|нет| break_wait["выйти из цикла waiting"]
+    wait_loop -->|нет| build["построить SchedulerOutput"]
     break_wait --> build
 ```
 
-这张控制流图覆盖了 `schedule()` 的两大循环和抢占分支。注意 running 循环中 `allocate_slots` 失败后的抢占重试路径，以及 waiting 循环中 blocked 状态请求被移入 `skipped_waiting`обход.
+Эта блок-схема потока управления охватывает`schedule()`два основных цикла и ветвь вытеснения. Обратите внимание на путь повторной попытки вытеснения после неудачи`allocate_slots`в цикле running, а также на перемещение запросов в состоянии blocked в цикле waiting`skipped_waiting`обход.
 
 # 4.3 Ядро учёта видеопамяти: allocate_slots и вытеснение
 
@@ -145,7 +145,7 @@ flowchart TD
 
 ## 4.3.3 Отложенное освобождение: риск read-after-write у асинхронных connector'ов
 
-Когда используется KV connector и имеется несколько批次 в полёте,`defer_block_free`устанавливается в`True` [FACT:vllm/v1/core/sched/scheduler.py:175-181]. Причина: один шаг может всё ещё записывать KV-блоки уже освобождённого запроса, а consumer connector может через загрузку, не упорядоченную относительно этой записи, повторно выделить и заполнить эти блоки.
+Когда используется KV connector и в полёте находится несколько батчей,`defer_block_free`устанавливается в`True` [FACT:vllm/v1/core/sched/scheduler.py:175-181]. Причина: один шаг может всё ещё записывать KV-блоки уже освобождённого запроса, а consumer connector может через загрузку, не упорядоченную относительно этой записи, повторно выделить и заполнить эти блоки.
 
 Отложенное освобождение реализуется через`deferred_frees`двустороннюю очередь, каждый элемент которой —`(fence_seq, blocks)` [FACT:vllm/v1/core/sched/scheduler.py:388-390]。`_free_request_blocks`проверяет`_request_blocks_can_be_freed`, и если последний шаг планирования запроса ещё не обработан, помещает блоки в очередь отложенного освобождения[FACT:vllm/v1/core/sched/scheduler.py:2679-2688]。`_drain_deferred_frees`продвигается в`update_from_output`и вызывается после`processed_step_seq`, освобождая блоки, для которых fence уже выполнен[FACT:vllm/v1/core/sched/scheduler.py:2701-2706]。
 

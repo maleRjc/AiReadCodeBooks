@@ -1,4 +1,6 @@
-# Глава 25: Панорамный обзор и размышления:终极ное путешествие одного AllReduce и суть дизайна
+# Глава 25: Панорамный обзор и ретроспектива: полное путешествие одного AllReduce
+
+# Глава 25: Панорамный обзор и размышления: окончательное путешествие одного AllReduce и суть дизайна
 
 В предыдущей главе, основываясь на следах эволюции в исходном коде, мы рассмотрели тенденции архитектуры NCCL: от фиксированных коллективных операций к программируемости, от host proxy к прямой отправке с GPU, от регистрируемых буферов к симметричной памяти. Теперь пришло время проверить эти тенденции в конкретном потоке выполнения. Эта глава не вводит новый код, а заново связывает сквозной путь от главы 3 до главы 10 — от строки вызова ncclAllReduce до записи результата в память GPU. После прочтения вы должны чётко ответить: через какие функции проходит один AllReduce? В каком файле и на какой строке находится каждая функция? Какую главу смотреть при возникновении проблемы?
 
@@ -298,15 +300,15 @@ static ncclResult_t taskAppend(struct ncclComm* comm, struct ncclInfo* info) {
 
 ```mermaid
 flowchart LR
-    api["ncclAllReduce()"] --> info["ncclInfo 填充"]
+    api["ncclAllReduce()"] --> info["填充 ncclInfo"]
     info --> enq["ncclEnqueueCheck()"]
     enq --> check["CommCheck + ncclCommEnsureReady()"]
     check --> append["taskAppend()"]
     append --> coll["collTaskAppend()"]
-    coll --> task["ncclTaskColl 分配"]
+    coll --> task["分配 ncclTaskColl"]
     task --> sorter["ncclTaskCollSorterInsert(collSorter)"]
     sorter --> prepare["ncclPrepareTasks()"]
-    prepare --> algo["ncclGetAlgoInfo() 选算法"]
+    prepare --> algo["ncclGetAlgoInfo() 选择算法"]
     algo --> schedule["scheduleCollTasksToPlan()"]
     schedule --> plan["ncclKernelPlan"]
 ```
@@ -577,6 +579,7 @@ static ncclResult_t calcCollChunking(struct ncclComm* comm, struct ncclTaskColl*
 ## Копировать
 
 ```mermaid
+```mermaid
 flowchart TD
     prep["ncclPrepareTasks()"] --> sort["collSorter 按 trafficBytes 排序"]
     sort --> agg["按 (fn,op,ty) 聚合任务"]
@@ -595,6 +598,7 @@ flowchart TD
     finish --> storage{"workBytes 能放进 args?"}
     storage -->|是| args["ncclDevWorkStorageTypeArgs"]
     storage -->|否| fifo["ncclDevWorkStorageTypeFifo"]
+```
 ```
 
 ## Копировать
@@ -732,18 +736,18 @@ __device__ __forceinline__ void runRing(int tid, int nthreads, struct ncclDevWor
     // k-2 steps: reduce and copy to next GPU
     for (int j = 2; j >Plan: ncclLaunchPrepare()
     Plan->>Plan: scheduleCollTasksToPlan()
-    Plan->>Plan: finishPlan() 分配 kernelArgs
+    Plan->>Plan: finishPlan() выделение kernelArgs
     Host->>Plan: ncclLaunchKernelBefore_NoUncapturedCuda()
-    Plan->>Plan: uploadWork() 写 work 数据
+    Plan->>Plan: uploadWork() запись данных work
     Host->>CUDA: cuLaunchKernelEx(fn, grid, block, smem)
-    CUDA->>Kernel: 启动 nChannels 个 block
-    Kernel->>Kernel: runRing() 执行 Ring AllReduce
+    CUDA->>Kernel: запуск nChannels блоков
+    Kernel->>Kernel: runRing() выполнение Ring AllReduce
     Host->>Plan: ncclLaunchKernelAfter_NoCuda()
     Plan->>Proxy: hostStreamPlanTask() + uploadProxyOps()
-    Proxy->>Proxy: ncclProxyStart() 推进网络 I/O
-    Kernel-->>Host: kernel 完成
+    Proxy->>Proxy: ncclProxyStart() продвижение сетевого ввода-вывода
+    Kernel-->>Host: ядро завершено
     Host->>Plan: ncclLaunchFinish()
-    Plan->>Plan: reclaimPlan() 释放资源
+    Plan->>Plan: reclaimPlan() освобождение ресурсов
 ```
 
 ## Диаграмма последовательности запуска kernel

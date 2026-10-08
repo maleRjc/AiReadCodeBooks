@@ -6,7 +6,7 @@
 
 ## Интуитивная модель
 
-`Driver`— это**единственная сущность, владеющая`mio::Poll`, к ней можно обращаться только из одного потока**— это требование эксклюзивности цикла событий. А`&mut`— это`Handle`клонируемая точка входа для регистрации, разделяемая между потоками**可克隆、可跨线程共享的注册入口**, любой поток, желающий зарегистрировать новый fd, делает это через него. Без этого разделения пришлось бы либо`mio::Poll`блокировать, либо возвращать все регистрации в поток driver (что вводит межпоточную очередь сообщений). Tokio выбирает, чтобы`Handle`напрямую владел клоном`mio::Registry`, регистрация может выполняться параллельно, и только фактическое ожидание событий требует эксклюзивного доступа.
+`Driver`— это**единственная сущность, владеющая`mio::Poll`, к ней можно обращаться только из одного потока**— это требование эксклюзивности цикла событий. А`&mut`— это`Handle`клонируемая точка входа для регистрации, разделяемая между потоками**клонируемая, разделяемая между потоками точка регистрации**, любой поток, желающий зарегистрировать новый fd, делает это через него. Без этого разделения пришлось бы либо`mio::Poll`блокировать, либо возвращать все регистрации в поток driver (что вводит межпоточную очередь сообщений). Tokio выбирает, чтобы`Handle`напрямую владел клоном`mio::Registry`, регистрация может выполняться параллельно, и только фактическое ожидание событий требует эксклюзивного доступа.
 
 ## Раскладка памяти и поля
 
@@ -53,18 +53,18 @@
 flowchart TD
     start["turn(handle, max_wait)"] --> assert["debug_assert!(!is_shutdown)"]
     assert --> release["release_pending_registrations()"]
-    release --> pick{"max_wait == 0且 events_busy 存在?"}
-    pick -->|是| busy["events = events_busy"]
-    pick -->|否| main["events = events"]
+    release --> pick{"max_wait == 0и events_busy существует?"}
+    pick -->|да| busy["events = events_busy"]
+    pick -->|нет| main["events = events"]
     busy --> poll["poll.poll(events, max_wait)"]
     main --> poll
-    poll --> pollres{"poll 返回?"}
-    pollres -->|"Ok / Interrupted"| iter["遍历 events.iter()"]
-    pollres -->|"其他 Err"| panic["panic!(unexpected error)"]
+    poll --> pollres{"poll вернул?"}
+    pollres -->|"Ok / Interrupted"| iter["обход events.iter()"]
+    pollres -->|"другие Err"| panic["panic!(unexpected error)"]
     iter --> tok{"event.token()?"}
-    tok -->|"TOKEN_WAKEUP"| skip["忽略，仅用于打断阻塞"]
+    tok -->|"TOKEN_WAKEUP"| skip["игнорировать, используется только для прерывания блокировки"]
     tok -->|"TOKEN_SIGNAL"| sig["signal_ready = true"]
-    tok -->|"普通 fd token"| cast["EXPOSE_IO.from_exposed_addr(token.0)"]
+    tok -->|"обычный fd token"| cast["EXPOSE_IO.from_exposed_addr(token.0)"]
     cast --> setr["io.set_readiness(Tick::Set, curr | ready)"]
     setr --> wake["io.wake(ready)"]
     wake --> iter
@@ -143,7 +143,7 @@ loop {
 `Registration::drop` [FACT:tokio/src/runtime/io/registration.rs:253-262]вызывает`self.shared.clear_wakers()`. Комментарий[FACT:tokio/src/runtime/io/registration.rs:253-262]объясняет причину:`ScheduledIo`хранящийся в`Waker`может держать`Arc<driver::Inner>`, а`driver::Inner`в свою очередь держит`ScheduledIo`, образуя циклическую ссылку. Очистка Waker — это способ разорвать цикл. Но комментарий также признаёт, что это «imperfect solution» — если`Registration`сам сохранён в`Waker`, цикл всё равно остаётся. Это проблема, обсуждаемая в tokio-rs/tokio#3481.
 
 > **[Design Inference & Architectural Trade-offs]**
-> В production поведение таково: если множество соединений было drop, но runtime не завершился, память не освобождается немедленно до следующего`clear_wakers`или runtime shutdown. Для сервисов с длительными соединениями это обычно не проблема; но для сценариев с короткими соединениями и частым созданием/уничтожением нужно следить за моментом回收`ScheduledIo`.
+> В production поведение таково: если множество соединений было drop, но runtime не завершился, память не освобождается немедленно до следующего`clear_wakers`или завершение работы runtime. Для сервисов с длительными соединениями это обычно не проблема; но для сценариев с короткими соединениями и частым созданием/уничтожением нужно следить за моментом освобождения`ScheduledIo`.
 
 # От`TcpStream::read`до`Waker`полная цепочка пробуждения
 
@@ -171,28 +171,28 @@ loop {
 
 ```mermaid
 sequenceDiagram
-    participant Task as "任务 (worker 线程)"
+    participant Task as "Задача (worker-поток)"
     participant Reg as "Registration"
     participant SIO as "ScheduledIo"
-    participant Drv as "Driver (I/O 线程)"
+    participant Drv as "Driver (поток ввода-вывода)"
     participant OS as "epoll/kqueue"
 
     Task->>Reg: "poll_read_ready(cx)"
     Reg->>SIO: "poll_readiness(cx, Read)"
-    SIO-->>Reg: "Pending (Waker 已存入读槽位)"
+    SIO-->>Reg: "Pending (Waker сохранён в слоте чтения)"
     Reg-->>Task: "Poll::Pending"
-    Note over Task: 任务让出，worker 去跑别的任务
+    Note over Task: задача уступает, worker идёт выполнять другие задачи
     Drv->>OS: "poll.poll(events, max_wait)"
     OS-->>Drv: "event(token=fd_ptr, READABLE)"
     Drv->>SIO: "set_readiness(Tick::Set, curr | READABLE)"
     Drv->>SIO: "wake(READABLE)"
-    SIO->>Task: "Waker::wake() 重新入队"
-    Note over Task: worker 再次 poll 该任务
+    SIO->>Task: "Waker::wake() повторная постановка в очередь"
+    Note over Task: worker снова опрашивает эту задачу
     Task->>Reg: "poll_read_ready(cx)"
     Reg->>SIO: "poll_readiness(cx, Read)"
     SIO-->>Reg: "Ready(ReadyEvent{ready: READABLE})"
     Reg-->>Task: "Poll::Ready(Ok(ev))"
-    Task->>Task: "read() 成功返回数据"
+    Task->>Task: "read() успешно возвращает данные"
 ```
 
 ## Важное ответвление:`assume_ready`оптимизация
@@ -219,50 +219,50 @@ sequenceDiagram
 `poll_ready`проверяет`ev.is_shutdown` [FACT:tokio/src/runtime/io/registration.rs:155-171], если истина — возвращает`gone()` [FACT:tokio/src/runtime/io/registration.rs:265-267], то есть`RUNTIME_SHUTTING_DOWN_ERROR`。
 
 > **[Design Inference & Architectural Trade-offs]**
-> Смысл этой проверки в том, что: при завершении runtime driver`shutdown` [FACT:tokio/src/runtime/io/driver.rs:174-182]会遍历所有注册并调用`io.shutdown()`，把`is_shutdown`置位并唤醒所有等待者。如果不检查这个标志，任务可能在 runtime 已经停止调度后仍然尝试读 socket，导致未定义行为或挂起。生产环境中，如果你看到`RUNTIME_SHUTTING_DOWN_ERROR`，通常意味着有任务在 runtime drop 之后仍在运行——检查是否有`spawn`的任务没有被正确 join。
+> Смысл этой проверки в том, что: при завершении runtime driver`shutdown` [FACT:tokio/src/runtime/io/driver.rs:174-182]обойдёт все регистрации и вызовет`io.shutdown()`, установит`is_shutdown`и разбудит всех ожидающих. Если не проверять этот флаг, задача может попытаться прочитать сокет после того, как runtime уже прекратил планирование, что приведёт к неопределённому поведению или зависанию. В производственной среде, если вы видите`RUNTIME_SHUTTING_DOWN_ERROR`, это обычно означает, что какая-то задача всё ещё выполняется после drop runtime — проверьте, нет ли`spawn`задач, которые не были корректно присоединены через join.
 
-另一个坑是`deregister_source`的`unpark` [FACT:tokio/src/runtime/io/driver.rs:328]。如果 driver 正阻塞在`poll`里，且此时最后一个`Registration`被 drop，`unpark`会唤醒 driver。但如果 driver 不在阻塞状态（比如正在处理其他事件），`unpark`只是让下一次`turn`立即返回[FACT:tokio/src/runtime/io/driver.rs:280-283]。这个语义在`Handle::unpark`的文档注释里有说明。
+Ещё одна ловушка —`deregister_source`из`unpark` [FACT:tokio/src/runtime/io/driver.rs:328]. Если driver в данный момент заблокирован в`poll`, и в этот момент последний`Registration`был drop,`unpark`разбудит driver. Но если driver не находится в состоянии блокировки (например, обрабатывает другие события),`unpark`лишь заставит следующий`turn`немедленно вернуть[FACT:tokio/src/runtime/io/driver.rs:280-283]. Эта семантика описана в комментариях к документации`Handle::unpark`.
 
-# 设计思考：Reactor 的三个关键权衡
+# Проектное решение: три ключевых компромисса Reactor
 
-**权衡一：`Token`用指针而非索引**。`EXPOSE_IO.from_exposed_addr(token.0)` [FACT:tokio/src/runtime/io/driver.rs:220]把`mio::Token`直接当作`*const ScheduledIo`的地址。这避免了维护一个`Token → ScheduledIo`的映射表，查找是 O(1) 且无锁。代价是安全性依赖严格的生命周期管理：指针必须在注销且 driver 不再 poll 之后才能释放[FACT:tokio/src/runtime/io/driver.rs:222-225]。
+**Компромисс первый:`Token`использовать указатели вместо индексов**。`EXPOSE_IO.from_exposed_addr(token.0)` [FACT:tokio/src/runtime/io/driver.rs:220]Рассматривать`mio::Token`напрямую как адрес`*const ScheduledIo`. Это позволяет избежать поддержки`Token → ScheduledIo`таблица сопоставления, поиск за O(1) и без блокировок. Цена — безопасность зависит от строгого управления жизненным циклом: указатель может быть освобождён только после дерегистрации и прекращения опроса драйвером[FACT:tokio/src/runtime/io/driver.rs:222-225]。
 
-**权衡二：读写双 Waker 槽位**。`Registration`文档[FACT:tokio/src/runtime/io/registration.rs:24-26]说「A registration instance represents two separate readiness streams」——读和写各有一个独立的`Waker`槽位。这允许同一个 socket 的读任务和写任务分别注册，互不干扰。但`poll_read_ready`的注释[FACT:tokio/src/net/tcp/stream.rs:549-552]提醒：多次调用`poll_read_ready`/`poll_read`/`poll_peek`只有最后一次的`Waker`会被保留——读方向只有一个槽位。
+**Компромисс второй: два слота Waker для чтения и записи**。`Registration`Документация[FACT:tokio/src/runtime/io/registration.rs:24-26]гласит: «A registration instance represents two separate readiness streams» — для чтения и записи имеется независимый`Waker`слот. Это позволяет задачам чтения и записи одного и того же сокета регистрироваться отдельно, не мешая друг другу. Но`poll_read_ready`комментарий[FACT:tokio/src/net/tcp/stream.rs:549-552]предупреждает: при многократном вызове`poll_read_ready`/`poll_read`/`poll_peek`сохраняется только последний`Waker`— для направления чтения существует только один слот.
 
-**权衡三：`events_busy`的独立缓冲区**。测试[FACT:tokio/src/runtime/io/driver.rs:364-386]验证了这个行为：`Driver::new(16, Some(2))`创建 busy 容量为 2 的 driver，注册 5 个可读 source 后，非阻塞`turn`只取 2 个事件[FACT:tokio/src/runtime/io/driver.rs:375-376]，剩余 3 个留在内核队列，下次阻塞`turn`取到[FACT:tokio/src/runtime/io/driver.rs:379-380]。这防止了非阻塞 poll 一次性吞掉所有事件导致后续 poll 饥饿。
+**Компромисс третий:`events_busy`независимый буфер**. Тест[FACT:tokio/src/runtime/io/driver.rs:364-386]подтвердил это поведение:`Driver::new(16, Some(2))`создаётся драйвер с ёмкостью busy равной 2, после регистрации 5 источников, доступных для чтения, неблокирующий`turn`извлекает только 2 события[FACT:tokio/src/runtime/io/driver.rs:375-376], остальные 3 остаются в очереди ядра и будут заблокированы в следующий раз`turn`получено[FACT:tokio/src/runtime/io/driver.rs:379-380]. Это предотвращает ситуацию, когда неблокирующий poll за один раз поглощает все события, что приводит к голоданию последующих poll.
 
-# 本章小结
+# Резюме главы
 
-本章追踪了`TcpStream::read`背后的完整 Reactor 链路：
+В этой главе прослежен`TcpStream::read`полный путь Reactor, стоящий за
 
-- **驱动层**：`Driver`独占`mio::Poll`，`turn`阻塞等待事件，用`EXPOSE_IO`把`Token`还原为`ScheduledIo`指针，调用`set_readiness` + `wake`触发`Waker`。`Handle`提供可跨线程的注册入口，`unpark`用于打断阻塞。
-- **注册层**：`Registration`持有`Arc<ScheduledIo>`，`poll_ready`检查就绪位或存入`Waker`，`poll_io`用`WouldBlock`重试循环处理假阳性，`try_io`/`async_io`分别服务同步和异步场景。
-- **状态层**：`ScheduledIo`是 fd 的状态槽，存储读写就绪位和双`Waker`槽位，是事件与任务之间的唯一桥梁。
+- **Уровень драйвера**：`Driver`эксклюзивно`mio::Poll`，`turn`блокирующее ожидание события, с помощью`EXPOSE_IO`восстановить`Token`в`ScheduledIo`указатель, вызвать`set_readiness` + `wake`запустить`Waker`。`Handle`предоставляет точку регистрации, доступную для межпоточного использования,`unpark`используется для прерывания блокировки.
+- **Слой регистрации**：`Registration`Содержит`Arc<ScheduledIo>`，`poll_ready`Проверяет бит готовности или сохраняет`Waker`，`poll_io`Использует`WouldBlock`Цикл повторных попыток для обработки ложных срабатываний,`try_io`/`async_io`Обслуживает синхронные и асинхронные сценарии по отдельности.
+- **Слой состояния**：`ScheduledIo`Является слотом состояния fd, хранит биты готовности чтения/записи и двойной`Waker`Слот, является единственным мостом между событиями и задачами.
 
-# 本章思考与自测
+# Вопросы для размышления и самопроверки в этой главе
 
-Q1: 如果把`poll_io`里`WouldBlock`分支的`self.clear_readiness(ev)`删掉，在什么场景下会导致任务忙循环（busy-loop）？为什么？
+Q1: Если удалить`poll_io`в`WouldBlock`ветви`self.clear_readiness(ev)`то в каком сценарии это приведёт к busy-loop задачи? Почему?
 
-**参考解析**：`poll_io`的循环[FACT:tokio/src/runtime/io/registration.rs:173-192]在`f()`返回`WouldBlock`时调用`clear_readiness(ev)` [FACT:tokio/src/runtime/io/registration.rs:187]。`ev`是`poll_ready`返回的`ReadyEvent`，包含当前就绪位。`clear_readiness`会把这些位从`ScheduledIo`里清掉。
+**Справочный анализ**：`poll_io`цикл[FACT:tokio/src/runtime/io/registration.rs:173-192]в`f()`возврат`WouldBlock`вызывается при`clear_readiness(ev)` [FACT:tokio/src/runtime/io/registration.rs:187]。`ev`является`poll_ready`возвращаемым`ReadyEvent`, содержит текущие биты готовности.`clear_readiness`удалит эти биты из`ScheduledIo`.
 
-如果不清理，下一次循环调用`poll_ready` → `poll_readiness`时，`ScheduledIo`里仍然保留着旧的「可读」位，`poll_readiness`会立即返回`Ready`（因为就绪位非空），然后`f()`再次执行`read()`，如果 socket 确实没数据，又返回`WouldBlock`，循环继续。由于就绪位从未被清除，这个循环永远不会进入`Pending`，任务会一直占用 CPU 轮询。
+Если не очистить, при следующем вызове цикла`poll_ready` → `poll_readiness`,`ScheduledIo`по-прежнему сохраняются старые биты «доступно для чтения»,`poll_readiness`немедленно вернёт`Ready`(поскольку биты готовности не пусты), затем`f()`снова выполнит`read()`, если в socket действительно нет данных, и снова возвращается`WouldBlock`, цикл продолжается. Поскольку бит готовности никогда не сбрасывается, этот цикл никогда не войдёт в`Pending`, задача будет постоянно занимать CPU опросом.
 
-触发场景：多个任务共享同一个 socket 的读方向（虽然`Registration`文档[FACT:tokio/src/runtime/io/registration.rs:28-33]说最多两个任务，但读方向只有一个槽位），或者`try_read`和`poll_read`混用。更常见的是：epoll 报告可读后，另一个线程抢先读走了数据，当前任务的`read()`返回`WouldBlock`，此时必须清就绪位，否则会一直重试。
+Сценарий срабатывания: несколько задач совместно используют одно направление чтения одного socket (хотя`Registration`документация[FACT:tokio/src/runtime/io/registration.rs:28-33]говорит, что максимум две задачи, но для направления чтения есть только один слот), или`try_read`и`poll_read`используются совместно. Более распространённый случай: после того как epoll сообщил о готовности к чтению, другой поток успел первым вычитать данные, и`read()`текущей задачи возвращает`WouldBlock`, в этот момент необходимо сбросить бит готовности, иначе будут бесконечные повторные попытки.
 
-Q2: `add_source`在`registry.register`失败时为什么要调用`registrations.remove`？如果不调用会发生什么？
+Q2: `add_source`При`registry.register`почему при сбое вызывается`registrations.remove`? Что произойдёт, если не вызвать?
 
-**参考解析**：`add_source` [FACT:tokio/src/runtime/io/driver.rs:288-312]先`registrations.allocate`分配`ScheduledIo` [FACT:tokio/src/runtime/io/driver.rs:293]，再`registry.register`向内核注册[FACT:tokio/src/runtime/io/driver.rs:298]。如果注册失败，`ScheduledIo`已经分配但没有任何 fd 与之关联，如果不移除，它会永远留在`RegistrationSet`里。
+**Справочный анализ**：`add_source` [FACT:tokio/src/runtime/io/driver.rs:288-312]Сначала`registrations.allocate`Выделить`ScheduledIo` [FACT:tokio/src/runtime/io/driver.rs:293], затем`registry.register`зарегистрировать в ядре[FACT:tokio/src/runtime/io/driver.rs:298]. Если регистрация не удалась,`ScheduledIo`уже выделен, но не связан ни с одним fd; если не удалить, он навсегда останется в`RegistrationSet`.
 
-注释[FACT:tokio/src/runtime/io/driver.rs:296-297]明确说：「we should remove the`scheduled_io` from the `registrations` set if registering the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.」——这是一个内存泄漏。
+Комментарий[FACT:tokio/src/runtime/io/driver.rs:296-297]явно говорит: «we should remove the`scheduled_io` from the `registrations` set if registering the `source` with the OS fails. Otherwise it will leak the `scheduled_io`.» — это утечка памяти.
 
-`remove`调用[FACT:tokio/src/runtime/io/driver.rs:300-303]用 unsafe 块包裹，因为`ScheduledIo`是`RegistrationSet`的一部分，移除操作需要保证没有其他引用。泄漏的后果：`RegistrationSet`持续增长，`Token`空间被浪费，最终可能导致`allocate`失败或内存耗尽。在高频创建/销毁连接的场景（如短连接服务器），如果注册失败率较高（比如 fd 耗尽），泄漏会加速资源枯竭。
+`remove`Вызов[FACT:tokio/src/runtime/io/driver.rs:300-303]обёрнут в блок unsafe, потому что`ScheduledIo`является`RegistrationSet`частью, и операция удаления должна гарантировать отсутствие других ссылок. Последствия утечки:`RegistrationSet`постоянно растёт,`Token`пространство расходуется впустую, что в конечном итоге может привести к`allocate`Сбой или исчерпание памяти. В сценариях с частым созданием/уничтожением соединений (например, серверы с короткими соединениями), если вероятность сбоя регистрации высока (например, исчерпание fd), утечка ускоряет исчерпание ресурсов.
 
-Q3: `deregister_source`中，为什么`unpark()`只在`registrations.deregister`返回 true 时调用？如果无条件调用会有什么问题？
+Q3: `deregister_source`, почему`unpark()`только при`registrations.deregister`возвращает true? Какие проблемы возникнут, если вызывать безусловно?
 
-**参考解析**：`deregister_source` [FACT:tokio/src/runtime/io/driver.rs:315-334]的逻辑是：先`registry.deregister(source)`向内核注销[FACT:tokio/src/runtime/io/driver.rs:322]，然后`registrations.deregister`清理内部状态[FACT:tokio/src/runtime/io/driver.rs:315-334]，若返回 true 则`unpark()` [FACT:tokio/src/runtime/io/driver.rs:328]。
+**Справочный анализ**：`deregister_source` [FACT:tokio/src/runtime/io/driver.rs:315-334]Логика такова: сначала`registry.deregister(source)`отменяет регистрацию в ядре[FACT:tokio/src/runtime/io/driver.rs:322], затем`registrations.deregister`очищает внутреннее состояние[FACT:tokio/src/runtime/io/driver.rs:315-334], если возвращает true, то`unpark()` [FACT:tokio/src/runtime/io/driver.rs:328]。
 
-`registrations.deregister`返回 true 意味着这是最后一个引用，`ScheduledIo`被真正移除。此时 driver 可能正阻塞在`poll`里等待这个 fd 的事件，但 fd 已经注销，内核不会再产生事件。`unpark`通过`mio::Waker`往 epoll 塞一个`TOKEN_WAKEUP`事件[FACT:tokio/src/runtime/io/driver.rs:280-283]，让`poll`立即返回，driver 重新检查注册集合并可能退出阻塞。
+`registrations.deregister`возврат true означает, что это последняя ссылка,`ScheduledIo`действительно удалён. В этот момент driver может быть заблокирован в`poll`в ожидании события для этого fd, но fd уже отменён, и ядро больше не будет генерировать события.`unpark`через`mio::Waker`помещает в epoll`TOKEN_WAKEUP`Событие[FACT:tokio/src/runtime/io/driver.rs:280-283], позволяя`poll`немедленно вернуться, driver повторно проверяет набор регистраций и может выйти из блокировки.
 
-如果无条件调用`unpark`：每次注销一个非最后的引用都会唤醒 driver，造成不必要的唤醒。在大量连接共享同一个`ScheduledIo`的场景（比如`TcpStream`的`split`后读写两半），每次 drop 一个半都会唤醒 driver，增加 CPU 开销。更严重
+Если безусловно вызывать`unpark`: каждая отмена регистрации не последней ссылки пробуждает driver, вызывая ненужные пробуждения. В сценариях, где множество соединений совместно используют один и тот же`ScheduledIo`(например,`TcpStream`из`split`после разделения на половины чтения и записи), каждое удаление одной половины пробуждает driver, увеличивая нагрузку на CPU. Что ещё серьёзнее
 
 本章我们拆解了 Reactor 如何把 epoll 事件翻译成 Waker 唤醒：从 TcpStream 的 poll_read_ready 出发，经过 Registration 的注册与查询，落到 ScheduledIo 的就绪位与 Waker 槽位，再由 Driver 在事件循环中根据 Token 定位并触发唤醒。关键设计包括：Token 即指针实现 O(1) 查找，读写双 Waker 槽位支持并发读写分离，events_busy 独立缓冲区防止事件饥饿，assume_ready 乐观猜测优化 accept 场景。至此，I/O 就绪通知的闭环已经完整。但异步运行时还需要处理另一类「就绪」——时间。下一章我们将剖析 tokio::time::sleep 与 timeout 的实现：定时器如何被插入时间轮、时间轮如何按到期时间分级、driver 如何计算下一次 park 的超时并触发到期任务。你会看到「时间也是一种 I/O 事件」这一统一抽象，以及 start_paused 与 test clock 如何让时间在测试中可控。

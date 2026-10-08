@@ -1,4 +1,4 @@
-# Глава 5: Основной ствол выполнения модели: от SchedulerOutput до прямого прохода на GPU
+# Глава 5: Движок непрерывного батчинга: динамическое планирование на уровне итераций
 
 В предыдущей главе мы видели, как Scheduler на каждом шаге цикла планирования решает, какие запросы попадут в очередь running, какие будут вытеснены, какие будут ждать из-за нехватки видеопамяти, и в итоге формирует SchedulerOutput — он описывает, что нужно вычислить на этом шаге: какие запросы, сколько token для каждого, какие KV block использовать. Но этот список — лишь логическое намерение, а GPU нужны физические тензоры. В этой главе прослеживается, как SchedulerOutput распределяется Executor'ом по Worker'ам, затем GPUModelRunner переводит его в исполняемые на GPU входы, такие как input_ids, positions, slot_mapping и block table, и в конечном счёте через forward_context описание батча, разделяемое между слоями, внедряется в каждый слой модели, завершая переход от решения планировщика к прямому проходу.
 
@@ -30,23 +30,23 @@ supports_pp: bool = False  # whether the executor supports PP
 
 ```mermaid
 flowchart TD
-    start["Executor.get_class(vllm_config)"] --> check_type{"backend 是 type?"}
-    check_type -->|是| verify_sub{"issubclass(Executor)?"}
-    verify_sub -->|否| err_type["raise TypeError"]
-    verify_sub -->|是| use_direct["executor_class = backend"]
-    check_type -->|否| check_ray{"backend == 'ray'?"}
-    check_ray -->|是| ray_v2{"VLLM_USE_RAY_V2?"}
-    ray_v2 -->|是| use_rayv2["RayExecutorV2"]
-    ray_v2 -->|否| use_ray["RayDistributedExecutor"]
-    check_ray -->|否| check_mp{"backend == 'mp'?"}
-    check_mp -->|是| use_mp["MultiprocExecutor"]
-    check_mp -->|否| check_uni{"backend == 'uni'?"}
-    check_uni -->|是| use_uni["UniProcExecutor"]
-    check_uni -->|否| check_ext{"backend == 'external_launcher'?"}
-    check_ext -->|是| use_ext["ExecutorWithExternalLauncher"]
-    check_ext -->|否| check_str{"backend 是 str?"}
-    check_str -->|是| resolve["resolve_obj_by_qualname"]
-    check_str -->|否| err_unknown["raise ValueError"]
+    start["Executor.get_class(vllm_config)"] --> check_type{"backend имеет тип type?"}
+    check_type -->|да| verify_sub{"issubclass(Executor)?"}
+    verify_sub -->|нет| err_type["raise TypeError"]
+    verify_sub -->|да| use_direct["executor_class = backend"]
+    check_type -->|нет| check_ray{"backend == 'ray'?"}
+    check_ray -->|да| ray_v2{"VLLM_USE_RAY_V2?"}
+    ray_v2 -->|да| use_rayv2["RayExecutorV2"]
+    ray_v2 -->|нет| use_ray["RayDistributedExecutor"]
+    check_ray -->|нет| check_mp{"backend == 'mp'?"}
+    check_mp -->|да| use_mp["MultiprocExecutor"]
+    check_mp -->|нет| check_uni{"backend == 'uni'?"}
+    check_uni -->|да| use_uni["UniProcExecutor"]
+    check_uni -->|нет| check_ext{"backend == 'external_launcher'?"}
+    check_ext -->|да| use_ext["ExecutorWithExternalLauncher"]
+    check_ext -->|нет| check_str{"backend имеет тип str?"}
+    check_str -->|да| resolve["resolve_obj_by_qualname"]
+    check_str -->|нет| err_unknown["raise ValueError"]
 ```
 
 ## Пользовательский бэкенд в виде строки динамически разрешается через`execute_model`Копировать

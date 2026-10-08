@@ -1,4 +1,4 @@
-# Глава 10: Ускорение компиляции и CUDA Graph: устранение накладных расходов на запуск и планирование
+# Глава 10: Квантизация и высокопроизводительные ядра: AWQ, GPTQ и FP8
 
 В предыдущей главе мы видели, как KV Connector через такие коннекторы, как NIXL и Mooncake, эффективно перемещает KV cache между движками Prefill и Decode, позволяя разделённой архитектуре снижать TTFT и повышать utilisation ресурсов. Но даже если передача происходит очень быстро, в авторегрессионном декодировании остаются две фиксированные издержки, которые нельзя устранить алгоритмически: накладные расходы на планирование интерпретатора Python и накладные расходы на запуск ядер GPU. Когда прямой проход модели разбивается на сотни операторов, каждый оператор проходит через вызов функции Python и запуск ядра CUDA, и накладные расходы на стороне CPU足以 заставляют GPU простаивать между двумя вычислениями. В этой главе анализируется, как vLLM использует torch.compile для слияния операторов в статический граф, а затем CUDA Graph для записи всей последовательности запусков ядер в одно воспроизведение, сводя оба типа накладных расходов почти к нулю.
 
@@ -31,18 +31,18 @@
 ```mermaid
 flowchart TD
     start["InductorAdaptor.compile()"] --> deepcopy["copy.deepcopy(graph)"]
-    deepcopy --> patch_stack["ExitStack 安装补丁"]
+    deepcopy --> patch_stack["ExitStack установка патчей"]
     patch_stack --> p1["patch compiled_fx_graph_hash"]
     patch_stack --> p2["patch FxGraphCache._get_shape_env"]
     patch_stack --> p3["patch _check_can_cache"]
-    patch_stack --> p4["清空 TracingContext"]
+    patch_stack --> p4["Очистить TracingContext"]
     p4 --> call_fx["compile_fx(graph, example_inputs)"]
     call_fx --> check{"hash_str is None?"}
-    check -->|"是"| err["RuntimeError: 编译失败建议删除 torch_compile_cache"]
-    check -->|"否"| check2{"file_path is None?"}
-    check2 -->|"是"| assert_err["AssertionError"]
-    check2 -->|"否"| ret["return (compiled_graph, (hash_str, file_path))"]
-    err --> cleanup["ExitStack 退出恢复 TracingContext"]
+    check -->|"да"| err["RuntimeError: компиляция не удаласьрекомендуется удалить torch_compile_cache"]
+    check -->|"нет"| check2{"file_path is None?"}
+    check2 -->|"да"| assert_err["AssertionError"]
+    check2 -->|"нет"| ret["return (compiled_graph, (hash_str, file_path))"]
+    err --> cleanup["Выход из ExitStackвосстановление TracingContext"]
     assert_err --> cleanup
     ret --> cleanup
 ```
@@ -53,7 +53,7 @@ flowchart TD
 
 Решение — предоставить фиктивное shape environment, которое "всегда попадает":`evaluate_guards_expression`всегда возвращает`True` [FACT:vllm/compilation/compiler_interface.py:144-145]，`get_pruned_guards`возвращает пустой список[FACT:vllm/compilation/compiler_interface.py:144-145]，`produce_guards_expression`возвращает пустую строку[FACT:vllm/compilation/compiler_interface.py:147-159]. Комментарий честно признаёт, что эти методы "obtained by trial-and-error until it works"[FACT:vllm/compilation/compiler_interface.py:137-142]— это хрупкое место, связанное с внутренней реализацией PyTorch, и наиболее подверженное проблемам при обновлении PyTorch.
 
-Состав хэша кэша также критичен.`get_inductor_factors`Собирает три категории факторов: состояние системы`CacheBase.get_system()`, состояние PyTorch`torch_key()`, а также конфигурацию Inductor и functorch[FACT:vllm/compilation/compiler_interface.py:165-185]. Обратите внимание, что конфигурация functorch собирается в контексте`patch(_get_vllm_functorch_config())`, это гарантирует, что "конфигурация во время компиляции и ключ кэша всегда согласованы" — комментарий явно указывает, что это делается для согласованности[FACT:vllm/compilation/compiler_interface.py:188-189]и`set_functorch_config()`保持一致`get_inductor_factors()`. Если эти два места не согласованы, возникнет рассогласование "при компиляции использовалась конфигурация A, а ключ кэша вычислен по конфигурации B", что приведёт к попаданию в кэш, но загрузке неправильного артефакта.[FACT:vllm/compilation/compiler_interface.py:147-159]Производственные подводные камни:
+Состав хэша кэша также критичен.`get_inductor_factors`Собирает три категории факторов: состояние системы`CacheBase.get_system()`, состояние PyTorch`torch_key()`, а также конфигурацию Inductor и functorch[FACT:vllm/compilation/compiler_interface.py:165-185]. Обратите внимание, что конфигурация functorch собирается в контексте`patch(_get_vllm_functorch_config())`, это гарантирует, что "конфигурация во время компиляции и ключ кэша всегда согласованы" — комментарий явно указывает, что это делается для согласованности[FACT:vllm/compilation/compiler_interface.py:188-189]и`set_functorch_config()`Обеспечить согласованность`get_inductor_factors()`. Если эти два места не согласованы, возникнет рассогласование "при компиляции использовалась конфигурация A, а ключ кэша вычислен по конфигурации B", что приведёт к попаданию в кэш, но загрузке неправильного артефакта.[FACT:vllm/compilation/compiler_interface.py:147-159]Производственные подводные камни:
 
 это backport для torch < 2.10.0`_patch_standalone_compile_atomic_save`. Он изменяет[FACT:vllm/compilation/compiler_interface.py:205-243]на использование`CompiledArtifact.save()`для записи в бинарном формате, комментарий поясняет цель: "preventing corrupt cache files when multiple processes compile concurrently"`write_atomic`. В сценарии одновременного холодного запуска нескольких реплик несколько процессов будут параллельно записывать один и тот же файл кэша; неатомарная запись создаст обрезанный файл, и последующие процессы, прочитав повреждённый артефакт, будут вести себя непредсказуемо.[FACT:vllm/compilation/compiler_interface.py:208-210]PiecewiseBackend: компиляция по диапазонам форм и диспетчеризация во время выполнения
 
@@ -75,27 +75,14 @@ flowchart TD
 
 **обходит все range entry, для каждого нескомпилированного entry вызывает**：`compile_all_ranges`записывает событие трассировки`_log_compile_start`. Ключевое ветвление — в построении аргументов: если это одноточечный размер, вызывается[FACT:vllm/compilation/piecewise_backend.py:252-256]для генерации FakeTensor конкретной формы`create_concrete_args`; иначе вызывается[FACT:vllm/compilation/piecewise_backend.py:258-261]для прямого переиспользования метаданных placeholder из графа`get_fake_args_from_graph`реализация раскрывает детали конкретизации символьных форм. Она создаёт[FACT:vllm/compilation/piecewise_backend.py:262-263]。
 
-`create_concrete_args`с`ShapeEnv`, затем обходит узлы placeholder. Для входов типа`FakeTensorMode` [FACT:vllm/compilation/piecewise_backend.py:54]использует`SymInt`для замены всех свободных символов на`concretize`; для типа`size` [FACT:vllm/compilation/piecewise_backend.py:47-52]необходимо одновременно конкретизировать shape, stride, storage_offset и с помощью`Tensor`вычислить требуемую длину хранилища, затем через`compute_required_storage_length`восстановить тензор`as_strided` 重建张量 [FACT:vllm/compilation/piecewise_backend.py:64-73]. Почему нельзя изменить только shape? Потому что stride и storage_offset также могут содержать символы, и все три должны быть согласованы, иначе`as_strided`выйдет за границы.
+`create_concrete_args`с`ShapeEnv`, затем обходит узлы placeholder. Для входов типа`FakeTensorMode` [FACT:vllm/compilation/piecewise_backend.py:54]использует`SymInt`для замены всех свободных символов на`concretize`; для типа`size` [FACT:vllm/compilation/piecewise_backend.py:47-52]необходимо одновременно конкретизировать shape, stride, storage_offset и с помощью`Tensor`вычислить требуемую длину хранилища, затем через`compute_required_storage_length`восстановить тензор`as_strided`Восстановить тензор[FACT:vllm/compilation/piecewise_backend.py:64-73]. Почему нельзя изменить только shape? Потому что stride и storage_offset также могут содержать символы, и все три должны быть согласованы, иначе`as_strided`выйдет за границы.
 
 **Диспетчеризация во время выполнения**：`__call__`— это горячий путь. Если существует`sym_shape_indices`, извлечь runtime-форму из`args`, затем вызвать[FACT:vllm/compilation/piecewise_backend.py:357-362]для поиска. Логика поиска имеет приоритет: сначала проверить, попадает ли в точный`_find_range_for_shape`, при попадании вернуть этот точечный интервал`compile_sizes`; иначе перебрать[FACT:vllm/compilation/piecewise_backend.py:342-355]в поисках интервала, содержащего эту форму`compile_ranges`Копирование[FACT:vllm/compilation/piecewise_backend.py:342-355]。
 
 ```mermaid
 flowchart TD
-    call["PiecewiseBackend.__call__(*args)"] --> has_sym{"sym_shape_indices 非空?"}
-    has_sym -->|"是"| get_shape["runtime_shape = args[sym_shape_indices[0]]"]
-    get_shape --> find["_find_range_for_shape(runtime_shape)"]
-    find --> exact{"runtime_shape in compile_sizes?"}
-    exact -->|"是"| exact_entry["返回 Range(start=shape, end=shape) 的 entry"]
-    exact -->|"否"| scan["遍历 compile_ranges 找包含区间"]
-    scan --> found{"找到?"}
-    found -->|"否"| assert_fail["AssertionError: 形状超出编译范围"]
-    found -->|"是"| entry_ok["返回对应 entry"]
-    has_sym -->|"否"| static["取唯一已编译 entry"]
-    static --> check_count{"compiled_entries 数量 == 1?"}
-    check_count -->|"否"| count_err["AssertionError"]
-    check_count -->|"是"| entry_ok
-    exact_entry --> run["range_entry.runnable(*args)"]
-    entry_ok --> run
+    call["PiecewiseBackend.__call__(*args)"] --> has_sym{"sym_shape_indices не пуст?"}
+    has_sym -->|"да"| get_shape["runtime_shape = args[sym_shape_indices
 ```
 
 ## 〔Проектные выводы и архитектурные компромиссы〕
@@ -111,7 +98,7 @@ flowchart TD
 
 ## CUDA Graph записывает «последовательность запусков ядер» в статический граф, после чего каждое воспроизведение требует лишь одного вызова API.
 
-— это исполнитель захвата и воспроизведения. Основная трудность, с которой он сталкивается: размер батча в vLLM динамический, а CUDA Graph требует фиксированных адресов входа. Решение — «захват по档位 batch descriptor» — для каждого档位 формы записывается один граф, во время выполнения по descriptor ищется в таблице и воспроизводится.`CUDAGraphWrapper`Структуры данных: CUDAGraphEntry и контракт диспетчеризации
+— 这是捕获与回放执行器。它面临的主要难点是：vLLM 中批大小是动态的，而 CUDA Graph 要求固定的输入地址。解决方案是“按档位 batch descriptor 捕获”——为每个形状档位记录一张图，运行时通过 descriptor 在表中查找并回放。`CUDAGraphWrapper`Структуры данных: CUDAGraphEntry и контракт диспетчеризации
 
 ## Содержит три ключевых поля:
 
@@ -133,7 +120,7 @@ flowchart TD
 
 . После захвата вызывается`torch.cuda.graph(cudagraph, pool=..., stream=...)`во избежание ошибок неjoin-нутых потоков`self.runnable(*args, **kwargs)` [FACT:vllm/compilation/cuda_graph.py:315-321]. Если`get_offloader().join_after_forward()`включён, output преобразуется в слабую ссылку для экономии памяти[FACT:vllm/compilation/cuda_graph.py:322-326]. Наконец, entry сохраняет слабую ссылку output и объект графа`weak_ref_output`, но[FACT:vllm/compilation/cuda_graph.py:327-334]возвращается исходный output, а не слабая ссылка[FACT:vllm/compilation/cuda_graph.py:338-339]— комментарий подчёркивает, что это нужно, чтобы PyTorch корректно управлял памятью во время захвата**Путь воспроизведения**: если у entry уже есть граф, в режиме отладки проверяется совпадение адресов входа[FACT:vllm/compilation/cuda_graph.py:343-346]。
 
-**, затем синхронизируется offloader**, вызывается[FACT:vllm/compilation/cuda_graph.py:348-357]и возвращается[FACT:vllm/compilation/cuda_graph.py:359-361]，调用 `entry.cudagraph.replay()` 并返回 `entry.output` [FACT:vllm/compilation/cuda_graph.py:362-363]。
+**, затем синхронизируется offloader**, вызывается[FACT:vllm/compilation/cuda_graph.py:348-357]и возвращается[FACT:vllm/compilation/cuda_graph.py:359-361], вызов`entry.cudagraph.replay()`и возврат`entry.output` [FACT:vllm/compilation/cuda_graph.py:362-363]。
 
 ## Проектное размышление: почему выход должен быть слабой ссылкой, а возвращаемое значение — сильной
 

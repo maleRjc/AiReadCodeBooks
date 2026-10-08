@@ -57,14 +57,14 @@ jobs:
 
 Вход в тройной гейт: условное суждение job test`if`Копировать`&&`Это
 
-условие содержит две ветки логического И (`! startsWith(github.event.head_commit.message, 'release:')`), каждую стоит раскрыть.`release:`开头，跳过测试。这正是上一章 release.js 推送的提交信息格式——release.js 在本地已经跑过完整测试，CI 不需要重复验证。这是一个「信任上游」的优化。
+условие содержит две ветки логического И (`! startsWith(github.event.head_commit.message, 'release:')`), каждую стоит раскрыть.`release:`В начале, пропустить тесты. Именно таков формат сообщения коммита, отправляемого release.js из предыдущей главы — release.js уже прогнал полные тесты локально, CI не нужно повторно проверять. Это оптимизация «доверия к источнику».
 
 > **[Design Inference & Architectural Trade-offs]**
-> 第二个条件`(github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)`：push 事件总是跑测试；PR 事件则要求 PR 来自 fork（`head.repo.full_name != github.repository`）。为什么 fork 的 PR 才跑？ 因为同仓库分支的 PR 通常由核心团队成员创建，他们的分支推送已经触发过 push 事件的 CI。而 fork 的 PR 不会触发 push 事件（fork 的 push 不会通知上游仓库），所以必须在 PR 事件里补跑。
+> Второе условие`(github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)`: событие push всегда запускает тесты; событие PR требует, чтобы PR был из форка (`head.repo.full_name != github.repository`). Почему тесты запускаются только для PR из форка? Потому что PR из веток того же репозитория обычно создаются членами основной команды, и push в их ветки уже вызвал CI по событию push. А PR из форка не вызывает событие push (push в форк не уведомляет upstream-репозиторий), поэтому его необходимо дополнительно запустить в событии PR.
 
-注意`uses: ./.github/workflows/test.yml`——这是一个 reusable workflow 调用。`test.yml`是独立的 workflow 文件，被`ci.yml`和`release.yml`共享。这种复用避免了在多个 workflow 里重复定义 lint/typecheck/test 的步骤。
+Примечание`uses: ./.github/workflows/test.yml`— это вызов reusable workflow.`test.yml`— это отдельный файл workflow, совместно используемый`ci.yml`и`release.yml`. Такое повторное использование позволяет избежать дублирования определения шагов lint/typecheck/test в нескольких workflow.
 
-## 持续预发布：pkg-pr-new 的角色
+## Непрерывный предварительный выпуск: роль pkg-pr-new
 
 [FACT:.github/workflows/ci.yml:25-51]
 
@@ -84,48 +84,48 @@ continuous-release:
       run: pnpx pkg-pr-new publish --compact --pnpm './packages/*' --packageManager=pnpm,npm,yarn
 ```
 
-`continuous-release`job 只在`vuejs/core`主仓库运行（`if: github.repository == 'vuejs/core'`），fork 上不执行。它做三件事：构建（`pnpm build --withTypes`，带类型声明）、然后用`pkg-pr-new`把`./packages/*`下的所有包发布到一个临时的 npm registry。
+`continuous-release`job выполняется только в`vuejs/core`основном репозитории (`if: github.repository == 'vuejs/core'`), в форках не запускается. Он делает три вещи: сборка (`pnpm build --withTypes`, с объявлениями типов), затем с помощью`pkg-pr-new`публикует все пакеты из`./packages/*`во временный npm registry.
 
 > **[Design Inference & Architectural Trade-offs]**
-> 这个机制的价值在于：贡献者可以在自己的项目里直接`npm install`这个 PR 的构建产物，验证改动是否真的解决了问题。这比「看 CI 绿了」更有说服力，因为它验证的是真实的包消费场景。
+> Ценность этого механизма в том, что контрибьюторы могут в своём проекте напрямую`npm install`использовать артефакты сборки этого PR, чтобы проверить, действительно ли изменения решают проблему. Это убедительнее, чем «CI позеленел», потому что проверяется реальный сценарий потребления пакета.
 
-注意所有 action 都锁定了 commit SHA（如`actions/checkout@3d3c42e5...`），而不是用`@v4`这样的浮动 tag。这是供应链安全的硬性要求——防止 action 仓库被入侵后恶意代码自动流入。
+Обратите внимание, что все action привязаны к commit SHA (например,`actions/checkout@3d3c42e5...`), а не используют`@v4`такой плавающий тег. Это жёсткое требование безопасности цепочки поставок — предотвращает автоматическое проникновение вредоносного кода после компрометации репозитория action.
 
-## ci.yml 控制流图
+## Граф потока управления ci.yml
 
 ```mermaid
 flowchart TD
-    trigger{"事件类型?"}
-    trigger -->|"push 到任意分支"| push_check{"提交信息以 release: 开头?"}
-    trigger -->|"PR 到 main/minor"| pr_check{"PR 来自 fork?"}
+    trigger{"Тип события?"}
+    trigger -->|"push в любую ветку"| push_check{"Сообщение коммита начинается с release:?"}
+    trigger -->|"PR в main/minor"| pr_check{"PR из форка?"}
 
-    push_check -->|"是"| skip_test["跳过 test job"]
-    push_check -->|"否"| run_test["调用 test.yml"]
+    push_check -->|"Да"| skip_test["Пропустить job test"]
+    push_check -->|"Нет"| run_test["Вызвать test.yml"]
 
-    pr_check -->|"是"| run_test
-    pr_check -->|"否"| skip_test
+    pr_check -->|"Да"| run_test
+    pr_check -->|"Нет"| skip_test
 
-    run_test --> test_result{"test.yml 通过?"}
-    test_result -->|"否"| block["PR 被阻断"]
-    test_result -->|"是"| cont_release{"仓库是 vuejs/core?"}
+    run_test --> test_result{"test.yml пройден?"}
+    test_result -->|"Нет"| block["PR заблокирован"]
+    test_result -->|"Да"| cont_release{"Репозиторий — vuejs/core?"}
 
-    cont_release -->|"是"| build["pnpm build --withTypes"]
-    cont_release -->|"否"| end_node["结束"]
+    cont_release -->|"Да"| build["pnpm build --withTypes"]
+    cont_release -->|"Нет"| end_node["Конец"]
     build --> publish["pkg-pr-new publish"]
     publish --> end_node
 ```
 
 ---
 
-# 二、release.yml：tag 推送后的发布编排
+# II. release.yml: оркестрация публикации после пуша тега
 
-## 直觉模型
+## Интуитивная модель
 
-如果说`ci.yml`是安检口，`release.yml`就是发射台。当 release.js 在本地完成版本号更新、提交、打 tag 并推送后，tag 推送事件点燃了`release.yml`的引擎。它先跑一遍完整测试（再次确认），然后在受保护的`Release`环境中执行`pnpm release --publishOnly`，最后创建 GitHub Release。
+Если сказать,`ci.yml`— это пункт досмотра,`release.yml`— это стартовая площадка. Когда release.js локально завершает обновление номера версии, коммит, создание тега и пуш, событие пуша тега запускает двигатель`release.yml`. Сначала он прогоняет полный набор тестов (повторная проверка), затем в защищённом окружении`Release`выполняет`pnpm release --publishOnly`, и наконец создаёт GitHub Release.
 
-若没有它，release.js 推送的 tag 就只是一个 Git 引用，npm 上不会有新版本，GitHub 上不会有 Release 页面。
+Без него тег, отправленный release.js, остаётся лишь ссылкой Git — новой версии на npm не появится, страницы Release на GitHub не будет.
 
-## 触发条件：只认 tag
+## Условие срабатывания: распознаётся только тег
 
 [FACT:.github/workflows/release.yml:3-6]
 
@@ -136,9 +136,9 @@ on:
       - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 ```
 
-只监听`v*`格式的 tag 推送。这与`ci.yml`的`tags: ['!**']`形成互补——两者严格互斥，不会同时触发。
+Отслеживает только`v*`пуш тегов в формате . Это согласуется с`ci.yml`из`tags: ['!**']`образуют взаимодополняющую пару — они строго взаимоисключающие и не срабатывают одновременно.
 
-## 发布 job 的守卫条件
+## Условие-ограничитель для задания публикации
 
 [FACT:.github/workflows/release.yml:8-21]
 
@@ -157,18 +157,18 @@ jobs:
     environment: Release
 ```
 
-这里有三层守卫，每一层都不可省略。
+Здесь три уровня защиты, и ни один из них нельзя опустить.
 
-第一层`if: github.repository == 'vuejs/core'`：防止 fork 上误触发发布。如果有人 fork 了仓库并推送了一个`v1.0.0`tag，这个条件会阻止发布流程运行。
+Первый уровень`if: github.repository == 'vuejs/core'`: предотвращает ошибочный запуск публикации из форка. Если кто-то сделал форк репозитория и отправил`v1.0.0`тег, это условие не даст запуститься процессу публикации.
 
-第二层`needs: [test]`：release job 依赖 test job。test job 调用`test.yml`，如果测试失败，release job 根本不会启动。这是「发布前必须通过测试」的硬约束。
+Второй уровень`needs: [test]`: задание release зависит от задания test. Задание test вызывает`test.yml`, и если тесты не проходят, задание release вообще не запустится. Это жёсткое требование «перед публикацией обязательно пройти тесты».
 
 > **[Design Inference & Architectural Trade-offs]**
-> 第三层`environment: Release`：这是一个 GitHub Environment，可以配置部署保护规则（如需要特定人员审批）。 这意味着即使 tag 推送触发了 workflow，发布步骤也可能需要人工审批才能执行——这是对不可逆操作的最后一道防线。
+> Третий уровень`environment: Release`: это GitHub Environment, для которого можно настроить правила защиты развёртывания (например, требовать одобрения определённых лиц). Это означает, что даже если отправка тега запустила workflow, шаг публикации может потребовать ручного одобрения для выполнения — это последняя линия защиты для необратимой операции.
 
-权限方面，`contents: write`用于创建 GitHub Release，`id-token: write`用于 npm 的 provenance 认证（OIDC token）。注意这里没有`packages: write`，因为 Vue 发布到 npm 而非 GitHub Packages。
+Что касается разрешений,`contents: write`Используется для создания GitHub Release,`id-token: write`Используется для аутентификации provenance в npm (OIDC token). Обратите внимание, что здесь нет`packages: write`, поскольку Vue публикуется в npm, а не в GitHub Packages.
 
-## 发布步骤的完整链路
+## Полная цепочка шагов публикации
 
 [FACT:.github/workflows/release.yml:37-46]
 
@@ -186,11 +186,11 @@ jobs:
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 三个步骤各有讲究。`--frozen-lockfile`确保 CI 环境严格按 lockfile 安装，不会因为依赖版本漂移导致构建产物与本地不一致。`npm i -g npm@latest`是为了获取最新的 npm CLI—— 因为 provenance 和 OIDC 认证依赖较新版本的 npm，旧版本可能不支持这些特性。
+> Каждый из трёх шагов имеет свои особенности.`--frozen-lockfile`Обеспечивает строгую установку в CI-среде согласно lockfile, что предотвращает несоответствие артефактов сборки локальным из-за дрейфа версий зависимостей.`npm i -g npm@latest`Предназначен для получения последней версии npm CLI — поскольку provenance и OIDC-аутентификация зависят от более новых версий npm, старые версии могут не поддерживать эти возможности.
 
-`pnpm release --publishOnly`是上一章 release.js 的入口。`--publishOnly`标志告诉 release.js：跳过交互式版本号选择、跳过 Git 提交和打 tag（因为 tag 已经存在），只执行构建和 npm publish。
+`pnpm release --publishOnly`Является точкой входа release.js из предыдущей главы.`--publishOnly`Флаг сообщает release.js: пропустить интерактивный выбор номера версии, пропустить Git-коммит и создание тега (поскольку тег уже существует), выполнить только сборку и npm publish.
 
-## 创建 GitHub Release
+## Создание GitHub Release
 
 [FACT:.github/workflows/release.yml:48-57]
 
@@ -208,28 +208,28 @@ jobs:
 ```
 
 > **[Design Inference & Architectural Trade-offs]**
-> 这里用的是 Vue 作者尤雨溪自己维护的`release-tag` action。`tag_name: ${{ github.ref }}`直接使用触发事件的 ref（即`refs/tags/v3.x.x`). В теле Release не указывается конкретное содержимое изменений, вместо этого оно ссылается на CHANGELOG.md — потому что changelog Vue автоматически генерируется через conventional-changelog, и ручное поддержание тела Release привело бы к расхождениям с changelog.
+> Здесь используется`release-tag` action。`tag_name: ${{ github.ref }}`Напрямую использовать ref события-триггера (то есть`refs/tags/v3.x.x`). В теле Release не указывается конкретное содержимое изменений, вместо этого оно ссылается на CHANGELOG.md — потому что changelog Vue автоматически генерируется через conventional-changelog, и ручное поддержание тела Release привело бы к расхождениям с changelog.
 
 ## Временная диаграмма release.yml
 
 ```mermaid
 sequenceDiagram
-    participant Dev as "开发者本地"
+    participant Dev as "Локально у разработчика"
     participant GH as "GitHub"
     participant Test as "test.yml"
     participant Rel as "release job"
     participant NPM as "npm registry"
 
     Dev->>GH: "git push origin v3.x.x"
-    GH->>Test: "触发 test.yml"
-    Test-->>GH: "测试通过"
-    GH->>Rel: "needs: [test] 满足"
-    Rel->>Rel: "environment: Release 审批"
+    GH->>Test: "Запуск test.yml"
+    Test-->>GH: "Тесты пройдены"
+    GH->>Rel: "needs: [test] выполнено"
+    Rel->>Rel: "environment: Release — одобрение"
     Rel->>Rel: "pnpm install --frozen-lockfile"
     Rel->>Rel: "pnpm release --publishOnly"
     Rel->>NPM: "npm publish (OIDC provenance)"
-    NPM-->>Rel: "发布成功"
-    Rel->>GH: "release-tag 创建 Release"
+    NPM-->>Rel: "Публикация успешна"
+    Rel->>GH: "release-tag — создание Release"
 ```
 
 ---
@@ -379,17 +379,17 @@ concurrency:
 
 ```mermaid
 flowchart LR
-    subgraph "size-data.yml (上游)"
-        build_pr["构建 PR 分支"] --> measure["测量体积"]
-        measure --> artifact_pr["artifact: size-data\n(number.txt, base.txt, 体积数据)"]
+    subgraph "size-data.yml (вышестоящий)"
+        build_pr["Сборка ветки PR"] --> measure["Измерение размера"]
+        measure --> artifact_pr["artifact: size-data\n(number.txt, base.txt, данные о размере)"]
     end
 
-    subgraph "size-report.yml (下游)"
-        artifact_pr -->|"workflow_run 触发"| download["下载 size-data"]
-        download --> read_meta["读取 number.txt / base.txt"]
-        read_meta --> download_prev["下载 base 分支历史数据\n(if_no_artifact_found: warn)"]
+    subgraph "size-report.yml (нижестоящий)"
+        artifact_pr -->|"Триггер workflow_run"| download["Скачивание size-data"]
+        download --> read_meta["Чтение number.txt / base.txt"]
+        read_meta --> download_prev["Скачивание исторических данных ветки base\n(if_no_artifact_found: warn)"]
         download_prev --> gen_report["node scripts/size-report.js"]
-        gen_report --> comment["评论到 PR\n(标记: VUE_CORE_SIZE)"]
+        gen_report --> comment["Комментарий к PR\n(метка: VUE_CORE_SIZE)"]
     end
 ```
 
@@ -415,29 +415,29 @@ flowchart LR
 
 : шлюз PR + непрерывный предрелиз. Через условие
 
-- **`ci.yml`**различаются push/PR и fork/тот же репозиторий, с помощью`if`отменяются устаревшие запуски PR, с помощью`concurrency`публикуется устанавливаемый предрелизный пакет.`pkg-pr-new` 发布可安装的预发布包。
-- **`release.yml`**：正式发布由 tag 触发。三层守卫（仓库检查、needs test、environment 审批）确保只有通过测试且经审批的 tag 才能发布到 npm。
-- **`size-report.yml`**：跨 workflow 的体积回归报告。通过`workflow_run`事件监听上游`size data`完成，下载 artifact 并对比 base 分支数据，以评论形式反馈到 PR。
-- **`autofix.yml`**：格式自动修复。在 PR 上运行 eslint --fix 和 prettier，通过`autofix-ci/action`把修复直接提交回 PR 分支。
+- **`ci.yml`**различаются push/PR и fork/тот же репозиторий, с помощью`if`отменяются устаревшие запуски PR, с помощью`concurrency`публикуется устанавливаемый предрелизный пакет.`pkg-pr-new`Публикация устанавливаемого предрелизного пакета.
+- **`release.yml`**: Официальный релиз запускается по тегу. Трёхуровневая защита (проверка репозитория, needs test, одобрение environment) гарантирует, что только прошедший тесты и одобренный тег может быть опубликован в npm.
+- **`size-report.yml`**: Отчёт о регрессии размера между workflow. Через`workflow_run`событие прослушивается вышестоящий`size data`завершается, скачивается artifact и сравниваются данные с веткой base, результат возвращается в PR в виде комментария.
+- **`autofix.yml`**: Автоматическое исправление форматирования. Запускает eslint --fix и prettier на PR, через`autofix-ci/action`коммитит исправления напрямую обратно в ветку PR.
 
-这四个 workflow 共同构成了一道「不可绕过的流水线」：代码规范由 autofix 自动修复，类型和测试由 ci.yml 强制检查，体积回归由 size-report 追踪，发布由 release.yml 在多重守卫下执行。
+Эти четыре workflow вместе образуют «необходной конвейер»: стиль кода автоматически исправляется через autofix, типы и тесты принудительно проверяются через ci.yml, регрессия размера отслеживается через size-report, а публикация выполняется через release.yml под многоуровневой защитой.
 
-# 本章思考与自测
+# Вопросы для размышления и самопроверки в этой главе
 
-Q1: 如果将`ci.yml`中`cancel-in-progress`的值改为恒为`true`（即去掉`github.event_name == 'pull_request'`的条件），在什么场景下会导致问题？
+Q1: Если изменить`ci.yml`в`cancel-in-progress`значение на константу`true`(то есть удалить`github.event_name == 'pull_request'`условие), в каких сценариях это может вызвать проблемы?
 
-**参考解析**：`cancel-in-progress`恒为`true`意味着 push 到 main 分支时，新的 push 会取消正在运行的旧 CI。考虑这个场景：main 分支上连续合并了两个 PR，第一个 PR 的 CI 正在运行（包含完整的 lint/typecheck/test），第二个 PR 的合并触发了新的 CI 运行。如果`cancel-in-progress`为`true`，第一个 PR 的 CI 会被取消——但第一个 PR 的代码已经在 main 上了，它的 CI 结果对于判断 main 分支的健康状态至关重要。取消它意味着 main 分支上有一段代码从未被完整验证过。而[FACT:.github/workflows/ci.yml:22-22]的条件`github.event_name == 'pull_request'`正是为了避免这个问题：只有 PR 事件才取消旧运行，push 事件永远不取消。
+**Справочный анализ**：`cancel-in-progress`всегда`true`означает, что при push в ветку main новый push отменит текущий запущенный старый CI. Рассмотрим сценарий: в ветку main последовательно влиты два PR, CI первого PR выполняется (включая полный lint/typecheck/test), слияние второго PR запустило новый запуск CI. Если`cancel-in-progress`равно`true`, CI первого PR будет отменён — но код первого PR уже находится в main, и результат его CI критически важен для оценки состояния здоровья ветки main. Его отмена означает, что часть кода в ветке main никогда не была полностью проверена. А[FACT:.github/workflows/ci.yml:22-22]условие`github.event_name == 'pull_request'`как раз предназначено для предотвращения этой проблемы: только события PR отменяют старые запуски, события push никогда не отменяют.
 
-Q2: `release.yml`中`release`job 的`if: github.repository == 'vuejs/core'`和`environment: Release`分别防御什么场景？如果去掉其中一个会怎样？
+Q2: `release.yml`в`release`job`if: github.repository == 'vuejs/core'`и`environment: Release`соответственно защищают от каких сценариев? Что будет, если убрать одно из них?
 
-**参考解析**：`if: github.repository == 'vuejs/core'` [FACT:.github/workflows/release.yml:14]防御的是 fork 场景。如果有人 fork 了 vuejs/core 并推送一个`v3.99.0`tag，没有这个条件，workflow 会在 fork 仓库中运行`pnpm release --publishOnly`。虽然 fork 仓库没有 npm token 无法真正发布，但会浪费 runner 资源并可能产生误导性的失败通知。`environment: Release` [FACT:.github/workflows/release.yml:21]防御的是「tag 推送后自动发布」的风险——它允许配置人工审批，确保即使 tag 被推送，发布也需要维护者确认。如果去掉`if`条件，fork 会浪费资源；如果去掉`environment`，任何有 tag 推送权限的人都能触发发布，没有最后的人工确认环节。两者是不同层次的防御，不能互相替代。
+**Справочный анализ**：`if: github.repository == 'vuejs/core'` [FACT:.github/workflows/release.yml:14]защищает от сценария fork. Если кто-то форкнул vuejs/core и запушил`v3.99.0`тег, без этого условия workflow будет запускаться в форк-репозитории`pnpm release --publishOnly`. Хотя форк-репозиторий не имеет npm-токена и не может выполнить реальную публикацию, это будет расходовать ресурсы runner'а и может создавать вводящие в заблуждение уведомления о сбоях.`environment: Release` [FACT:.github/workflows/release.yml:21]Защищает от риска «автоматической публикации после отправки тега» — он позволяет настроить ручное подтверждение, гарантируя, что даже при отправке тега публикация требует подтверждения мейнтейнера. Если убрать`if`условие, форк будет расходовать ресурсы; если убрать`environment`, любой, у кого есть право на отправку тегов, сможет инициировать публикацию без финального этапа ручного подтверждения. Это два разных уровня защиты, которые не могут заменять друг друга.
 
-Q3: `size-report.yml`中`if_no_artifact_found: warn`的选择与`release.yml`中`needs: [test]`的选择，分别体现了怎样的失败方向设计哲学？如果互换这两个策略会发生什么？
+Q3: `size-report.yml`в`if_no_artifact_found: warn`и выбор`release.yml`в`needs: [test]`— какую философию проектирования направления отказа они соответственно отражают? Что произойдёт, если поменять эти две стратегии местами?
 
-**参考解析**：`if_no_artifact_found: warn` [FACT:.github/workflows/size-report.yml:69]选择「缺少历史数据时警告而非失败」，因为体积报告是辅助信息，不是阻断条件。如果改为`fail`，那么新分支或首次运行的 PR 会因为找不到 base 数据而失败，这显然不合理。`needs: [test]` [FACT:.github/workflows/release.yml:15]选择「测试失败即阻断发布」，因为发布是不可逆操作，必须确保代码质量。如果互换——size-report 在缺少数据时失败，release 在测试失败时仍然发布——前者会导致大量误报阻断正常 PR，后者会导致未经测试的代码进入 npm。这体现了「辅助信息宽松、不可逆操作严格」的失败方向设计原则。
+**Справочный разбор**：`if_no_artifact_found: warn` [FACT:.github/workflows/size-report.yml:69]Выбор «предупреждать, а не завершаться с ошибкой при отсутствии исторических данных» обусловлен тем, что отчёт о размере является вспомогательной информацией, а не блокирующим условием. Если изменить на`fail`, то новая ветка или PR при первом запуске потерпят неудачу из-за отсутствия базовых данных, что явно неразумно.`needs: [test]` [FACT:.github/workflows/release.yml:15]Выбор «блокировать публикацию при провале тестов» обусловлен тем, что публикация — необратимая операция, необходимо гарантировать качество кода. Если поменять местами — size-report будет завершаться с ошибкой при отсутствии данных, а release будет публиковать даже при провале тестов — первый приведёт к массовым ложным блокировкам нормальных PR, второй приведёт к попаданию непротестированного кода в npm. Это отражает принцип проектирования направления отказа: «вспомогательная информация — мягкая, необратимые операции — строгие».
 
 ---
 
-下一章将深入体积预算机制的核心：`scripts/size-report.js`如何解析体积数据、如何计算增量、如何格式化输出，以及`usage-size`的度量哲学——为什么 Vue 选择测量「实际使用体积」而非「完整包体积」。
+В следующей главе мы углубимся в ядро механизма бюджета размера:`scripts/size-report.js`как разбирать данные о размере, как вычислять приращение, как форматировать вывод, а также`usage-size`Философия измерений — почему Vue выбирает измерение «фактического используемого объёма», а не «полного объёма пакета».
 
-从 PR 门禁到 tag 发布，四个 workflow 文件共同构成了一条不可绕过的自动化守门链。但流水线能阻断合并，前提是它掌握可量化的判断依据。下一章将聚焦 Vue 对包体积这一核心指标的工程化治理：`scripts/size-report.js`如何计算各产物 gzip 后大小并与基线对比，`scripts/usage-size.js`如何模拟真实用户引入场景估算实际开销，以及 CI 如何在体积超标时阻断合并。
+От PR-гейта до публикации тега — четыре файла workflow вместе образуют непреодолимую автоматизированную цепочку контроля. Но конвейер может блокировать слияние только при наличии количественно измеримых критериев оценки. В следующей главе мы сосредоточимся на инженерном управлении ключевой метрикой размера пакета в Vue:`scripts/size-report.js`как вычисляется размер каждого артефакта после gzip и сравнивается с базовым уровнем,`scripts/usage-size.js`как моделируются реальные сценарии использования для оценки фактических затрат, и как CI блокирует слияние при превышении размера.

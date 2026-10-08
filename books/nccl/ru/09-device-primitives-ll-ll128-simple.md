@@ -1,3 +1,5 @@
+# Глава 9: Примитивы устройств: низкоуровневые протоколы LL, LL128 и Simple
+
 # Глава 9: Примитивы коммуникации на стороне устройства: реализация перемещения данных в трёх протоколах LL, LL128, Simple
 
 В предыдущей главе мы проследили, как на стороне хоста один AllReduce транслируется в __global__ kernel, и увидели, что точка входа на стороне устройства ncclKernelMain выполняет диспетчеризацию в соответствии с алгоритмом и протоколом. Но диспетчеризация — это лишь выбор инструмента; реальную производительность определяет то, как эти инструменты выполняют перемещение данных. В этой главе мы углубимся в три набора примитивов перемещения данных в src/device: LL, LL128 и Simple, разберём реализацию перемещения данных в каждом из них и поймём компромиссы между задержкой и пропускной способностью у разных протоколов.
@@ -17,7 +19,7 @@
 
 ```mermaid
 flowchart TD
-    algo["算法层 all_reduce.h调用 prims.recvReduceSend()"] --> dispatch{"Proto 模板参数?"}
+    algo["Уровень алгоритма all_reduce.hвызов prims.recvReduceSend()"] --> dispatch{"Шаблонный параметр Proto?"}
     dispatch -->|ProtoLL| ll["Primitives<..., ProtoLL, ...>prims_ll.h"]
     dispatch -->|ProtoLL128| ll128["Primitives<..., ProtoLL128, ...>prims_ll128.h"]
     dispatch -->|ProtoSimple| simple["Primitives<..., ProtoSimple<...>, ...>prims_simple.h"]
@@ -96,17 +98,17 @@ if ((sendStep[i] & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) {
 
 ```mermaid
 flowchart LR
-    subgraph LL["LL 协议"]
+    subgraph LL["Протокол LL"]
         ll_data["ncclLLFifoLine 16Bdata1(4B)+flag(4B)+data2(4B)+flag(4B)"]
-        ll_sync["flag 内嵌数据行轮询 flag 匹配"]
+        ll_sync["flag встроен в строку данныхопрос совпадения flag"]
     end
-    subgraph LL128["LL128 协议"]
-        ll128_data["128B line15×8B data + 1×8B flag"]
-        ll128_sync["flagThread 每8线程1个__any_sync 投票"]
+    subgraph LL128["Протокол LL128"]
+        ll128_data["строка 128B15×8B data + 1×8B flag"]
+        ll128_sync["flagThread по 1 на каждые 8 потоковголосование __any_sync"]
     end
-    subgraph Simple["Simple 协议"]
-        simple_data["FIFO 缓冲区connEltsFifo + step*connStepSize"]
-        simple_sync["step 指针 + fenceloadStepValue 轮询"]
+    subgraph Simple["Протокол Simple"]
+        simple_data["буфер FIFOconnEltsFifo + step*connStepSize"]
+        simple_sync["указатель step + fenceопрос loadStepValue"]
     end
     ll_data --> ll_sync
     ll128_data --> ll128_sync

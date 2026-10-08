@@ -1,4 +1,4 @@
-# Глава 12: Кооперативное планирование и бюджет: как механизм coop предотвращает голодание планировщика задачами
+# Глава 12: Кооперативное планирование и бюджет: как coop предотвращает голодание планировщика
 
 В предыдущей главе мы увидели, как tokio-stream и tokio-util повторно используют низкоуровневые Waker и механизм планирования для расширения базовых возможностей. Но сколько бы комбинаторов ни было создано, основное противоречие асинхронного рантайма остаётся: планировщик должен справедливо распределять процессорное время между задачами, а сами задачи не являются вытесняемыми — как только poll некоторого Future начинает выполняться, планировщик не может прервать его извне. Если задача в одном poll обрабатывает в цикле сто тысяч сообщений или в цикле многократно ожидает Future, который всегда готов, она монополизирует рабочий поток, и другие задачи на том же потоке никогда не получат возможности быть опрошенными. Это и есть классическая проблема «голодания планировщика задачами». Решение Tokio — не вытеснение, а кооперация: каждой задаче на один цикл планирования выделяется ограниченный бюджет, ресурсные операции расходуют бюджет, и после его исчерпания задача обязана добровольно уступить. В этой главе мы глубоко разберём реализацию этого механизма coop.
 
@@ -266,28 +266,28 @@ impl Drop for Reset {
 
 ```mermaid
 flowchart TD
-    start["Context::run 主循环"] --> next["core.next_task()"]
-    next --> has_task{"有本地任务?"}
-    has_task -->|是| run_task["run_task(task, core)"]
-    has_task -->|否| steal["core.steal_work()"]
-    steal --> stolen{"窃取到任务?"}
-    stolen -->|是| run_task
-    stolen -->|否| defer_check{"defer 队列非空?"}
-    defer_check -->|是| park_yield["park_yield: 驱动 IO/timer 后唤醒"]
-    defer_check -->|否| park["park: 阻塞等待"]
+    start["Context::run главный цикл"] --> next["core.next_task()"]
+    next --> has_task{"есть локальная задача?"}
+    has_task -->|да| run_task["run_task(task, core)"]
+    has_task -->|нет| steal["core.steal_work()"]
+    steal --> stolen{"удалось украсть задачу?"}
+    stolen -->|да| run_task
+    stolen -->|нет| defer_check{"очередь defer не пуста?"}
+    defer_check -->|да| park_yield["park_yield: пробудить после обработки IO/timer"]
+    defer_check -->|нет| park["park: блокирующее ожидание"]
     park_yield --> start
     park --> start
 
-    run_task --> budget["coop::budget 建立满额预算"]
-    budget --> poll["task.run() 轮询"]
-    poll --> lifo_check{"lifo_slot 有任务?"}
-    lifo_check -->|否| done["返回 ControlFlow::Continue"]
-    lifo_check -->|是| budget_rem{"coop::has_budget_remaining()?"}
-    budget_rem -->|否| push_back["push_back_or_overflow 推回队列"]
+    run_task --> budget["coop::budget создаёт полный бюджет"]
+    budget --> poll["task.run() опрос"]
+    poll --> lifo_check{"в lifo_slot есть задача?"}
+    lifo_check -->|нет| done["вернуть ControlFlow::Continue"]
+    lifo_check -->|да| budget_rem{"coop::has_budget_remaining()?"}
+    budget_rem -->|нет| push_back["push_back_or_overflow вернуть в очередь"]
     push_back --> done
-    budget_rem -->|是| lifo_limit{"lifo_polls >= 3?"}
-    lifo_limit -->|是| disable["core.lifo_enabled = false"]
-    lifo_limit -->|否| poll_lifo["task.run() 轮询 LIFO 任务"]
+    budget_rem -->|да| lifo_limit{"lifo_polls >= 3?"}
+    lifo_limit -->|да| disable["core.lifo_enabled = false"]
+    lifo_limit -->|нет| poll_lifo["task.run() опрос LIFO-задачи"]
     disable --> poll_lifo
     poll_lifo --> lifo_check
     done --> start
