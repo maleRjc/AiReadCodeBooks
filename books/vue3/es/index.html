@@ -6,6 +6,54 @@
   <title>《Panorama del código fuente y la ingeniería de Vue 3》| AiReadCodeBooks</title>
   <meta name="description" content="Antes de comenzar a rastrear cualquier línea de la implementación de reactividad o del DOM virtual, primero debemos entender la matriz de ingeniería de la que d">
   <meta name="keywords" content="vuejs/core, Panorama del código fuente y la ingeniería de Vue 3, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <meta property="og:title" content="Panorama del código fuente y la ingeniería de Vue 3">
+  <meta property="og:description" content="Antes de comenzar a rastrear cualquier línea de la implementación de reactividad o del DOM virtual, primero debemos entender la matriz de ingeniería de la que depende la existencia de este código. Al abrir el repositorio Vue core, lo primero que salta a la vista no es la lógica central del framework, sinopackage.jsonypnpm-workspace.yamleste tipo de archivos de configuración de ingeniería: no contienen ninguna funcionalidad en tiempo de ejecución, pero determinan si todo el framework puede compilarse, probarse y publicarse correctamente. Este capítulo responde precisamente a esta pregunta previa: qué es exactamente el repositorio core. No es@vue/runtime-coreese paquete npm, sino la matriz de ingeniería que albergaruntime-core、reactivity、compiler-sfcy más de una decena de paquetes publicados públicamente, además desfc-playground、template-explorery otros paquetes experimentales privados. Comprender la forma de organización de esta matriz es el requisito previo para todos los capítulos posteriores (compilación, tipos, publicación, presupuesto de tamaño). Este capítulo se desarrollará en torno a tres líneas principales: la estructura de doble directorio del workspace, las restricciones unificadas de TypeScript y Rollup a nivel raíz, y la filosofía de desacoplamiento entre el «repositorio de código fuente» y los «artefactos de publicación».">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Panorama del código fuente y la ingeniería de Vue 3">
+  <meta name="twitter:description" content="Antes de comenzar a rastrear cualquier línea de la implementación de reactividad o del DOM virtual, primero debemos entender la matriz de ingeniería de la que depende la existencia de este código. Al abrir el repositorio Vue core, lo primero que salta a la vista no es la lógica central del framework, sinopackage.jsonypnpm-workspace.yamleste tipo de archivos de configuración de ingeniería: no contienen ninguna funcionalidad en tiempo de ejecución, pero determinan si todo el framework puede compilarse, probarse y publicarse correctamente. Este capítulo responde precisamente a esta pregunta previa: qué es exactamente el repositorio core. No es@vue/runtime-coreese paquete npm, sino la matriz de ingeniería que albergaruntime-core、reactivity、compiler-sfcy más de una decena de paquetes publicados públicamente, además desfc-playground、template-explorery otros paquetes experimentales privados. Comprender la forma de organización de esta matriz es el requisito previo para todos los capítulos posteriores (compilación, tipos, publicación, presupuesto de tamaño). Este capítulo se desarrollará en torno a tres líneas principales: la estructura de doble directorio del workspace, las restricciones unificadas de TypeScript y Rollup a nivel raíz, y la filosofía de desacoplamiento entre el «repositorio de código fuente» y los «artefactos de publicación».">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Panorama del código fuente y la ingeniería de Vue 3",
+  "description": "Antes de comenzar a rastrear cualquier línea de la implementación de reactividad o del DOM virtual, primero debemos entender la matriz de ingeniería de la que depende la existencia de este código. Al abrir el repositorio Vue core, lo primero que salta a la vista no es la lógica central del framework, sinopackage.jsonypnpm-workspace.yamleste tipo de archivos de configuración de ingeniería: no contienen ninguna funcionalidad en tiempo de ejecución, pero determinan si todo el framework puede compilarse, probarse y publicarse correctamente. Este capítulo responde precisamente a esta pregunta previa: qué es exactamente el repositorio core. No es@vue/runtime-coreese paquete npm, sino la matriz de ingeniería que albergaruntime-core、reactivity、compiler-sfcy más de una decena de paquetes publicados públicamente, además desfc-playground、template-explorery otros paquetes experimentales privados. Comprender la forma de organización de esta matriz es el requisito previo para todos los capítulos posteriores (compilación, tipos, publicación, presupuesto de tamaño). Este capítulo se desarrollará en torno a tres líneas principales: la estructura de doble directorio del workspace, las restricciones unificadas de TypeScript y Rollup a nivel raíz, y la filosofía de desacoplamiento entre el «repositorio de código fuente» y los «artefactos de publicación».",
+  "inLanguage": "es",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vue3"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vue3_es" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ Analiza tu código gratis →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -489,6 +540,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>La compilación para navegador (<code>isGlobalBuild || isBrowserESMBuild</code>) al<code>!packageOptions.enableNonBrowserBranches</code>solo devuelve<code>treeShakenDeps</code>（<code>source-map-js</code>、<code>@babel/parser</code>、<code>estree-walker</code>、<code>entities/decode</code>). Esto significa que<code>foo-lib</code>no está en la lista de external,</p>
 <p>Hasta aquí, hemos visto desde un nivel macro la filosofía de diseño integral del repositorio core como matriz de ingeniería: la estructura de workspace de doble directorio delimita la frontera entre paquetes públicos y paquetes experimentales privados, la configuración raíz de TypeScript y Rollup proporciona restricciones unificadas, y el desacoplamiento entre el repositorio de código fuente y los artefactos de publicación hace posible la salida en múltiples formatos. Estos conocimientos allanan el camino para profundizar en las cadenas de ingeniería concretas. En el próximo capítulo, pasaremos la mirada de la estructura estática al flujo dinámico, tomando<code>node scripts/build.js vue</code>como punto de partida, para trazar el viaje de extremo a extremo de una solicitud de compilación completa desde el análisis de argumentos de línea de comandos, la localización del paquete objetivo, la generación de la configuración de Rollup hasta la escritura de artefactos en disco, viendo cómo build.js analiza los flags formats/devOnly/release mediante parseArgs, cómo hace require dinámico del package.json del paquete objetivo y lee buildOptions, y finalmente impulsa a rollup.config.js a producir artefactos en múltiples formatos como esm-bundler, cjs, global, etc.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -669,6 +735,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>filtrará las advertencias de dependencias no circulares).<code>scripts/dev.js</code>Hasta aquí, hemos recorrido completamente el viaje de compilación desde el análisis de comandos hasta la invocación de Rollup, revelando mecanismos centrales como la programación concurrente y el filtrado de paquetes privados. Sin embargo, la compilación de producción es solo la mitad de la historia. En el próximo capítulo, nos dirigiremos a la cadena en modo desarrollo, para ver</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← Ant: Capítulo 1</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -843,6 +924,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>Los límites de la colaboración entre los tres son muy claros:<code>pre-dev-sfc</code>gestiona «si los artefactos están listos»,<code>dev.js</code>gestiona «cómo actualizar rápidamente los artefactos»,<code>aliases</code>gestiona «cómo los tests resuelven el código fuente». La cadena en modo desarrollo resuelve el problema de la velocidad, pero en la fase de compilación hay otro tipo de optimización más sutil — aquellas transformaciones que se completan antes de que el código sea ejecutado por el navegador. El siguiente capítulo entra en la magia de la fase de compilación, para ver cómo el inline de enums y el mecanismo de verificación de Tree-shaking reemplazan los TypeScript enum por literales durante la compilación, y garantizan que la promesa de importación bajo demanda no se rompa.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← Ant: Capítulo 2</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -978,6 +1074,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>), o prohibir a nivel de código fuente mediante reglas de lint el import en tiempo de ejecución de helpers del compilador, en lugar de depender de cadenas del artefacto. Pero bajo las restricciones de costo actuales, los centinelas de cadena son un compromiso «suficiente y barato».<code>.d.ts</code>La inclusión de enums resolvió «cómo eliminar la sobrecarga en tiempo de ejecución durante la compilación», y el script de verificación resolvió «cómo confirmar que la optimización no se ha roto». Pero los artefactos de compilación, además de JS, incluyen otro tipo de producto que también requiere procesamiento en el pipeline: los archivos de declaración de tipos. El siguiente capítulo entrará en el pipeline de artefactos de tipos, para ver cómo Vue genera un paquete de tipos de nivel de publicación a partir del código fuente<code>dts-test</code>y cómo</p>
 <p>usa pruebas de contrato de tipos para proteger la forma de tipos de la API pública.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← Ant: Capítulo 3</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -1231,6 +1342,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>.<code>dts-built-test</code>El proceso de mapeo de<code>dts-test</code>, veamos cómo Vue utiliza pruebas de contrato de tipos para proteger la superficie de su API pública.</p>
 <p>Los tres forman un ciclo cerrado de «generación → conformación → verificación», garantizando que los tipos del código fuente y los tipos publicados sean estrictamente consistentes. Sin embargo, que el paquete de tipos en sí sea correcto no equivale a que la forma de los tipos de la API pública esté bloqueada. En el próximo capítulo profundizaremos en<code>packages-private/dts-test</code>, para ver cómo más de 20 archivos<code>.test-d.ts</code>utilizan<code>expectType</code>y otras herramientas para convertir «los tipos como contrato de API» en pruebas automatizadas regresivas.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← Ant: Capítulo 4</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -1406,6 +1532,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>, todos forman parte del «ABI de tipos».</p>
 <p>Las pruebas de contrato de tipos resuelven «si la superficie de la API cumple con lo esperado». Pero los tipos son solo la mitad de la ingeniería de Vue — la otra mitad es «cómo el usuario verifica en tiempo real el comportamiento de estas APIs en el navegador». El siguiente capítulo entrará en SFC Playground, para ver cómo Vue empaqueta el compilador, el runtime y el sistema de tipos en un entorno de depuración en tiempo real dentro del navegador, permitiendo al usuario ver el producto compilado y el resultado en ejecución en el instante en que modifica el código.<code>IsAny</code>/<code>IsUnion</code>Las pruebas de contrato no solo protegen «si los tipos son correctos», sino también «si los tipos son precisos» (<code>DefineComponent</code>), «si el orden de los parámetros genéricos es estable» (<code>__typeEl</code>13 parámetros), «independencia del renderizador» (<code>Element</code>no se restringe a<code>vue-tsc</code>). Una vez que estas restricciones se rompen, las sugerencias del IDE del lado del usuario,<code>packages-private/sfc-playground</code>los tipos generados derivarán. Y la estabilidad del contrato de tipos, en última instancia, debe servir a la experiencia de depuración diaria del desarrollador — el siguiente capítulo entraremos en</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← Ant: Capítulo 5</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -1671,6 +1812,21 @@ function resetVueVersion() {
 <p>El siguiente capítulo entrará en<code>packages-private/template-explorer</code>, para ver cómo Vue visualiza los productos intermedios del compilador (AST, resultados de transformación, generación de código), permitiendo a los desarrolladores observar paso a paso cada transformación desde la plantilla hasta la función de renderizado. A diferencia de la «caja negra de extremo a extremo» de Playground, Template Explorer es una «sonda de caja blanca».</p>
 <p>Hasta aquí, hemos visto claramente cómo SFC Playground traslada el pipeline de compilación al navegador: la inicialización de la entrada, el cambio de estado del Header y la inyección de constantes de tiempo de compilación constituyen conjuntamente un sandbox depurable en tiempo real. Pero la perspectiva de Playground siempre es «la compilación y ejecución del SFC completo», no responde directamente a «qué transformación hace exactamente el compilador sobre una expresión de plantilla». El siguiente capítulo entrará en Template Explorer, para ver cómo despliega línea por línea los resultados de compilación de<code>@vue/compiler-dom</code>y<code>@vue/compiler-ssr</code>, usando SourceMapConsumer para establecer el mapeo entre código fuente y artefactos, convirtiendo así el comportamiento interno del compilador en una sonda observable y rastreable.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← Ant: Capítulo 6</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -1850,6 +2006,21 @@ function resetVueVersion() {
 <p>El siguiente capítulo entrará en<code>scripts/release.js</code>, para ver cómo Vue orquesta con una máquina de estados interactiva todo el flujo de actualización de número de versión, build, test, commit de Git, creación de tag y npm publish. A diferencia de la "observación" de Template Explorer, release.js es "ejecución": necesita mantener estado entre múltiples pasos, manejar rollback ante fallos y equilibrar la confirmación interactiva con la automatización.</p>
 <p>A través de Template Explorer, hemos aprendido cómo convertir el estado interno del compilador —AST, artefactos de compilación, SourceMap— en sondas visuales interactivas, transformando "por qué el compilador genera esto" de conjetura en observación. Este control y orquestación precisos del estado interno también se reflejan en el flujo de publicación de Vue: el siguiente capítulo profundizará en scripts/release.js, para ver cómo una máquina de estados de más de 500 líneas usa parseArgs para analizar más de diez flags, confirma interactivamente el número de versión mediante enquirer y dispara en orden build, test, commit de Git, creación de tag y npm publish, revelando el flujo de estados completo y la estrategia de rollback ante fallos detrás de una publicación formal.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← Ant: Capítulo 7</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -2088,6 +2259,21 @@ if (process.env.CI &amp;&amp; !args.registry)
 <p>El siguiente capítulo entrará en<code>.github/workflows/</code>, para ver cómo GitHub Actions toma el relevo de la construcción y publicación posteriores después de que release.js empuje el tag, así como la implementación completa de las puertas de CI.</p>
 <p>Hasta aquí, hemos visto claramente cómo release.js minimiza el riesgo de publicación irreversible mediante una máquina de estados y orquestación interactiva. Pero el script de publicación en sí es solo el ejecutor; quien realmente decide cuándo activar y bajo qué condiciones permitir el paso es el guardián de automatización de nivel superior. El siguiente capítulo analizará el sistema CI/CD bajo el directorio .github/workflows: cómo ci.yml ejecuta la triple puerta de lint/typecheck/test en la fase de PR, cómo release.yml activa la publicación al empujar un tag, cómo size-report.yml y size-data.yml rastrean regresiones de tamaño de paquete, y cómo autofix.yml corrige automáticamente problemas de formato. Entenderás cómo Vue utiliza GitHub Actions para solidificar las normas de ingeniería en un pipeline que no se puede eludir.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← Ant: Capítulo 8</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -2396,6 +2582,21 @@ concurrency:
 <p>elige «bloquear la publicación si fallan las pruebas», porque la publicación es una operación irreversible y debe garantizar la calidad del código. Si se intercambiaran —size-report fallando cuando faltan datos, release publicando aunque fallen las pruebas—, lo primero causaría una gran cantidad de falsos positivos que bloquearían PR normales, y lo segundo haría que código no probado llegara a npm. Esto refleja el principio de diseño de dirección de fallo de «flexible con la información auxiliar, estricto con las operaciones irreversibles».<code>scripts/size-report.js</code>El próximo capítulo profundizará en el núcleo del mecanismo de presupuesto de tamaño:<code>usage-size</code>cómo se analizan los datos de tamaño, cómo se calcula el incremento, cómo se formatea la salida, y la filosofía de medición de</p>
 <p>—por qué Vue elige medir el «tamaño de uso real» en lugar del «tamaño completo del paquete».<code>scripts/size-report.js</code>Desde la puerta de acceso del PR hasta la publicación por tag, los cuatro archivos de workflow juntos constituyen una cadena de guardianes automatizados que no se puede eludir. Pero la pipeline puede bloquear fusiones solo si dispone de criterios de juicio cuantificables. El próximo capítulo se centrará en la gobernanza ingenieril de Vue sobre el tamaño del paquete como métrica central:<code>scripts/usage-size.js</code>cómo calcular el tamaño gzip de cada artefacto y compararlo con la línea base,</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← Ant: Capítulo 9</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -2574,6 +2775,21 @@ concurrency:
 <p>El mecanismo de presupuesto de tamaño resuelve los problemas de «qué medir» y «cómo comparar», pero depende de una premisa: que el artefacto de compilación en sí sea reproducible. El siguiente capítulo entrará en el sandbox de depuración mínimo:<code>vite-debug</code>cómo iniciar un entorno de desarrollo Vue interactivo con la mínima configuración, y cómo se vincula con los artefactos de compilación locales, formando un ciclo cerrado desde la modificación del código fuente hasta la verificación en tiempo de ejecución.</p>
 <p>Hasta aquí, el ciclo de medición del presupuesto de tamaño ya está claro: size-report.js responde con la comparación de directorios a «cuánto ha crecido», usage-size.js simula escenarios reales de importación con módulos virtuales para responder a «dónde ha crecido», y la determinación del umbral se deja a la capa de flujo de trabajo. Este mecanismo convierte la regresión de tamaño de una queja vaga en datos trazables. Pero los datos solo te dicen que el problema existe; para localizarlo y corregirlo realmente, se necesita un entorno mínimo que pueda reproducir el problema rápidamente. El siguiente capítulo entrará en packages-private/vite-debug para ver cómo Vue construye un sandbox de depuración minimalista con Vite + SFC, convirtiendo «hacer una reproducción mínima sobre el código fuente real» en una práctica diaria operable.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← Ant: Capítulo 10</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -2779,6 +2995,21 @@ export default defineConfig({
 <p>El presupuesto de tamaño te dice «el problema existe»,<code>vite-debug</code>te permite «reproducir el problema con tus propias manos». Pero cuando intentas extender este modo sandbox a todo el monorepo, te encuentras con una serie de condiciones límite: diferencias de resolución del protocolo workspace en entornos CI,<code>catalog:</code>el dilema de actualización con versiones bloqueadas,<code>packages-private</code>y las restricciones de dirección de dependencias entre<code>packages</code>y</p>
 <p>... El siguiente capítulo entrará en el análisis de compromisos arquitectónicos y la guía para evitar trampas, y sistematizará las condiciones límite que la ingeniería de monorepos expone en proyectos reales.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← Ant: Capítulo 11</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -2899,6 +3130,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>Contrato de doble directorio, determinación de pertenencia de scripts de compilación, filtrado secundario de scripts de publicación: estos mecanismos delimitan conjuntamente la frontera de seguridad de la ingenierización del monorepo. Pero la frontera no es inmutable: a medida que las herramientas de compilación migran de Rollup a Rolldown y las pruebas de tipos y las pruebas en tiempo de ejecución convergen, las estrategias de equilibrio actuales también enfrentarán nuevos desafíos. En el próximo capítulo, basándonos en la trayectoria de cambios de 3.0 a 3.4, proyectaremos la dirección de evolución del sistema de ingenierización de próxima generación.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← Ant: Capítulo 12</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -3136,6 +3382,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>A través de la ventana de observación del changelog, identificamos los puntos de tensión del sistema de ingeniería actual, y a partir de ello inferimos las posibles direcciones de evolución de la próxima generación del sistema. Estas direcciones no son castillos en el aire, sino que crecen a partir de verdaderos tropiezos y compensaciones en producción. Hasta aquí, el análisis del sistema de ingeniería de Vue en este libro llega a una pausa, pero la exploración de la ingeniería nunca termina — el próximo capítulo será el último, alejando la perspectiva de Vue mismo para explorar cómo estas experiencias se pueden transferir a escenarios de ingeniería más amplios.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Convierte cualquier código en un libro comprensible</span>
+            <h3 class="cta-title">¿Disfrutaste este capítulo? Convierte tu código privado en un libro</h3>
+            <p class="cta-desc">Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_es&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analiza tu código gratis (Capítulo 1 gratis) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← Ant: Capítulo 13</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Volver arriba ↑</a>
@@ -3187,7 +3448,10 @@ const skipGit = args.skipGit</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit permanentemente inmutable</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vue3_es" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ Lee tu repositorio con AiReadCode →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        </div>
       </div>
     </aside>
   </div>

@@ -6,6 +6,54 @@
   <title>《Разбор исходного кода NCCL: GPU-путешествие одного AllReduce》| AiReadCodeBooks</title>
   <meta name="description" content="Прежде чем углубляться в любой код ядра, мы сначала запустим NCCL и понаблюдаем за его внешним поведением. В этой главе мы не читаем ядро, а делаем только одно:">
   <meta name="keywords" content="NVIDIA/nccl, Разбор исходного кода NCCL: GPU-путешествие одного AllReduce, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <meta property="og:title" content="Разбор исходного кода NCCL: GPU-путешествие одного AllReduce">
+  <meta property="og:description" content="Прежде чем углубляться в любой код ядра, мы сначала запустим NCCL и понаблюдаем за его внешним поведением. В этой главе мы не читаем ядро, а делаем только одно: создаём проверяемую систему отсчёта — любой последующий анализ внутренних механизмов в конечном итоге должен объяснять внешнее поведение, наблюдаемое здесь.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Разбор исходного кода NCCL: GPU-путешествие одного AllReduce">
+  <meta name="twitter:description" content="Прежде чем углубляться в любой код ядра, мы сначала запустим NCCL и понаблюдаем за его внешним поведением. В этой главе мы не читаем ядро, а делаем только одно: создаём проверяемую систему отсчёта — любой последующий анализ внутренних механизмов в конечном итоге должен объяснять внешнее поведение, наблюдаемое здесь.">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Разбор исходного кода NCCL: GPU-путешествие одного AllReduce",
+  "description": "Прежде чем углубляться в любой код ядра, мы сначала запустим NCCL и понаблюдаем за его внешним поведением. В этой главе мы не читаем ядро, а делаем только одно: создаём проверяемую систему отсчёта — любой последующий анализ внутренних механизмов в конечном итоге должен объяснять внешнее поведение, наблюдаемое здесь.",
+  "inLanguage": "ru",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "nccl"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_nccl_ru" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ Анализ вашего кода бесплатно →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -469,6 +520,21 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
 </details>
 <p>для подтверждения состояния, а затем Destroy.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1097,6 +1163,21 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>В следующей главе мы углубимся во внутреннюю реализацию<code>ncclCommInitRank</code>, чтобы увидеть, как NCCL, начиная с пустой структуры<code>ncclComm</code>, постепенно строит топологический граф, инициализирует каналы, устанавливает транспортные соединения и в конечном итоге создаёт работоспособный коммуникационный домен. Ментальная модель набора из пяти компонентов, построенная в этой главе, будет шаг за шагом реализована в следующей главе.</p>
 <p>Эти пять абстракций не существуют изолированно: коммуникационный домен — это контейнер, канал — единица параллельного выполнения, алгоритм определяет, как данные редуцируются, протокол определяет, как данные кодируются, транспортный уровень отвечает за то, как данные перемещаются. Их комбинация — 5 измерений, каждое с 3-4 вариантами — составляет пространство поиска для настройки производительности NCCL. Итак, как именно этот объект коммуникационного домена строится с нуля? В следующей главе мы углубимся в цепочку вызовов ncclCommInitRank, чтобы увидеть, как NCCL на этапе инициализации выполняет обнаружение устройств, обнаружение топологии и распределение каналов, и раскроем время присваивания таких ключевых полей, как comm-&gt;rank, comm-&gt;nRanks, comm-&gt;channels.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← Пред: Глава 1</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1491,6 +1572,21 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>В следующей главе мы углубимся в обнаружение топологии и поиск по графу, чтобы увидеть, как NCCL перечисляет GPU, сетевые карты, PCI-коммутаторы в машине, строит полный граф топологии и ищет на этом графе оптимальные структуры ring и tree. Установленные в этой главе bootstrap-коммуникация, каркас памяти commAlloc, основной поток initTransportsRank будут поочерёдно раскрыты в следующей главе с деталями топологии.</p>
 <p>На этом мы полностью прошли цепочку вызовов ncclCommInitRank и увидели весь процесс построения объекта ncclComm с нуля. Но в процессе инициализации есть один ключевой этап, который мы лишь бегло пропустили: как NCCL обнаруживает GPU и сетевые карты внутри машины и на основе этого решает, по какому пути должны идти данные? Именно этому посвящена следующая глава — обнаружение топологии и поиск по графу. Мы разберём, как src/graph/topo.cc перечисляет устройства PCI/NVLink/сетевые карты и строит граф топологии, как src/graph/search.cc ищет на этом графе оптимальный путь, а также как src/graph/rings.cc и trees.cc конкретизируют результаты поиска в топологии алгоритмов Ring и Tree. Поняв этот механизм, вы сможете осознать, почему NCCL способен автоматически выбирать подходящий алгоритм на разных машинах.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← Пред: Глава 2</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2044,6 +2140,21 @@ rank 7 -&gt; rank 0</code></pre></div>
 <p>下一章我们将深入 tuning 模块，看 NCCL 如何根据拓扑搜索结果和消息大小，在 Ring、Tree、CollNet 等算法之间做出最终选择。本章建立的拓扑图、路径搜索结果和算法模板，将成为 tuning 模块的输入。</p>
 <p>通过 topo.cc 的图构建、search.cc 的路径搜索以及 rings.cc 和 trees.cc 的拓扑生成，NCCL 实现了用通用图结构描述任意拓扑、用可配置搜索算法找到最优解、用简单模板生成最终算法的设计哲学。这套机制让 NCCL 能在从 2 卡工作站到 10000 卡集群的各种机器上自动选到合适的算法。然而，拓扑图只是提供了算法的候选路径，具体到一次通信该走哪条路、用哪种协议，还需要更精细的决策。下一章我们将聚焦 src/tuning 目录，看看 tuning 模块如何结合代价模型与算法估计，在 Ring/Tree/NVLS/PAT 以及 LL/LL128/Simple 之间做出最终选择。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← Пред: Глава 3</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2611,6 +2722,21 @@ not_valid:
 <p><span class="fact-pill" data-file="src/tuning/tuning.cc" data-lines="258-263" onclick="window.highlightFact('src/tuning/tuning.cc', '258-263')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/tuning.cc:258-263</code></span></p>
 <p>На этом цепочка решений модуля tuning уже ясна: он получает граф топологии и параметры коммуникации, через модель стоимости и оценку алгоритмов за микросекунды выдаёт оптимальную комбинацию (алгоритм, протокол, channel, warp). Но выбор — это только начало — как этот результат решения используется ниже по потоку? В следующей главе мы войдём в основную часть src/enqueue/enqueue.cc и посмотрим, как вызов ncclAllReduce проходит проверку параметров, определение алгоритма/протокола, разбиение на channel и в итоге порождает структуры ncclInfo и ncclTaskColl. Это ключевая глава книги, где происходит переключение с «точки зрения пользователя» на «точку зрения движка»; вы выясните, во что на стороне host транслируется один вызов коллективной коммуникации и какова граница между ним и последующим запуском kernel.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← Пред: Глава 4</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2918,6 +3044,21 @@ exit:
 </details>
 <p>Итак, мы увидели, как ncclAllReduce превращается из пользовательского вызова в цепочку исполняемых задач ядра: проверка параметров, определение алгоритма/протокола, разбиение на каналы, и в итоге генерация ncclInfo и ncclTaskColl. Но создание задач — лишь первый шаг: их ещё нужно распределить по нескольким каналам, сгенерировать параметры запуска ядра и обработать пакетную отправку и упорядочивание зависимостей в семантике группы. В следующей главе мы углубимся в src/enqueue/task_sched и src/enqueue/task_prep, чтобы ответить на вопрос «почему один AllReduce запускает несколько ядер, как гарантируется их порядок и зависимости», а также раскроем, как ncclGroupStart/ncclGroupEnd в src/group.cc объединяют несколько вызовов API в одну отправку.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← Пред: Глава 5</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -3622,6 +3763,21 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
 <p><strong>Справочный разбор</strong>：<code>ncclMemoryStackPush</code>для comm в group</p>
 <p>На этом описание задачи превратилось в исполняемый план запуска: семантика group объединяет несколько вызовов API в одну отправку, разбиение по channel распределяет задачи по нескольким потокам выполнения, а планирование раундов doLaunches обеспечивает порядок и зависимости между kernel. Но план — это всего лишь план. Как описание задачи на стороне host превращается в grid на GPU? В следующей главе мы углубимся в ncclLaunchKernel, рассмотрим подготовку параметров, выбор варианта kernel и вызов cudaLaunchKernel, завершив последний прыжок с host на device.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← Пред: Глава 6</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -4235,6 +4391,21 @@ for kfn in kfns:
 <p><span class="fact-pill" data-file="src/device/generate.py" data-lines="130-154" onclick="window.highlightFact('src/device/generate.py', '130-154')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/generate.py:130-154</code></span></p>
 <p>На этом этапе kernel уже запущен на GPU, и сторона устройства также получила описание работы. Но реально производительность определяет то, как данные перемещаются внутри устройства. В следующей главе мы углубимся в три протокольных примитива в src/device: LL, LL128 и Simple, и посмотрим, почему для одной и той же логики AllReduce нужны три набора примитивов перемещения данных, а также в чём их различия в способах синхронизации, layout буферов и семантике flag.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← Пред: Глава 7</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -4465,6 +4636,21 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
 </details>
 <p>Итак, мы уже освоили механизмы перемещения данных трёх примитивов — LL, LL128 и Simple; они предоставляют алгоритмам верхнего уровня гибкие средства настройки производительности. В следующей главе мы углубимся в ядра алгоритмов коллективных коммуникаций и посмотрим, как AllReduce, AllGather, ReduceScatter и другие вызывают эти примитивы, а также как алгоритмы Ring, Tree, CollNet и другие организуют потоки данных, в конечном итоге выполняя сквозную коллективную коммуникацию.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← Пред: Глава 8</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -4780,6 +4966,21 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
 <p>На этом мы завершили рассмотрение того, как алгоритмические ядра на стороне устройства организуют поток данных. Каждый алгоритм через<code>Primitives</code>вызывает примитивы из предыдущей главы; алгоритмический уровень заботится только о том, «кто кому отправляет, какой chunk, reduce или copy». В следующей главе мы углубимся в абстракцию транспортного уровня и посмотрим, как P2P, SHM, NET, NVLS унифицируются в единый интерфейс, а также как proxy-потоки на стороне host взаимодействуют с kernel'ами на стороне устройства для выполнения межмашинной коммуникации.</p>
 <p>Ключевая закономерность: все алгоритмы вызывают примитивы через шаблонный класс Primitives; алгоритм отвечает только за «топологию потока данных», примитивы отвечают за «перемещение данных». Такая слоистость позволяет новым алгоритмам реализовывать только логику топологии, не заботясь о низкоуровневой синхронизации. Но как бы ни менялась топология, данные в конечном итоге должны передаваться по физическим каналам. В следующей главе мы углубимся в каталог src/transport и посмотрим, как NCCL с помощью единого интерфейса transport скрывает различия между P2P, SHM, NET, NVLS, а также семантику setup/connect/send/recv каждого transport. Это основа для понимания межмашинной коммуникации.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← Пред: Глава 9</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -5472,6 +5673,21 @@ struct connectMap {
 <p><strong>Руководство по избеганию проблем в продакшене</strong>Ловушка: MNNVL не поддерживает регистрацию буфера NVLS.<code>ncclNvlsSetup</code>：</p>
 <p>Смотрите</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← Пред: Глава 10</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -5935,6 +6151,21 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
 </details>
 <p>Итак, мы поняли, как proxy-поток отделяет сетевой I/O от выполнения kernel, позволяя вычислениям на GPU и коммуникации действительно работать параллельно. Но proxy — лишь драйвер, конкретная реализация низкоуровневой сетевой передачи всё ещё не раскрыта. В следующей главе мы углубимся в<code>net_ib</code>, чтобы увидеть, как NCCL инкапсулирует verbs API для реализации передачи InfiniBand, и как GPUDirect RDMA позволяет сетевой карте напрямую читать и записывать память GPU.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← Пред: Глава 11</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -6532,6 +6763,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p>Если заменить на наивную двойную проверку с блокировкой, проблема в<strong>переупорядочивании памяти</strong>。<code>buildIbvSymbols</code>заполнит<code>ibvSymbols</code>различные поля, затем запишет<code>initResult</code>. Без барьера памяти CPU или компилятор может переупорядочить<code>initResult = ncclSuccess</code>до `</p>
 <p>Итак, мы увидели, как NCCL через net_ib инкапсулирует libibverbs в подключаемый транспортный уровень и использует GPUDirect RDMA для прямого доступа сетевого адаптера к памяти GPU. Этот механизм решает проблемы задержки и пропускной способности при межмашинной коммуникации. Но внутримашинная коммуникация не менее важна — в следующей главе мы перейдём к симметричной памяти и NVLS, чтобы увидеть, как NCCL использует многоадресную рассылку NVLink для аппаратно-ускоренной коллективной коммуникации. Тогда вы обнаружите, что механизм RDMA из этой главы и NVLS дополняют друг друга: первый отвечает за межмашинную связь, второй — за внутримашинную.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← Пред: Глава 12</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -7110,6 +7356,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <details class="reader-details"><summary class="reader-summary">Вопросы для размышления и самопроверки в этой главе<code>ncclMcPartitionBindMem</code>Q1: Если убрать проверку границ<code>if (offsetInPartition + bindSize &gt; partition-&gt;size)</code>в</summary>
 <p><strong>, в каких сценариях возникнет выход за границы памяти? Почему эту проверку нельзя заменить утверждением «гранулярность UC и MC одинакова»?</strong>Справочный разбор<span class="fact-pill" data-file="src/transport/multicast.cc" data-lines="200-208" onclick="window.highlightFact('src/transport/multicast.cc', '200-208')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/multicast.cc:200-208</code></span>：</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← Пред: Глава 13</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -7368,6 +7629,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 </details>
 <p>От семантики put/get в RMA до инициируемой GPU сетевой коммуникации в GIN — мы прошли ключевой этап эволюции NCCL в сторону универсального движка удалённого доступа к памяти. Но как бы изящен ни был механизм, в конечном итоге он должен взаимодействовать с внешними сетевыми бэкендами, стратегиями тюнинга и сборщиками производительности через систему плагинов. Следующая глава погрузит нас в мир плагинов и покажет, как NCCL без изменения ядра динамически загружает расширения net, tuner, profiler, env и на примере google-fastsocket и google-CoMMA раскрывает ключевые моменты реализации расширяемости экосистемы.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=15" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-14" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-14">← Пред: Глава 14</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -7606,6 +7882,21 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <p>Система плагинов превратила NCCL из закрытой в открытую: сетевые бэкенды, стратегии тюнинга, сборщики производительности, источники конфигурации — всё можно заменить без изменения кода ядра. Но плагины также вносят новые поверхности отказов — несоответствие версий, гонки жизненного цикла, утечки счётчика ссылок. В следующей главе мы перейдём к подсистеме RAS и диагностики, чтобы увидеть, как NCCL обнаруживает сбои, отслеживает прогресс и обеспечивает самовосстановление в длительных задачах обучения.</p>
 <p>Система плагинов провела чёткую границу между основным коммуникационным путём NCCL и заменяемыми компонентами; четыре типа плагинов — net, tuner, profiler, env — каждый через механизм регистрации и счётчика ссылок безопасно вмешивается в поведение во время выполнения. Но расширяемый коммуникационный движок должен не только гибко заменять компоненты, но и стабильно работать при длительном обучении — когда сетевые карты или GPU выходят из строя, как NCCL обнаруживает, отслеживает и запускает восстановление? В следующей главе мы перейдём к механизмам RAS и диагностики, чтобы увидеть, как систематически обеспечивается надёжность в production-среде.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=16" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-15" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-15">← Пред: Глава 15</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -7904,6 +8195,21 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <p>RAS 让 NCCL 在长时间训练中具备了故障感知与自愈能力，但它依赖的是一套独立于数据面的控制网络。下一章我们将进入内存管理子系统，看 NCCL 如何通过 allocator、注册缓存和用户缓冲区注册来优化显存分配与 RDMA 注册开销——这是性能与可靠性之外的第三个支柱。</p>
 <p>Сквозной принцип проектирования всей главы: разделение плоскости управления и плоскости данных, версионирование состояния через хеши, многоуровневая обработка тайм-аутов, защита жизненного цикла через подсчёт ссылок при конкурентности. Эти принципы позволяют RAS обнаруживать сбои и самовосстанавливаться, не снижая производительность связи. А другой ключевой опорой производительности связи — управлению памятью — также требуются тонкие инженерные компромиссы: почему перед связью NCCL необходимо регистрировать память? Как кэш регистрации влияет на производительность? В следующей главе мы углубимся в allocator, кэш регистрации и регистрацию пользовательских буферов, чтобы раскрыть ответы на эти вопросы.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=17" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-16" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-16">← Пред: Глава 16</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -8184,6 +8490,21 @@ struct ncclShadowObject {
 <p>Управление памятью — невидимая опора производительности NCCL:<code>ncclSpace</code>использует минималистичный массив точек разбиения для управления адресным пространством,<code>ncclShadowPool</code>использует 64-битные битовые карты и хеш-таблицы для управления парами устройство/хост-объектов,<code>ncclMemManager</code>использует подсчёт ссылок и CUDA VMM API для реализации приостановки и возобновления,<code>ncclRegister</code>использует упорядоченный массив для кэширования результатов регистрации, чтобы избежать повторного pin. Эти четыре уровня механизмов совместно обеспечивают ключевую гарантию производительности — «не требуется повторная регистрация памяти перед коммуникацией». В следующей главе мы перейдём к устройство-стороннему коммуникатору и совместимости ABI и посмотрим, как<code>devcomm</code>отображает эти host-сторонние раскладки памяти в структуры, доступные из GPU kernel.</p>
 <p>На рисунке выше показана временная последовательность регистрации: при попадании в кэш только увеличивается счётчик ссылок, без вызова нижележащей регистрации; при промахе кэша создаётся новая запись и запускается нижележащая регистрация. На этом host-сторонний механизм управления памятью становится ясен. Но коммуникация в конечном итоге происходит на GPU, и kernel должен напрямую обращаться к адресам и состоянию соединений удалённых rank. В следующей главе мы перейдём к устройство-стороннему коммуникатору и совместимости ABI и посмотрим, как devcomm отображает метаданные host-стороннего ncclComm в структуры, доступные на устройстве, а также как версионированный ABI обеспечивает совместимость новых и старых kernel с библиотекой.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=18" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-17" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-17">← Пред: Глава 17</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -8541,6 +8862,21 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 </details>
 <p>На этом мы увидели, как devcomm через версионированный ABI безопасно отображает ключевые метаданные host-side коммуникационного домена на device side, позволяя kernel получать rank, адреса и состояние соединений без host-указателей. Этот механизм решает базовую проблему доступа kernel к коммуникационному домену, но возможности device side этим не ограничиваются. Когда пользователь хочет напрямую вызывать коммуникационные примитивы в своём kernel или даже объединить коммуникацию и вычисления в одном kernel, требуются более высокоуровневые device-side API и технологии слияния ядер. В следующей главе мы углубимся в каталог nccl_device и связанные примеры, чтобы изучить, как device-side API, такие как ncclBarrier, ncclLsaBarrier, ncclGinBarrier, позволяют пользовательскому kernel участвовать в коммуникации, а также как слияние ядер снижает накладные расходы на запуск, продвигая NCCL от библиотеки к модели программирования.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=19" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-18" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-18">← Пред: Глава 18</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -8798,6 +9134,21 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <p>Device-side API и объединение с kernel превращают NCCL из «библиотеки, которую вы вызываете» в «модель, на которой вы программируете».<code>ncclTeam_t</code>предоставляет систему координат,<code>CreateRequirement</code>предоставляет механизм резервирования ресурсов, а три типа барьеров охватывают весь диапазон синхронизации от разделяемой памяти до сетевых сигналов. Но объявить ресурсы и написать объединённый kernel — ещё не значит получить хорошую производительность: количество барьеров, размер команды, гранулярность объединения — каждый из этих выборов влияет на сквозную производительность. В следующей главе мы перейдём к практической настройке производительности и посмотрим, как параметры tuning влияют на выбор алгоритма и как с помощью реальных benchmark проверить эффект от настройки.</p>
 <p>Итак, мы прошли весь путь от сопоставления метаданных devcomm до примитивов на стороне устройства nccl_device и увидели, как NCCL через модель «объявление на хосте, потребление на устройстве» позволяет пользовательскому ядру напрямую вызывать барьерные синхронизационные операции, объединяя коммуникацию и вычисления в одном ядре. Но после освоения этих механизмов естественно возникает более практичный вопрос: когда производительность реальной задачи обучения не соответствует требованиям, как определить, вызвано ли это неправильным выбором алгоритма, несоответствием протокола или нерациональной конфигурацией числа каналов? В следующей главе механизмы первых 20 глав будут объединены в практическую методологию тюнинга, которая на основе отчётов о производительности, модели стоимости и переменных окружения даст путь диагностики от симптома к первопричине.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=20" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-19" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-19">← Пред: Глава 19</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -9480,6 +9831,21 @@ not_valid:
 <p><code>forced</code>Справочный анализ<code>ncclTuningContext_t</code>В</p>
 <p>Копировать</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=21" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-20" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-20">← Пред: Глава 20</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -10041,6 +10407,21 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 </details>
 <p>В этой главе разобраны четыре типичные ошибки в производственной среде и их внутренние механизмы защиты. Эти граничные условия напоминают нам, что стабильная работа NCCL зависит не только от основной реализации, но и от адаптации и расширения окружающей экосистемы. В следующей главе мы перейдём к экосистеме и расширениям и посмотрим, как такие периферийные проекты, как nccl4py, nccl4rust, nccl_ep, nccl_ubx, несут возможности NCCL более широкому кругу пользователей.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=22" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-21" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-21">← Пред: Глава 21</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -10326,6 +10707,21 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
 <p>下一章我们将转向架构演进与未来方向，看看 NCCL 如何从集合通信库演进为可编程通信引擎。</p>
 <p>这些周边项目通过语言绑定、设备 API 扩展和符号拦截，展示了 NCCL 核心能力在不同场景下的复用方式。而贯穿所有项目的核心约束是 NCCL ABI 版本兼容性——size-based ABI、指针传递、命名空间包都是把版本差异隔离在稳定接口背后的技术手段。理解这些手段，是安全使用这些周边项目的前提。当这些扩展项目不断试探核心的边界，NCCL 自身也在悄然演进：从固定集合操作走向可编程通信引擎，从 host proxy 走向 GPU 直发，从注册缓冲区走向对称内存。下一章我们将基于源码中的演进痕迹，探讨这些变化将如何重塑上层框架的通信方式。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=23" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-22" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-22">← Пред: Глава 22</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -10885,6 +11281,21 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
 <p>Следующая глава — последняя в книге. Мы ещё раз пройдём весь путь одного AllReduce — от вызова<code>ncclAllReduce</code>, через постановку задачи в очередь, выбор алгоритма, запуск ядра, продвижение прокси, передачу по сети, вплоть до возврата результата. Этот обзор свяжет знания из предыдущих 24 глав в единую карту понимания.</p>
 <p>Итак, мы увидели три основные линии эволюции NCCL от фиксированных коллективных операций к программируемому коммуникационному движку: композиция примитивов RMA, прямая отправка в сеть с GPU, модель симметричной памяти, а также поддерживающие их абстракция team и версионированный DevComm. Эти механизмы вместе указывают на более гибкое будущее коммуникаций, более близкое к аппаратным возможностям. Однако, как бы ни развивалась архитектура, полный путь одного AllReduce всегда остаётся краеугольным камнем понимания NCCL. В следующей главе мы не будем вводить новый код, а заново пройдём сквозной поток от главы 3 до главы 10 — от вызова ncclAllReduce до установления коммуникационного домена, поиска топологии, выбора алгоритма, постановки задачи в очередь, запуска ядра, выполнения примитивов на устройстве, записи результата. Вы заново соберёте механизмы, разбросанные по главам, в целостную ментальную модель и получите индекс «при какой проблеме какую главу смотреть».</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=24" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-23" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-23">← Пред: Глава 23</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -11575,6 +11986,21 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
 <p><strong>Разбор ответа</strong>: этот фрагмент логики гарантирует, что все rank приходят к согласию по таким параметрам, как<code>nChannels</code>、<code>bwIntra</code>、<code>bwInter</code>для каждого алгоритма. Если его убрать, каждый rank будет вычислять результат на основе своей локальной топологии. Рассмотрим гетерогенный кластер: rank 0 на машине с 8 GPU NVLink, rank 8 на машине с 4 GPU PCIe. Rank 0 вычислит 8 каналов для ring, rank 8 — 4. При выполнении Ring AllReduce rank 0 будет ждать, пока rank 8 отправит данные по 8 каналам, но rank</p>
 <p>На этом мы завершили обзор полного пути одного AllReduce. От инициализации, поиска топологии, выбора алгоритма, постановки задач в очередь, запуска kernel до выполнения на устройстве и сетевой передачи — каждый этап соответствует углублённому анализу из предыдущих глав. Эта схема пути — не только скелет для понимания NCCL, но и индекс для диагностики проблем: при сбое инициализации смотрите главы 3 и 4, при неверном выборе алгоритма — главу 5, при ошибках постановки задач в очередь — главы 6 и 7, при сбое запуска kernel — главу 8, при зависании на устройстве — главы 9 и 10, при сетевых проблемах — главы 12 и 13. По мере развития NCCL в сторону программируемой коммуникации, GPU-инициируемых операций и симметричной памяти этот путь будет продолжать расширяться — а вы уже освоили метод его отслеживания.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ru&ch=25" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-24" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-24">← Пред: Глава 24</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -11626,7 +12052,10 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Неизменяемый постоянный коммит-анкор</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_nccl_ru" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ Читайте свой репозиторий с AiReadCode →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        </div>
       </div>
     </aside>
   </div>

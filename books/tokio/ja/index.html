@@ -6,6 +6,54 @@
   <title>《Tokio 非同期基盤メカニズムとランタイム剖析》| AiReadCodeBooks</title>
   <meta name="description" content="Rust における非同期プログラミングはライブラリではなく、言語レベルのプロトコルです。Tokio が本番級ランタイムになり得たのは、Future を発明したからではなく、このプロトコルにおける各契約の境界条件を正確に実装したからです。本章では Tokio のスケジューラコードに急いで飛び込むのではなく、まず「三種の神">
   <meta name="keywords" content="tokio-rs/tokio, Tokio 非同期基盤メカニズムとランタイム剖析, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <meta property="og:title" content="Tokio 非同期基盤メカニズムとランタイム剖析">
+  <meta property="og:description" content="Rust における非同期プログラミングはライブラリではなく、言語レベルのプロトコルです。Tokio が本番級ランタイムになり得たのは、Future を発明したからではなく、このプロトコルにおける各契約の境界条件を正確に実装したからです。本章では Tokio のスケジューラコードに急いで飛び込むのではなく、まず「三種の神器」——Future、Waker、Executor——の責務境界と逆方向の制御フローを徹底的に解説します。この三者がどのように噛み合うかを理解すれば、以降の章で Runtime の組み立て、work-stealing スケジューリング、I/O ドライバが地に足のついた議論となります。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tokio 非同期基盤メカニズムとランタイム剖析">
+  <meta name="twitter:description" content="Rust における非同期プログラミングはライブラリではなく、言語レベルのプロトコルです。Tokio が本番級ランタイムになり得たのは、Future を発明したからではなく、このプロトコルにおける各契約の境界条件を正確に実装したからです。本章では Tokio のスケジューラコードに急いで飛び込むのではなく、まず「三種の神器」——Future、Waker、Executor——の責務境界と逆方向の制御フローを徹底的に解説します。この三者がどのように噛み合うかを理解すれば、以降の章で Runtime の組み立て、work-stealing スケジューリング、I/O ドライバが地に足のついた議論となります。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tokio 非同期基盤メカニズムとランタイム剖析",
+  "description": "Rust における非同期プログラミングはライブラリではなく、言語レベルのプロトコルです。Tokio が本番級ランタイムになり得たのは、Future を発明したからではなく、このプロトコルにおける各契約の境界条件を正確に実装したからです。本章では Tokio のスケジューラコードに急いで飛び込むのではなく、まず「三種の神器」——Future、Waker、Executor——の責務境界と逆方向の制御フローを徹底的に解説します。この三者がどのように噛み合うかを理解すれば、以降の章で Runtime の組み立て、work-stealing スケジューリング、I/O ドライバが地に足のついた議論となります。",
+  "inLanguage": "ja",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "tokio"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_tokio_ja" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ コードベースを無料分析 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -284,6 +335,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 </details>
 <p>ここまでで、Future、Waker、Executor の3者の責務境界と協調メカニズムは明確になった：Future は計算を定義し、Waker はウェイクアップを担当し、Executor は実行を駆動する。しかし単一のコンポーネントは独立して動作できず、それらは統一されたランタイム環境に組み立てられなければならない。次章では、Runtime::new と Builder::build の完全な組み立てチェーンを追跡し、スケジューラ、I/O ドライバ、時間ドライバ、ブロッキングスレッドプールがどのように同じ Runtime インスタンスに注入されるかを見て、current_thread と multi_thread の2形態の組み立て段階における根本的な差異を明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -670,6 +736,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 <p><strong>参考解析</strong>：<span class="fact-pill" data-file="tokio/src/runtime/mod.rs" data-lines="657-673" onclick="highlightFact('tokio/src/runtime/mod.rs', '657-673')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/mod.rs:657-673</code></span>のコメントによれば、実行時の<code>if</code>は<code>spawn_named</code>を各<code>T</code>に対して2回単相化させる（<code>T</code>と<code>Pin&lt;Box&lt;T&gt;&gt;</code>がそれぞれ1回）。コードサイズの倍増以外に、性能劣化は以下に現れる：1) 命令キャッシュ（i-cache）のプレッシャーが増大する。2セットのharnessコードが常駐する必要があるため；2) コンパイラが「実際には1つの分岐しか通らない」ことを最適化できず、実行時の分岐予測は通常正確だが、分岐自体と2セットのコードのレジスタ割り当ての差異が累積する；3) より隠れた問題として、<code>Pin&lt;Box&lt;T&gt;&gt;</code>パスは強制的にヒープ割り当てを行い、実行時判断が何らかの理由（例えば<code>size_of</code>がジェネリックコンテキストで完全に定数畳み込みされない）で誤判定すると、小さなfutureもボクシングされ、spawnごとにヒープ割り当てが1回増える。関連定数は単相化コレクタにコンパイル時に通らない分岐を刈り取らせ、実行時オーバーヘッドをゼロにする。</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 前の章: 第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1031,6 +1112,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <div class="inference-box"><span class="inference-tag">〔設計推論とアーキテクチャのトレードオフ〕</span><p>worker 自身は先頭から取る（LIFO）。なぜなら最近プッシュされたタスクが最も CPU キャッシュに残っている可能性が高く、また「ちょうど起こされてデータがまだ熱い」タスクである可能性が最も高いから。窃取者は末尾から取る（FIFO）。なぜなら最も古いタスクが既に大部分の作業を完了している可能性が最も高く、それを窃取すれば被害者の負荷を最速で軽減できるから。この「LIFO ローカル + FIFO 窃取」の組み合わせは work-stealing スケジューリングの古典的な設計であり、キャッシュ局所性と負荷分散を両立している。</p></div>
 <p>ここまでで、タスクは Future からスケジュール可能な実体への変態を完了した：参照カウントが割り当てられ、<code>Cell</code>のメモリレイアウトに配置され、worker のローカルキューまたはグローバル注入キューに正常に投入された。しかしタスクがキューに入れられたのは始まりに過ぎず、実際にそれを動かすのは worker スレッドのスケジューリングループである。次の章では「タスクの一生」の後半に入り、worker がどのようにキューからタスクを取り出し、<code>Future::poll</code>を呼び出し、<code>Pending</code>を返す際に<code>Waker</code>を通じて wake を登録し、最終的に<code>schedule</code>の再エンキューをトリガーする——「wake → エンキュー → 再 poll」という閉ループの完全な呼び出しパス、そして work-stealing 戦略と LIFO スロット最適化がそこで明らかになる。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 前の章: 第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1238,6 +1334,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p><strong>を返すのか？</strong>：<code>self.core.borrow_mut().take()</code>参考解析<code>None</code>が<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="716-724" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '716-724')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:716-724</code></span>を返すことは、core がすでに盗まれたことを意味する<code>block_in_place</code>。core が盗まれる唯一の経路は、タスク内部で<code>maybe_move_runtime</code>が呼ばれ、<code>cx.core</code>を通じて core を<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="473-497" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '473-497')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:473-497</code></span>から取り出し、新しいスレッド<code>Continue</code>，<code>Context::run</code>に渡すことである。このとき現在のスレッドはもはやスケジューリング能力を保持しておらず、もし<code>core.next_task()</code>を返すとループを続けて<code>self.core</code>など core を必要とするメソッドを呼び出すが、core はすでに<code>Break</code>にないため、panic や状態の不整合を引き起こす。<code>Context::run</code>を返すことで<code>return</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="594-597" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '594-597')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:594-597</code></span>は直接<code>run</code>し、制御権を<code>cx.defer.wake()</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="564" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '564')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:564</code></span>関数に返し、それが後続処理（例えば<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="719-721" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '719-721')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:719-721</code></span>）を行う。コメントも<code>reset_lifo_enabled</code>と説明している：このとき<code>Context::run</code>を呼んではならない。core が盗まれており、盗んだ側が</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 前の章: 第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1432,6 +1543,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>でこの fd のイベントを待ってブロックしている可能性があるが、fd はすでに登録解除されており、カーネルはもはやイベントを生成しない。<code>unpark</code>は<code>ScheduledIo</code>を通じて epoll に<code>TcpStream</code>イベント<code>split</code>後読み書きの二半分）、毎回半分をドロップするたびに driver が起動され、CPU オーバーヘッドが増加する。さらに深刻なのは</p>
 <p>本章では、Reactor が epoll イベントをどのように Waker ウェイクアップに変換するかを分解した。TcpStream の poll_read_ready から出発し、Registration の登録と照会を経て、ScheduledIo のレディビットと Waker スロットに到達し、さらに Driver がイベントループ内で Token に基づいて位置を特定しウェイクアップをトリガーする。主要な設計には以下が含まれる：Token がポインタそのもので O(1) 検索を実現、読み書き二重 Waker スロットが並行読み書き分離をサポート、events_busy 独立バッファがイベント飢餓を防止、assume_ready 楽観的推測が accept シナリオを最適化。ここに至り、I/O レディ通知の閉ループは完全となった。しかし非同期ランタイムはもう一つの「レディ」——時間——を処理する必要がある。次章では tokio::time::sleep と timeout の実装を剖析する：タイマーがどのように時間輪に挿入されるか、時間輪がどのように満了時間で階層化されるか、driver がどのように次の park のタイムアウトを計算し満了タスクをトリガーするか。あなたは「時間もまた一種の I/O イベントである」という統一抽象と、start_paused と test clock がテストで時間を制御可能にする方法を目にするだろう。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 前の章: 第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1847,6 +1973,21 @@ while let Some(item) = entries.pop_back() {
 </details>
 <p>は正常な場合で、予算は十分にあり、直接poll delayする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 前の章: 第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2135,6 +2276,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 <p>で正確に<code>tokio::sync</code>を制御しており、許可オブジェクトを保持すると追加の trait 制約が導入される。現在の「参照のみ保持 + 手動 release」の設計はより軽量で、<code>spawn_blocking</code>のサポートも容易である。<code>block_on</code>ここまでで、我々は</p>
 <p>Waker の格納場所はプリミティブによって異なる：Mutex/Semaphore は下層のセマフォの待機キュー、oneshot は Inner の tx_task/rx_task フィールド、mpsc は chan モジュールの送受信キューに存在する。しかし起床メカニズムは統一されている：状態変更時に Waker を取り出して wake_by_ref を呼び、実行器がタスクを再スケジュールする。ここまでで、非同期プリミティブ内部の待機と起床は明確に見えてきた。しかし、すべてのコードが非同期化できるわけではない——次の章では、spawn_blocking でブロッキング操作を橋渡しする方法と、block_on が非同期コンテキスト外で Future を駆動する方法を探る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 前の章: 第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2314,6 +2470,21 @@ match &amp;self.scheduler {
 </details>
 <p>ブロッキングスレッドプールと block_on は非同期ランタイムの能力境界を画定する。前者はスレッドを譲れない作業を専用スレッドに隔離し、後者は非同期でない入口からも Future を駆動できるようにする。しかしこれら二つの境界はコード内でしばしば手書きされるものではない。次の章ではマクロの世界に入り、#[tokio::main]、select!、join! がコンパイル時にこれらのランタイムコードをどのように生成するかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 前の章: 第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2451,6 +2622,21 @@ match &amp;self.scheduler {
 <p>マクロはボイラープレートコードとコンパイル時検証をユーザーの手から引き受けますが、それが生成するのは依然として通常の Future と<code>poll</code>呼び出しです。次の章ではマクロのコンパイル期の世界を離れ、実行時の I/O 抽象層に入り、<code>AsyncRead</code>/<code>AsyncWrite</code>がどのようにバイトストリームをフレームに分割するか、そして<code>Framed</code>コーデックフレームワークが<code>select!</code>のキャンセル安全性制約の下でどのように正しく動作するかを見ていきます。</p>
 <p><code>#[tokio::main]</code>の本質は「設定解析 + Builder チェーン生成 +<code>block_on</code>ラップ」であり、設定検証はコンパイル期に完了し、flavor が builder の起点と build メソッドを決定します。<code>select!</code>の核心は「タプルに Future を格納 + ビットマスクで無効化を記録 + ランダム起点で公平性を保証」であり、パターンが一致しなければ分岐が無効化され、キャンセル安全性は drop された Future が<code>.await</code>で再起動可能かどうかに依存します。<code>join!</code>と<code>select!</code>は骨格を共有しますがセマンティクスは逆で、前者はすべての完了を待ち、後者はどれか一つが準備完了すれば即座に返ります。三者は共に Tokio マクロ設計の核心的なトレードオフを示しています：ボイラープレートコードとコンパイル時検証をマクロに任せ、実行時セマンティクスの複雑さ（特にキャンセル安全性）はユーザーの明示的な理解に委ねるということです。マクロがどのように実行時コードを生成するかを理解した後、次に自然に生じる疑問は：これらのコードが実際にバイトストリームの読み書きを開始するとき、Tokio はどのような抽象を提供するのか？第 10 章では<code>AsyncRead</code>/<code>AsyncWrite</code>とコーデックフレームワークを剖析し、<code>BufReader</code>/<code>BufWriter</code>がどのようにシステムコールを削減するか、<code>copy_bidirectional</code>がどのように双方向転送を駆動するか、<code>Framed</code>がどのようにバイトストリームをフレームに分割するかを見ることで、「非同期 I/O の抽象境界はどこにあるのか」に答えます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 前の章: 第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2767,6 +2953,21 @@ Ok(Some(n))</code></pre></div>
 <p><strong>：チェックを削除すると、</strong>は<code>n</code>に変換され<code>usize</code>に渡される。<code>decode_data</code>。<code>decode_data</code>のチェック時には<code>src.len() &lt; n</code>が返るが、<code>None</code>の末尾の<code>decode_head</code>が 4GB のメモリを予約しようとし、OOM または割り当て失敗による panic を引き起こす。チェックは<code>src.reserve(n.saturating_sub(src.len()))</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="559" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '559')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:559</code></span>の前でなければならない。なぜなら<code>length_adjustment</code>が負になる可能性があり（<code>length_adjustment</code>など）、先に調整してからチェックすると、<code>-2</code>は依然として 4GB に近く、チェックが形骸化する；また負の調整により<code>0xFFFFFFFF - 2</code>が先に失敗する可能性があり、エラーメッセージが「オーバーフロー」と誤って示され「フレームが大きすぎる」ではなくなる。ソースコードの順序 [FACT:tokio-util/src/codec/length_delimited.rs:526-<code>checked_sub</code> 先失败，错误信息会误导为「溢出」而非「帧过大」。源码顺序 [FACT:tokio-util/src/codec/length_delimited.rs:526-</p>
 <p>ここまでで、Tokio におけるバイトストリームとメッセージフレーム間の2層抽象を整理した。tokio::io がバイト転送を担当し、tokio-util の codec フレームワークがフレーム分割とエンコード/デコードを担当する。Framed がプロトコル実装の出発点となるのは、「完全なメッセージを1つ読む」という高頻度の要求を再利用可能な Stream/Sink アダプタとしてカプセル化しているからに他ならない。しかしフレームはデータの容器にすぎず、プロトコルが動的タスク集合、構造化キャンセル、あるいはより複雑なストリーム合成を扱う必要がある場合、Framed だけでは不十分である。次章では tokio-stream と tokio-util の拡張メカニズムに入り、StreamExt コンビネータ、StreamMap/JoinSet/TaskTracker、そして CancellationToken がどのように基盤の Waker とスケジューリング機構を再利用し、非同期イテレーションとタスク管理のためのより高レベルなツールを提供するかを見ていく。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 前の章: 第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3296,6 +3497,21 @@ fn notify_now(&amp;self) {
 <p><span class="fact-pill" data-file="tokio-util/src/task/task_tracker.rs" data-lines="452-464" onclick="highlightFact('tokio-util/src/task/task_tracker.rs', '452-464')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/task/task_tracker.rs:452-464</code></span></p>
 <p>の drop が自動的にカウント減算をトリガーします。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 前の章: 第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3607,6 +3823,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 </details>
 <p>）に復元される可能性があり、予算が永久に失われ、タスクの以降のすべてのリソース操作が制約を受けなくなる。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 前の章: 第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3863,6 +4094,21 @@ pub(super) struct Receiver {
 <p>でシグナル状態を共有することで、エンジニアリング上使用可能な答えを提示しています。しかしこれらの答えにはすべて境界条件があり、本番環境では明示的に処理する必要があります。</p>
 <p>ここまでで、私たちはTokioの本番環境で最もつまずきやすい境界地帯を歩き切った。キャンセル安全が依存する出力がヒープ上に保存されること、try_read_outputの原子性、JoinHandle::dropはタスクをキャンセルせず、abortだけが実際にキャンセルするがspawn_blockingには無効であること、panicがcatch_unwindに捕捉された後にJoinErrorとしてパッケージ化され、awaitしなければ静かに失われること、Runtimeのシャットダウンには厳密な順序があり、asyncコンテキストでdropするとpanicすること、シグナルハンドラはプロセスレベルのグローバル状態であり、登録後は決してアンロードされないこと。これらのルールの背後には、Tokioが正確性と性能の間で繰り返してきたトレードオフがある。次の章では、具体的なメカニズムから離れ、アーキテクチャの高みに立ってこれらのトレードオフの由来を振り返り、io_uring、ドライバの再構築、カスタムエグゼキュータインターフェースがTokioをどこへ導くのかを展望する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 前の章: 第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -4164,6 +4410,21 @@ memory leaks.</code></pre></div>
 </details>
 <p>ここまでで、具体的な落とし穴からアーキテクチャのトレードオフへの登りを完了した。本書全体を振り返ると、Future の遅延評価からスケジューラの公平性、キャンセル安全性からシャットダウン順序、そして本章の io_uring とプラガブルドライバに至るまで、すべての議論は一つの核心を巡っている：非同期境界において状態の所有権を明確に区分することである。Tokio のアーキテクチャは不変ではなく、io_uring のゼロコピー I/O、ドライバ層の分離、カスタムエグゼキュータインターフェースの開放が、それをより柔軟で効率的な方向へと進化させている。この本を閉じたとき、残るのが API の使い方の山ではなく、判断力のセットであることを願う：いつランタイムを信頼すべきか、いつ低層に介入すべきか、そして本番環境で人を噛むような組み合わせをどう避けるか。非同期 Rust のエコシステムは依然として急速に成長しており、ソースコードと公式ドキュメントを追跡し続けることが、どんな結論を覚えるよりも重要である。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ja&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 前の章: 第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -4215,7 +4476,10 @@ memory leaks.</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不変永久アンカー</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_tokio_ja" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ AiReadCode でリポジトリを読む →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        </div>
       </div>
     </aside>
   </div>

@@ -6,6 +6,54 @@
   <title>《Tokio 非同步底層機制與執行時剖析》| AiReadCodeBooks</title>
   <meta name="description" content="非同步程式設計在 Rust 中不是一個函式庫，而是一套語言級別的協定。Tokio 之所以能成為生產級執行時，不是因為它發明了 Future，而是因為它精確地實現了這套協定中每一個契約的邊界條件。本章不急於跳進 Tokio 的調度器程式碼，而是先把「三件套」——Future、Waker、Executor——的職責邊界和反">
   <meta name="keywords" content="tokio-rs/tokio, Tokio 非同步底層機制與執行時剖析, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <meta property="og:title" content="Tokio 非同步底層機制與執行時剖析">
+  <meta property="og:description" content="非同步程式設計在 Rust 中不是一個函式庫，而是一套語言級別的協定。Tokio 之所以能成為生產級執行時，不是因為它發明了 Future，而是因為它精確地實現了這套協定中每一個契約的邊界條件。本章不急於跳進 Tokio 的調度器程式碼，而是先把「三件套」——Future、Waker、Executor——的職責邊界和反向控制流講透。理解了這三者如何咬合，後續章節中 Runtime 的組裝、work-stealing 調度、I/O 驅動才有落腳點。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tokio 非同步底層機制與執行時剖析">
+  <meta name="twitter:description" content="非同步程式設計在 Rust 中不是一個函式庫，而是一套語言級別的協定。Tokio 之所以能成為生產級執行時，不是因為它發明了 Future，而是因為它精確地實現了這套協定中每一個契約的邊界條件。本章不急於跳進 Tokio 的調度器程式碼，而是先把「三件套」——Future、Waker、Executor——的職責邊界和反向控制流講透。理解了這三者如何咬合，後續章節中 Runtime 的組裝、work-stealing 調度、I/O 驅動才有落腳點。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tokio 非同步底層機制與執行時剖析",
+  "description": "非同步程式設計在 Rust 中不是一個函式庫，而是一套語言級別的協定。Tokio 之所以能成為生產級執行時，不是因為它發明了 Future，而是因為它精確地實現了這套協定中每一個契約的邊界條件。本章不急於跳進 Tokio 的調度器程式碼，而是先把「三件套」——Future、Waker、Executor——的職責邊界和反向控制流講透。理解了這三者如何咬合，後續章節中 Runtime 的組裝、work-stealing 調度、I/O 驅動才有落腳點。",
+  "inLanguage": "zh-tw",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "tokio"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_tokio_zh-tw" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 深度解析你的程式碼庫 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -284,6 +335,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 </details>
 <p>至此，Future、Waker 與 Executor 三者的職責邊界與協作機制已經清晰：Future 定義計算，Waker 負責喚醒，Executor 驅動執行。但單個組件無法獨立工作，它們必須被組裝進一個統一的執行時環境。下一章，我們將追蹤 Runtime::new 與 Builder::build 的完整裝配鏈路，看調度器、I/O 驅動、時間驅動和阻塞執行緒池如何被注入同一個 Runtime 實例，並揭示 current_thread 與 multi_thread 兩種形態在裝配階段的根本差異。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -670,6 +736,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 <p><strong>參考解析</strong>：根據<span class="fact-pill" data-file="tokio/src/runtime/mod.rs" data-lines="657-673" onclick="highlightFact('tokio/src/runtime/mod.rs', '657-673')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/mod.rs:657-673</code></span>的註釋，執行時<code>if</code>會讓<code>spawn_named</code>對每個<code>T</code>單態化兩次（<code>T</code>和<code>Pin&lt;Box&lt;T&gt;&gt;</code>各一次）。除了程式碼體積翻倍，效能退化體現在：1) 指令快取（i-cache）壓力增大，因為兩套 harness 程式碼都要駐留；2) 編譯器無法對「實際只走一個分支」做最佳化，執行時分支預測雖然通常準確，但分支本身和兩套程式碼的暫存器分配差異會累積；3) 更隱蔽的是，<code>Pin&lt;Box&lt;T&gt;&gt;</code>路徑會強制堆積分配，如果執行時判斷因為某種原因（比如<code>size_of</code>在泛型上下文中未完全常量摺疊）誤判，小 future 也會被裝箱，每次 spawn 多一次堆積分配。關聯常量讓單態化收集器在編譯期就剪掉未走的分支，零執行時開銷。</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 上一章：第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1031,6 +1112,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <div class="inference-box"><span class="inference-tag">〔設計推斷與架構權衡〕</span><p>worker 自己從頭部取（LIFO），因為最近推入的任務最可能還在 CPU 快取中，且最可能是「剛被喚醒、資料還熱」的任務。竊取者從尾部取（FIFO），因為最老的任務最可能已經完成大部分工作，竊取它能最快減輕受害者負載。這種「LIFO 本地 + FIFO 竊取」的組合是 work-stealing 排程的經典設計，兼顧了快取局部性與負載均衡。</p></div>
 <p>至此，任務已經完成了從 Future 到可排程實體的蛻變：它被分配了引用計數、放進了<code>Cell</code>的記憶體佈局，並成功投遞到 worker 的本地佇列或全域注入佇列。但任務被放入佇列只是開始，真正讓它運轉起來的是 worker 執行緒的排程迴圈。下一章我們將進入「任務的一生」下半場，追蹤 worker 如何從佇列中取出任務、呼叫<code>Future::poll</code>，並在返回<code>Pending</code>時透過<code>Waker</code>註冊喚醒，最終觸發<code>schedule</code>重新入隊——「喚醒 → 入隊 → 再 poll」這一閉環的完整呼叫路徑，以及 work-stealing 策略與 LIFO 槽位優化，都將在那裡揭曉。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 上一章：第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1238,6 +1334,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p><strong>參考解析</strong>：<code>self.core.borrow_mut().take()</code>返回<code>None</code>意味著 core 已經被偷走<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="716-724" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '716-724')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:716-724</code></span>。core 被偷走的唯一途徑是任務內部呼叫了<code>block_in_place</code>，它會透過<code>maybe_move_runtime</code>把 core 從<code>cx.core</code>取出並交給新執行緒<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="473-497" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '473-497')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:473-497</code></span>。此時當前執行緒已經不再持有排程能力，如果返回<code>Continue</code>，<code>Context::run</code>會繼續迴圈並呼叫<code>core.next_task()</code>等需要 core 的方法，但 core 已經不在<code>self.core</code>裡了，會導致 panic 或狀態不一致。返回<code>Break</code>讓<code>Context::run</code>直接<code>return</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="594-597" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '594-597')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:594-597</code></span>，把控制權交還給<code>run</code>函式，由它處理後續（比如<code>cx.defer.wake()</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="564" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '564')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:564</code></span>）。註解也說明<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="719-721" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '719-721')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:719-721</code></span>：此時不能呼叫<code>reset_lifo_enabled</code>，因為 core 被偷走了，偷走者會在<code>Context::run</code>頂部處理。</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 上一章：第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1432,6 +1543,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>如果無條件呼叫<code>unpark</code>：每次註銷一個非最後的引用都會喚醒 driver，造成不必要的喚醒。在大量連線共享同一個<code>ScheduledIo</code>的場景（比如<code>TcpStream</code>的<code>split</code>後讀寫兩半），每次 drop 一個半都會喚醒 driver，增加 CPU 開銷。更嚴重</p>
 <p>本章我們拆解了 Reactor 如何把 epoll 事件翻譯成 Waker 喚醒：從 TcpStream 的 poll_read_ready 出發，經過 Registration 的註冊與查詢，落到 ScheduledIo 的就緒位與 Waker 槽位，再由 Driver 在事件迴圈中根據 Token 定位並觸發喚醒。關鍵設計包括：Token 即指標實現 O(1) 查找，讀寫雙 Waker 槽位支援並發讀寫分離，events_busy 獨立緩衝區防止事件飢餓，assume_ready 樂觀猜測優化 accept 場景。至此，I/O 就緒通知的閉環已經完整。但非同步執行時還需要處理另一類「就緒」——時間。下一章我們將剖析 tokio::time::sleep 與 timeout 的實現：定時器如何被插入時間輪、時間輪如何按到期時間分級、driver 如何計算下一次 park 的超時並觸發到期任務。你會看到「時間也是一種 I/O 事件」這一統一抽象，以及 start_paused 與 test clock 如何讓時間在測試中可控。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 上一章：第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1847,6 +1973,21 @@ while let Some(item) = entries.pop_back() {
 </details>
 <p>至此，我們已經看清時間驅動如何復用 I/O driver 的 park/unpark 機制，讓定時器與 fd 就緒共享同一個等待入口。時間輪的分級、到期計算與 Waker 觸發，構成了非同步執行時處理「時間就緒」的完整閉環。但非同步等待不止於 I/O 與時間——當多個任務競爭同一把鎖、或透過通道傳遞訊息時，Waker 又該被存放到哪裡？下一章我們將進入 tokio::sync 家族，看看 Mutex、Semaphore 與各類通道如何在「等待者佇列 + Waker 喚醒」上做出不同取捨。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 上一章：第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2135,6 +2276,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 <p>至此，我們已經看清<code>tokio::sync</code>如何用「等待者隊列 + Waker 喚醒」這一統一模式，支撐起 Mutex、Semaphore 與各類通道的異步等待。但並非所有阻塞都能被異步化——有些操作（如檔案系統調用、CPU 密集計算）本質上會阻塞執行緒。下一章我們將進入<code>spawn_blocking</code>執行緒池與<code>block_on</code>的邊界，看看 Tokio 如何在異步運行時與同步阻塞之間架起橋樑。</p>
 <p>Waker 的存放位置因原語而異：Mutex/Semaphore 存在底層信號量的等待佇列，oneshot 存在 Inner 的 tx_task/rx_task 欄位，mpsc 存在 chan 模組的收發佇列。但喚醒機制統一：狀態變更時取出 Waker 呼叫 wake_by_ref，執行器重新排程任務。至此，非同步原語內部的等待與喚醒已清晰可見。然而，並非所有程式碼都能非同步化——下一章將探討如何用 spawn_blocking 橋接阻塞操作，以及 block_on 如何在非非同步上下文中驅動 Future。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 上一章：第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2314,6 +2470,21 @@ match &amp;self.scheduler {
 </details>
 <p>阻塞線程池與 block_on 劃定了異步運行時的能力邊界：前者把無法讓出線程的工作隔離到專用線程，後者讓非異步入口也能驅動 Future。但這兩條邊界在代碼裡往往不是手寫的——下一章我們將進入宏的世界，看看 #[tokio::main]、select! 和 join! 如何在編譯期生成這些運行時代碼。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 上一章：第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2451,6 +2622,21 @@ match &amp;self.scheduler {
 <p>巨集把樣板程式碼與編譯期校驗從使用者手裡接了過去，但它生成的仍是普通的 Future 與<code>poll</code>呼叫。下一章我們將離開巨集的編譯期世界，進入執行時的 I/O 抽象層，看看<code>AsyncRead</code>/<code>AsyncWrite</code>如何把位元組流切成幀，以及<code>Framed</code>編解碼框架如何在<code>select!</code>的取消安全約束下正確工作。</p>
 <p><code>#[tokio::main]</code>的本質是「配置解析 + Builder 鏈生成 +<code>block_on</code>包裹」，配置校驗在編譯期完成，flavor 決定 builder 起點與 build 方法。<code>select!</code>的核心是「元組存 Future + 位元遮罩記禁用 + 隨機起點保公平」，模式不匹配即禁用分支，取消安全取決於被 drop 的 Future 是否在<code>.await</code>處可重啟。<code>join!</code>與<code>select!</code>共享骨架但語意相反，前者等全部完成，後者任一就緒即回傳。三者共同展示了 Tokio 巨集設計的核心權衡：把樣板程式碼與編譯期校驗交給巨集，把執行時語意的複雜性（尤其是取消安全）留給使用者顯式理解。理解了巨集如何生成執行時程式碼之後，下一個自然的問題是：當這些程式碼真正開始讀寫位元組流時，Tokio 提供了怎樣的抽象？第 10 章將剖析<code>AsyncRead</code>/<code>AsyncWrite</code>與編解碼框架，看<code>BufReader</code>/<code>BufWriter</code>如何減少系統呼叫、<code>copy_bidirectional</code>如何驅動雙向轉發、<code>Framed</code>如何把位元組流切分為幀，從而回答「非同步 I/O 的抽象邊界在哪裡」。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 上一章：第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2767,6 +2953,21 @@ Ok(Some(n))</code></pre></div>
 <p><strong>參考解析</strong>：去掉檢查後，<code>n</code>會被轉為<code>usize</code>並傳給<code>decode_data</code>。<code>decode_data</code>檢查<code>src.len() &lt; n</code>時返回<code>None</code>，但<code>decode_head</code>末尾的<code>src.reserve(n.saturating_sub(src.len()))</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="559" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '559')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:559</code></span>會嘗試預留 4GB 記憶體，導致 OOM 或分配失敗 panic。檢查必須在<code>length_adjustment</code>之前，因為<code>length_adjustment</code>可能為負數（如<code>-2</code>），若先調整再檢查，<code>0xFFFFFFFF - 2</code>仍接近 4GB，檢查形同虛設；且負調整可能讓<code>checked_sub</code>先失敗，錯誤訊息會誤導為「溢出」而非「幀過大」。原始碼順序 [FACT:tokio-util/src/codec/length_delimited.rs:526-</p>
 <p>至此，我們理清了 Tokio 在位元組流與訊息幀之間的兩層抽象：tokio::io 負責位元組搬運，tokio-util 的 codec 框架負責幀切分與編解碼。Framed 之所以成為協定實作的起點，正是因為它把「讀到一個完整訊息」這一高頻需求封裝成了可複用的 Stream/Sink 適配。但幀只是資料的容器，當協定需要處理動態任務集合、結構化取消或更複雜的串流組合時，僅靠 Framed 還不夠。下一章將進入 tokio-stream 與 tokio-util 的擴展機制，看看 StreamExt 組合子、StreamMap/JoinSet/TaskTracker 以及 CancellationToken 如何複用底層 Waker 與排程機制，為非同步迭代與任務管理提供更上層的工具。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 上一章：第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -3296,6 +3497,21 @@ fn notify_now(&amp;self) {
 <p><span class="fact-pill" data-file="tokio-util/src/task/task_tracker.rs" data-lines="452-464" onclick="highlightFact('tokio-util/src/task/task_tracker.rs', '452-464')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/task/task_tracker.rs:452-464</code></span></p>
 <p>至此，StreamExt 把 poll_next 變成了可組合的迭代器，StreamMap 與 TaskTracker 讓動態任務集合有了歸屬，CancellationToken 則用一棵樹把取消信號傳播到整個任務樹。這三層擴展的共同點是：它們沒有引入新的調度原語，而是把 Waker、Notify 和原子計數這些既有機制重新組合成更高層的抽象。但一個關鍵問題隨之浮現：當這些組合子、任務集合和取消樹在同一個調度器上並發運行時，如何保證某個任務不會因為長時間不讓出而餓死其他任務？下一章將深入 Tokio 的 coop 協作預算機制，看每個任務在一次調度週期內如何消耗預算、耗盡後主動讓出，以及 budget 如何線上程本地存儲中傳遞，從而解決這個經典問題。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 上一章：第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -3607,6 +3823,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 </details>
 <p>coop 機制透過預算約束讓任務在資源操作中主動讓出，從而在非搶佔模型下維持了調度公平。但預算耗盡觸發的 Pending 必須與真正的等待在取消路徑上表現一致，否則 select! 等組合子會破壞狀態一致性。下一章將進入生產踩坑與邊界條件：取消安全、panic 傳播與關閉順序，我們會看到更多這類「看似無關的機制在邊界處耦合」的案例。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 上一章：第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -3863,6 +4094,21 @@ pub(super) struct Receiver {
 <p>下一章將進入架構權衡與未來演進：從 io_uring 到可插拔驅動。我們會看到 Tokio 如何在保持 API 穩定的前提下，為新一代 I/O 接口預留擴展空間，以及當前架構中哪些設計決策是歷史包袱、哪些是前瞻佈局。</p>
 <p>至此，我們走完了 Tokio 生產環境中最容易踩坑的邊界地帶：取消安全依賴輸出存儲在堆上、try_read_output 的原子性；JoinHandle::drop 不取消任務，abort 才真正取消但對 spawn_blocking 無效；panic 被 catch_unwind 捕獲後打包成 JoinError，不 await 就靜默丟失；Runtime 關閉有嚴格順序，在 async 上下文 drop 會 panic；信號 handler 是進程級全局狀態，註冊後永不卸載。這些規則背後是 Tokio 在正確性與性能之間的反复權衡。下一章我們將跳出具體機制，站在架構高度回顧這些權衡的由來，並展望 io_uring、驅動重構與自定義執行器接口將把 Tokio 帶向何方。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 上一章：第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -4164,6 +4410,21 @@ memory leaks.</code></pre></div>
 </details>
 <p>至此，我們完成了從具體陷阱到架構權衡的爬升。回顧全書，從 Future 的惰性求值到調度器的公平性，從取消安全到關閉順序，再到本章的 io_uring 與可插拔驅動，所有討論都圍繞一個核心：在異步邊界上清晰地劃分狀態所有權。Tokio 的架構並非一成不變，io_uring 的零拷貝 I/O、驅動層的解耦、自定義執行器接口的開放，都在推動它向更靈活、更高效的方向演進。當你合上這本書，希望留下的不是一堆 API 用法，而是一套判斷力：知道何時該信任運行時，何時該介入底層，以及如何在生產環境中避開那些會咬人的組合。異步 Rust 的生態仍在快速生長，保持對源碼與官方文檔的追蹤，比記住任何結論都更重要。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_zh-tw&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 上一章：第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -4215,7 +4476,10 @@ memory leaks.</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不可變永久錨定</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_tokio_zh-tw" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ 分析私有程式碼庫 →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        </div>
       </div>
     </aside>
   </div>

@@ -6,6 +6,54 @@
   <title>《Vue 3 ソースとエンジニアリング全景》| AiReadCodeBooks</title>
   <meta name="description" content="リアクティブや仮想 DOM の実装を一行でも追跡し始める前に、まずこれらのコードが依存するエンジニアリングの母体を理解する必要がある。Vue core リポジトリを開くと、最初に目に入るのはフレームワークのコアロジックではなく、package.jsonとpnpm-workspace.yamlといったエンジニアリング設定">
   <meta name="keywords" content="vuejs/core, Vue 3 ソースとエンジニアリング全景, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <meta property="og:title" content="Vue 3 ソースとエンジニアリング全景">
+  <meta property="og:description" content="リアクティブや仮想 DOM の実装を一行でも追跡し始める前に、まずこれらのコードが依存するエンジニアリングの母体を理解する必要がある。Vue core リポジトリを開くと、最初に目に入るのはフレームワークのコアロジックではなく、package.jsonとpnpm-workspace.yamlといったエンジニアリング設定ファイルである——これらはランタイム機能を一切含まないが、フレームワーク全体が正しくビルド・テスト・リリースできるかを決定する。本章が答えるのはまさにこの前置問題である：core リポジトリとは何か。それは@vue/runtime-coreという npm パッケージではなく、runtime-core、reactivity、compiler-sfcなど十余りの公開リリースパッケージ、さらにsfc-playground、template-explorerなどのプライベート実験パッケージを担うエンジニアリングの母体である。この母体の組織方法を理解することが、以降の全章（ビルド、型、リリース、サイズ予算）の前提となる。本章は三つの主線に沿って展開する：workspace の二重ディレクトリ構造、ルートレベルの TypeScript と Rollup の統一制約、そして「ソースリポジトリ」と「リリース産物」の分離哲学である。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Vue 3 ソースとエンジニアリング全景">
+  <meta name="twitter:description" content="リアクティブや仮想 DOM の実装を一行でも追跡し始める前に、まずこれらのコードが依存するエンジニアリングの母体を理解する必要がある。Vue core リポジトリを開くと、最初に目に入るのはフレームワークのコアロジックではなく、package.jsonとpnpm-workspace.yamlといったエンジニアリング設定ファイルである——これらはランタイム機能を一切含まないが、フレームワーク全体が正しくビルド・テスト・リリースできるかを決定する。本章が答えるのはまさにこの前置問題である：core リポジトリとは何か。それは@vue/runtime-coreという npm パッケージではなく、runtime-core、reactivity、compiler-sfcなど十余りの公開リリースパッケージ、さらにsfc-playground、template-explorerなどのプライベート実験パッケージを担うエンジニアリングの母体である。この母体の組織方法を理解することが、以降の全章（ビルド、型、リリース、サイズ予算）の前提となる。本章は三つの主線に沿って展開する：workspace の二重ディレクトリ構造、ルートレベルの TypeScript と Rollup の統一制約、そして「ソースリポジトリ」と「リリース産物」の分離哲学である。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Vue 3 ソースとエンジニアリング全景",
+  "description": "リアクティブや仮想 DOM の実装を一行でも追跡し始める前に、まずこれらのコードが依存するエンジニアリングの母体を理解する必要がある。Vue core リポジトリを開くと、最初に目に入るのはフレームワークのコアロジックではなく、package.jsonとpnpm-workspace.yamlといったエンジニアリング設定ファイルである——これらはランタイム機能を一切含まないが、フレームワーク全体が正しくビルド・テスト・リリースできるかを決定する。本章が答えるのはまさにこの前置問題である：core リポジトリとは何か。それは@vue/runtime-coreという npm パッケージではなく、runtime-core、reactivity、compiler-sfcなど十余りの公開リリースパッケージ、さらにsfc-playground、template-explorerなどのプライベート実験パッケージを担うエンジニアリングの母体である。この母体の組織方法を理解することが、以降の全章（ビルド、型、リリース、サイズ予算）の前提となる。本章は三つの主線に沿って展開する：workspace の二重ディレクトリ構造、ルートレベルの TypeScript と Rollup の統一制約、そして「ソースリポジトリ」と「リリース産物」の分離哲学である。",
+  "inLanguage": "ja",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vue3"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vue3_ja" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ コードベースを無料分析 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -489,6 +540,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>ブラウザビルド（<code>isGlobalBuild || isBrowserESMBuild</code>）は<code>!packageOptions.enableNonBrowserBranches</code>時に<code>treeShakenDeps</code>（<code>source-map-js</code>、<code>@babel/parser</code>、<code>estree-walker</code>、<code>entities/decode</code>のみを返します）。これは<code>foo-lib</code>が external リストに含まれないことを意味し、</p>
 <p>ここまでで、私たちは core リポジトリがエンジニアリングの母体として持つ全体的な設計哲学をマクロな視点から見てきました。二重ディレクトリの workspace 構造が公開パッケージとプライベート実験パッケージの境界を画定し、ルートレベルの TypeScript と Rollup 設定が統一的な制約を提供し、ソースリポジトリとリリース成果物の分離がマルチフォーマット出力を可能にしています。これらの認識が、以降の具体的なエンジニアリングチェーンへの深掘りの道を開きました。次の章では、視点を静的構造から動的フローへ移し、<code>node scripts/build.js vue</code>を起点として、完全なビルドリクエストがコマンドライン引数の解析、ターゲットパッケージの特定、Rollup 設定の生成から成果物のディスク書き込みまでのエンドツーエンドの旅を追跡し、build.js が parseArgs を通じて formats/devOnly/release などのフラグをどのように解析し、ターゲットパッケージの package.json を動的に require して buildOptions を読み取り、最終的に rollup.config.js を駆動して esm-bundler、cjs、global などのマルチフォーマット成果物を生成するかを見ていきます。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -669,6 +735,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>ここまでで、コマンド解析から Rollup 呼び出しまでのビルドの旅を完全に辿り、並行スケジューリング、プライベートパッケージのフィルタリングなどの核心メカニズムを明らかにした。しかし、プロダクションビルドは物語の半分に過ぎない。次の章では、開発態のリンクに転じ、<code>scripts/dev.js</code>が SFC プリコンパイルとどのように協調し、ミリ秒級の開発フィードバックループを実現するかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 前の章: 第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -843,6 +924,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>は「成果物が準備できているか」を管理し、<code>pre-dev-sfc</code>は「成果物をいかに迅速に更新するか」を管理し、<code>dev.js</code>は「テストがいかにソースコードを解決するか」を管理する。開発時リンクは速度問題を解決したが、ビルド期にはさらに別の、より隠れた最適化がある——コードがブラウザで実行される前に完了する変換である。次の章ではコンパイル期の魔法に入り、enum のインライン化と Tree-shaking 検証メカニズムが、ビルド期にどのように TypeScript enum をリテラルに置き換え、オンデマンド import の約束が破られないことを保証するかを見る。<code>aliases</code>← 前の章：第 2 章</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 前の章: 第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -978,6 +1074,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>列挙型のインライン化は「ビルド時にランタイムオーバーヘッドをどう排除するか」を解決し、検証スクリプトは「最適化が破壊されていないことをどう確認するか」を解決した。しかしビルド生成物には JS 以外にも、同様にパイプライン加工が必要な生成物の種類がある——型宣言ファイルである。次の章では型生成物パイプラインに入り、Vue がソースコード<code>.d.ts</code>からリリース級の型パッケージをどう生成するか、そして<code>dts-test</code>が型契約テストで公開 API の型形状をどう守るかを見る。</p>
 <p>本章ではコンパイル期の2つの重要なスクリプトを分解した。inline-enums.js は git grep で列挙型を特定し、Babel で AST を解析し、new Function でメンバーを評価し、MagicString で宣言を正確に書き換え、最終的に defines グローバル置換テーブルを通じて列挙型参照をリテラルに変え、列挙型オブジェクトを Tree-shaking で揺り落とせるようにする。verify-treeshaking.js はビルド後に文字列センチネルで生成物をチェックし、3種類の既知の Tree-shaking 漏洩が回帰しないことを保証する。両者は一方が「最適化」を担当し、もう一方が「最適化が破壊されていないことの検証」を担当し、共に Vue のサイズの約束を守っている。次に、コンパイル期から型生成物の生成チェーンへと移り、Vue がソースコードの型とリリース型の厳密な一致をどう保証するかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 前の章: 第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1231,6 +1342,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>型パイプラインは「ソースコードから公開レベルの型をどのように生成するか」を解決し、<code>dts-built-test</code>は「成果物の型形状をどのように検証するか」を解決した。しかし型契約は「形状が正しいかどうか」にとどまらず、「API 表面が期待に合致するか」——どの型をエクスポートすべきか、すべきでないか、ジェネリック制約が正確か——も含む。次章では<code>dts-test</code>、Vueが型契約テストで公開API表面をどのように守っているかを見ていきます。</p>
 <p>三者は「生成 → 整形 → 検証」の閉ループを構成し、ソースコードの型と公開型が厳密に一致することを保証します。しかし、型パッケージ自体が正しいことは、公開APIの型形状がロックされていることと同じではありません。次の章では深く掘り下げます<code>packages-private/dts-test</code>、20余りの<code>.test-d.ts</code>ファイルがどのように<code>expectType</code>などのツールを使って、「型即API契約」を回帰可能な自動テストに変えているかを見ていきます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 前の章: 第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1406,6 +1532,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>型契約テストは「API 表面が期待通りかどうか」を解決する。しかし型は Vue エンジニアリングの半分に過ぎない——もう半分は「ユーザーがブラウザ内でこれらの API の動作をリアルタイムに検証する方法」である。次の章では SFC Playground に入り、Vue がコンパイラ、ランタイム、型システムをブラウザ内のリアルタイムデバッグ環境にどのようにパッケージングし、ユーザーがコードを変更した瞬間にコンパイル成果物と実行結果を確認できるようにしているかを見る。</p>
 <p>契約テストが守るのは「型が正しいかどうか」だけでなく、「型がどれだけ正確か」（<code>IsAny</code>/<code>IsUnion</code>）、「ジェネリックパラメータの順序が安定しているか」（<code>DefineComponent</code>13 パラメータ）、「レンダラー非依存性」（<code>__typeEl</code>を<code>Element</code>に制約しない）も含まれる。これらの制約が一度破られると、ユーザー側の IDE ヒント、<code>vue-tsc</code>が生成する型がすべてドリフトする。そして型契約の安定性は、最終的に開発者の日常的なデバッグ体験に奉仕するものである——次の章では<code>packages-private/sfc-playground</code>に入り、純粋なフロントエンド Playground がブラウザ内で SFC コンパイルとリアルタイムプレビューの閉ループをどのように完成させるかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 前の章: 第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1671,6 +1812,21 @@ function resetVueVersion() {
 <p>次章では<code>packages-private/template-explorer</code>に入り、Vue がコンパイラの中間成果物（AST、変換結果、コード生成）をどのように可視化し、開発者がテンプレートからレンダリング関数への各変換ステップを段階的に観察できるようにするかを見る。Playground の「エンドツーエンドのブラックボックス」とは異なり、Template Explorer は「ホワイトボックスのプローブ」である。</p>
 <p>ここまでで、SFC Playground がどのようにコンパイルパイプラインをブラウザに持ち込むかを明らかにした：エントリの初期化、Header の状態切り替え、ビルド時定数の注入が共にリアルタイムでデバッグ可能なサンドボックスを構成している。しかし Playground の視点は常に「SFC 全体のコンパイルと実行」であり、「コンパイラが特定のテンプレート式に対して実際に何の変換を行ったか」には直接答えない。次章では Template Explorer に入り、<code>@vue/compiler-dom</code>と<code>@vue/compiler-ssr</code>のコンパイル結果を行ごとに展開し、SourceMapConsumer でソースコードと成果物のマッピングを確立することで、コンパイラの内部動作を観察可能で逆推論可能なプローブに変える方法を見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 前の章: 第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1850,6 +2006,21 @@ function resetVueVersion() {
 <p>次の章では<code>scripts/release.js</code>に入り、Vueがインタラクティブなステートマシンでバージョン番号の更新、ビルド、テスト、Gitコミット、タグ付け、npm publishの全プロセスをどのように編成しているかを見ていきます。Template Explorerの「観察」とは異なり、release.jsは「実行」です——複数のステップ間で状態を維持し、失敗時のロールバックを処理し、インタラクティブな確認と自動化のバランスを取る必要があります。</p>
 <p>Template Explorerを通じて、私たちはコンパイラの内部状態——AST、コンパイル成果物、SourceMap——をインタラクティブな可視化プローブに変換し、「コンパイラがなぜこのように生成するのか」を推測から観察へと変える方法を習得しました。この内部状態の精密な制御と編成は、Vueのリリースプロセスにも同様に現れています。次の章ではscripts/release.jsを深く掘り下げ、500行余りのステートマシンがparseArgsで十数のフラグを解析し、enquirerでバージョン番号をインタラクティブに確認し、順番にビルド、テスト、Gitコミット、タグ付け、npm publishをトリガーする様子を明らかにし、正式リリースの背後にある完全な状態遷移と失敗時のロールバック戦略を明らかにします。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 前の章: 第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2088,6 +2259,21 @@ if (process.env.CI &amp;&amp; !args.registry)
 <p>次の章では<code>.github/workflows/</code>に入り、release.js が tag をプッシュした後、GitHub Actions がどのように後続のビルドと公開を引き継ぐか、そして CI ゲートの完全な実装を見ていく。</p>
 <p>ここまでで、release.js が状態機械と対話的なオーケストレーションによって、不可逆なリリースリスクを最小化する方法が明らかになった。しかしリリーススクリプト自体は単なる実行者にすぎず、いつトリガーし、どのような条件で通過させるかを実際に決定するのは、より上位の自動化された門番である。次の章では .github/workflows ディレクトリ配下の CI/CD 体系を分析する：ci.yml が PR 段階で lint/typecheck/test の三重ゲートをどのように実行するか、release.yml が tag プッシュ時にどのようにリリースをトリガーするか、size-report.yml と size-data.yml がどのようにバンドルサイズのリグレッションを追跡するか、autofix.yml がどのようにフォーマット問題を自動修正するか。Vue が GitHub Actions を用いて、エンジニアリング規範を回避不可能なパイプラインとしてどのように固化しているかを理解できるだろう。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 前の章: 第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2396,6 +2582,21 @@ concurrency:
 <p>次章ではサイズ予算メカニズムの核心に深く踏み込む：<code>scripts/size-report.js</code>がどのようにサイズデータを解析し、増分を計算し、出力をフォーマットするか、そして<code>usage-size</code>の測定哲学——なぜ Vue が「完全パッケージサイズ」ではなく「実際使用サイズ」を測定することを選んだのか。</p>
 <p>PR ゲートから tag リリースまで、4つのワークフローファイルが共に迂回不可能な自動化ゲートチェーンを構成している。しかしパイプラインがマージをブロックできるのは、定量化可能な判断根拠を掌握している前提があってのことである。次章では Vue のパッケージサイズという核心指標に対するエンジニアリング的ガバナンスに焦点を当てる：<code>scripts/size-report.js</code>が各成果物の gzip 後サイズをどのように計算しベースラインと比較するか、<code>scripts/usage-size.js</code>が実際のユーザー導入シナリオをどのようにシミュレートして実際のオーバーヘッドを見積もるか、そして CI がサイズ超過時にどのようにマージをブロックするか。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 前の章: 第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2574,6 +2775,21 @@ concurrency:
 <p>サイズ予算メカニズムは「何を測定するか」と「どのように比較するか」という問題を解決したが、それはビルド成果物自体が再現可能であるという前提に依存している。次の章では最小デバッグサンドボックスに入る：<code>vite-debug</code>最小限の設定でインタラクティブな Vue 開発環境を起動する方法、そしてそれがローカルビルド成果物とどのように連動し、ソースコードの変更からランタイム検証までの閉ループを形成するか。</p>
 <p>ここまでで、サイズ予算の測定閉ループは明確になった：size-report.js はディレクトリ比較で「どれだけ大きくなったか」を答え、usage-size.js は仮想モジュールで実際のインポートシナリオをシミュレートして「どこが大きいか」を答え、ゲート判定はワークフロー層に委ねられる。このメカニズムにより、サイズ回帰は曖昧な不満から追跡可能なデータへと変わった。しかしデータは問題の存在を教えてくれるだけで、実際に特定して修正するには、問題を素早く再現できる最小環境が必要である。次の章では packages-private/vite-debug に入り、Vue が Vite + SFC でどのように極簡デバッグサンドボックスを構築し、「実際のソースコード上で最小再現を行う」ことを実行可能な日常実践に変えているかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 前の章: 第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2779,6 +2995,21 @@ export default defineConfig({
 <p>サイズ予算は「問題が存在する」ことを教えてくれ、<code>vite-debug</code>は「問題を自分の手で再現する」ことを可能にする。しかし、このサンドボックスモードを monorepo 全体に広げようとすると、一連の境界条件に遭遇する：CI 環境における workspace プロトコルの解決差異、<code>catalog:</code>のバージョンロックによるアップグレードの困難さ、<code>packages-private</code>と<code>packages</code>の間の依存方向の制約……次章ではアーキテクチャのトレードオフと落とし穴回避ガイドに入り、monorepo エンジニアリングが実際のプロジェクトで露呈する境界条件を体系的に整理する。</p>
 <p>ここまでで、サイズ計測から最小再現までのエンジニアリング閉ループを完成させた：vite-debug は極めてシンプルな4つのファイルで、「実際のソースコード上で素早く検証する」ことを日常的に使える実践へと変えた。しかし、この仕組みを実際に再現し始めると、さらに多くの隠れたトレードオフが見えてくる——なぜ packages-private は packages と物理的に分離しなければならないのか？なぜ enum のインライン化は Rollup より前に完了しなければならないのか？次章では、第12章までで露呈した重要な意思決定ポイントと本番での落とし穴記録をまとめ、完全な落とし穴回避チェックリストと意思決定の根拠を提供する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 前の章: 第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2899,6 +3130,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>二重ディレクトリ契約、ビルドスクリプトの帰属判定、リリーススクリプトの二次フィルタリング——これらの仕組みが共にmonorepoエンジニアリングの安全境界を画定している。しかし境界は不変ではない。ビルドツールがRollupからRolldownへ移行し、型テストとランタイムテストが融合へ向かうにつれ、既存のトレードオフ戦略も新たな課題に直面する。次章では、3.0から3.4の変更軌跡に基づき、次世代エンジニアリング体系の進化方向を展望する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 前の章: 第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3136,6 +3382,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>チェンジログの観測ウィンドウを通じて、我々は現在のエンジニアリング体系のストレスポイントを特定し、それに基づいて次世代体系の可能な進化方向を推論した。これらの方向は机上の空論ではなく、実際の本番の落とし穴とトレードオフから生まれたものである。ここに至り、本書の Vue エンジニアリング体系の分析は一区切りとなるが、エンジニアリングの探求に終わりはない——次章は最終章として、視点を Vue 自体から引き離し、これらの経験をより広範なエンジニアリングシーンにどう移転できるかを探る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ja&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 前の章: 第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3187,7 +3448,10 @@ const skipGit = args.skipGit</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不変永久アンカー</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vue3_ja" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ AiReadCode でリポジトリを読む →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        </div>
       </div>
     </aside>
   </div>

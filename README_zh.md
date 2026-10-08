@@ -1,17 +1,32 @@
 # 📚 AiReadCodeBooks — 开源架构百万行专著书库
 
 <p align="center">
-  <a href="https://aireadcode.com"><img src="https://img.shields.io/badge/官方网站-aireadcode.com-00e5ff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="官方网站"></a>
+  <a href="https://aireadcode.com"><img src="https://img.shields.io/badge/官方产品-aireadcode.com-00e5ff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="官方网站"></a>
   <a href="#-旗舰首发专著"><img src="https://img.shields.io/badge/首发专著-4%20本全集上线-10b981?style=for-the-badge" alt="首发专著"></a>
-  <a href="#-100-本开源专著规划矩阵"><img src="https://img.shields.io/badge/架构矩阵-100%20本系统专著-8b5cf6?style=for-the-badge" alt="100本矩阵"></a>
-  <a href="#-标准多语言目录规范"><img src="https://img.shields.io/badge/多语言支持-中文%20%7C%20English-f59e0b?style=for-the-badge" alt="多语言支持"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/开源协议-CC%20BY--NC%204.0-ec4899?style=for-the-badge" alt="开源协议"></a>
+  <a href="#-1000-codebases-开源专著挑战赛--提名投票"><img src="https://img.shields.io/badge/1000%20Codebases-挑战赛-ff007f?style=for-the-badge" alt="1000 Codebases 挑战赛"></a>
+  <a href="#-10国多语言支持"><img src="https://img.shields.io/badge/多语言支持-10国语言-f59e0b?style=for-the-badge" alt="多语言支持"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/开源协议-CC%20BY--NC%204.0-8b5cf6?style=for-the-badge" alt="开源协议"></a>
 </p>
 
 <p align="center">
-  <b>把数十万乃至百万行的大型开源名作，编撰为条理清晰、深度可读、行号真实可查的标准技术专著。</b><br>
+  <b>核心定位：Turn Any Codebase into a Book You Can Actually Understand.</b><br>
+  把数十万乃至百万行的大型开源名作，编撰为条理清晰、深度可读、行号真实可查的标准技术专著。<br>
   每本专著均涵盖全景架构剖析、逐行精读、设计推断以及带行号溯源的 <code>[FACT:file:lines]</code> 真实代码锚点。
 </p>
+
+---
+
+> ### 🚀 1000 Codebases 开源专著挑战赛 · 提名与投票
+> 我们正在系统性编撰 **1000 本经典开源技术专著**。
+> 你希望看到哪个项目的源码全景架构专著（如 `redis`、`react`、`kubernetes`、`sqlite`、`linux`）？
+> **[👉 提名开源项目 / 为下一本专著投票 (Vote)](https://github.com/maleRjc/AiReadCodeBooks/issues/new?template=book_request.yml)**！
+
+> ### ⚡ 为你自己的私有项目生成架构书（本地优先桌面客户端）
+> 想要快速读懂企业遗留单体系统、帮助新员工在几小时内吃透全局架构？
+> 立即下载 **AiReadCode 桌面端**（Tauri 2 + Rust 原生核心驱动）。
+> - **100% 离线私密**：零代码上传任何云端服务器，严格遵循企业离线安全审计。
+> - **免费试读第 1 章**：一键扫描私有仓库，免费生成第一章全局架构全景剖析。
+> **[👉 免费下载 AiReadCode 客户端 (Mac / Windows / Linux)](https://aireadcode.com/?ref=github_books_readme_zh)**
 
 ---
 
@@ -19,20 +34,20 @@
 - **中文原著入口 (当前)**: 查看中文专著目录、100本开源专著大纲矩阵与精读导引。
 - **[English Edition](README.md)**: Access English master catalog and translated monographs.
 - **[网页端双栏交互阅读器](https://malerjc.github.io/AiReadCodeBooks/)**: 体验与官方源码库联动的双栏高亮代码检视器。
-- **[AiReadCode 桌面客户端](https://aireadcode.com/#downloads)**: 无论是大型开源项目还是私有企业代码，一键即可扫描成书。
+- **[AiReadCode 桌面客户端](https://aireadcode.com/?ref=github_books_readme_zh)**: 无论是大型开源项目还是私有企业代码，一键即可扫描成书。
 
 ---
 
 ## 🌟 旗舰首发专著
 
-以下 4 本深度专著已完整编撰完毕，并同时提供 **中文 (`zh/`)** 与 **英文 (`en/`)** 完整章节：
+以下 4 本深度专著已完整编撰完毕，并已支持 **10 国语言**（中文、English、日本語、한국어、繁體中文、Español、Français、Deutsch、Русский、Português）：
 
-| 专著书名 | 赛道领域 | 技术栈 | GitHub Stars | 章节规模 | 在线交互阅读器 | GitHub Markdown 直达 |
+| 专著书名 | 赛道领域 | 技术栈 | GitHub Stars | 章节规模 | 在线交互阅读器 | 10国语言版本直达 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **[Vue 3 源码与工程化全景架构](books/vue3/)** | 前端底层与全栈运行时 | `TypeScript` | ★ 45.8k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [中文章节入口](books/vue3/zh/01-monorepo-philosophy.md) · [English](books/vue3/en/01-monorepo-philosophy.md) |
-| **[Tokio 异步底层机制与运行时剖析](books/tokio/)** | 系统级开发与高性能基础设施 | `Rust` | ★ 28.5k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [中文章节入口](books/tokio/zh/01-async-philosophy-future-waker.md) · [English](books/tokio/en/01-async-philosophy-future-waker.md) |
-| **[vLLM 高性能推理引擎核心实现](books/vllm/)** | AI Infra 与大模型系统工程 | `Python/C++/CUDA` | ★ 35.2k | 14 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [中文章节入口](books/vllm/zh/01-design-philosophy-and-architecture.md) · [English](books/vllm/en/01-design-philosophy-and-architecture.md) |
-| **[NCCL 源码解读：一个 AllReduce 的 GPU 旅程](books/nccl/)** | AI Infra 与大模型系统工程 | `C++/CUDA` | ★ 6.2k | 25 章系统专著 | [在线交互精读](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [中文章节入口](books/nccl/zh/01-allreduce-external-behavior.md) · [English](books/nccl/en/01-allreduce-external-behavior.md) |
+| **[NCCL 源码解读：一个 AllReduce 的 GPU 旅程](books/nccl/)** | AI Infra 与大模型系统工程 | `C++/CUDA` | ★ 6.2k | 25 章系统专著 | [**在线精读 →**](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [🇨🇳 中文](books/nccl/index.html) · [🇺🇸 EN](books/nccl/en/) · [🇯🇵 日本語](books/nccl/ja/) · [🇰🇷 한국어](books/nccl/ko/) · [🇭🇰 繁體](books/nccl/zh-tw/) · [🇪🇸 ES](books/nccl/es/) · [🇫🇷 FR](books/nccl/fr/) · [🇩🇪 DE](books/nccl/de/) · [🇷🇺 RU](books/nccl/ru/) · [🇵🇹 PT](books/nccl/pt/) |
+| **[Tokio 异步底层机制与运行时剖析](books/tokio/)** | 系统级开发与高性能基础设施 | `Rust` | ★ 28.5k | 14 章系统专著 | [**在线精读 →**](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [🇨🇳 中文](books/tokio/index.html) · [🇺🇸 EN](books/tokio/en/) · [🇯🇵 日本語](books/tokio/ja/) · [🇰🇷 한국어](books/tokio/ko/) · [🇭🇰 繁體](books/tokio/zh-tw/) · [🇪🇸 ES](books/tokio/es/) · [🇫🇷 FR](books/tokio/fr/) · [🇩🇪 DE](books/tokio/de/) · [🇷🇺 RU](books/tokio/ru/) · [🇵🇹 PT](books/tokio/pt/) |
+| **[vLLM 高性能推理引擎核心实现](books/vllm/)** | AI Infra 与大模型系统工程 | `Python/C++/CUDA` | ★ 35.2k | 14 章系统专著 | [**在线精读 →**](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [🇨🇳 中文](books/vllm/index.html) · [🇺🇸 EN](books/vllm/en/) · [🇯🇵 日本語](books/vllm/ja/) · [🇰🇷 한국어](books/vllm/ko/) · [🇭🇰 繁體](books/vllm/zh-tw/) · [🇪🇸 ES](books/vllm/es/) · [🇫🇷 FR](books/vllm/fr/) · [🇩🇪 DE](books/vllm/de/) · [🇷🇺 RU](books/vllm/ru/) · [🇵🇹 PT](books/vllm/pt/) |
+| **[Vue 3 源码与工程化全景架构](books/vue3/)** | 前端底层与全栈运行时 | `TypeScript` | ★ 45.8k | 14 章系统专著 | [**在线精读 →**](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [🇨🇳 中文](books/vue3/index.html) · [🇺🇸 EN](books/vue3/en/) · [🇯🇵 日本語](books/vue3/ja/) · [🇰🇷 한국어](books/vue3/ko/) · [🇭🇰 繁體](books/vue3/zh-tw/) · [🇪🇸 ES](books/vue3/es/) · [🇫🇷 FR](books/vue3/fr/) · [🇩🇪 DE](books/vue3/de/) · [🇷🇺 RU](books/vue3/ru/) · [🇵🇹 PT](books/vue3/pt/) |
 
 ---
 

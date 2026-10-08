@@ -6,6 +6,54 @@
   <title>《NCCL ソースコード解説：1つの AllReduce の GPU の旅》| AiReadCodeBooks</title>
   <meta name="description" content="いかなるカーネルコードを深掘りする前に、まず NCCL を実行し、それが外部に露出する挙動を観察する。この章ではカーネルを読まず、ただ一つのことだけを行う：検証可能な参照系を確立すること——その後のいかなる内部メカニズム分析も、最終的にはここで見た外部挙動を説明できなければならない。">
   <meta name="keywords" content="NVIDIA/nccl, NCCL ソースコード解説：1つの AllReduce の GPU の旅, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <meta property="og:title" content="NCCL ソースコード解説：1つの AllReduce の GPU の旅">
+  <meta property="og:description" content="いかなるカーネルコードを深掘りする前に、まず NCCL を実行し、それが外部に露出する挙動を観察する。この章ではカーネルを読まず、ただ一つのことだけを行う：検証可能な参照系を確立すること——その後のいかなる内部メカニズム分析も、最終的にはここで見た外部挙動を説明できなければならない。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="NCCL ソースコード解説：1つの AllReduce の GPU の旅">
+  <meta name="twitter:description" content="いかなるカーネルコードを深掘りする前に、まず NCCL を実行し、それが外部に露出する挙動を観察する。この章ではカーネルを読まず、ただ一つのことだけを行う：検証可能な参照系を確立すること——その後のいかなる内部メカニズム分析も、最終的にはここで見た外部挙動を説明できなければならない。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "NCCL ソースコード解説：1つの AllReduce の GPU の旅",
+  "description": "いかなるカーネルコードを深掘りする前に、まず NCCL を実行し、それが外部に露出する挙動を観察する。この章ではカーネルを読まず、ただ一つのことだけを行う：検証可能な参照系を確立すること——その後のいかなる内部メカニズム分析も、最終的にはここで見た外部挙動を説明できなければならない。",
+  "inLanguage": "ja",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "nccl"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_nccl_ja" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ コードベースを無料分析 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -469,6 +520,21 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
 </details>
 <p>これらの外部挙動は、後続のすべてのソースコード分析の参照系を構成します。第2章ではコアメンタルモデルを構築します：通信ドメイン、チャネル、アルゴリズム、プロトコル、トランスポート層という5つの要素で、NCCL 内部がこれらの概念をどのように組織しているかを見ていきます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1097,6 +1163,21 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>次章では<code>ncclCommInitRank</code>の内部実装を深く掘り下げ、NCCL が空の<code>ncclComm</code>構造体から始めて、どのようにトポロジグラフを構築し、チャネルを初期化し、トランスポート接続を確立し、最終的に使用可能な通信ドメインを構築するかを見る。本章で確立した五つの抽象のメンタルモデルは、次章で一つずつ具体化される。</p>
 <p>これら五つの抽象は孤立して存在するわけではない：通信ドメインはコンテナであり、チャネルは並列実行の単位であり、アルゴリズムはデータをどのようにリダクションするかを決定し、プロトコルはデータをどのようにエンコードするかを規定し、トランスポート層はデータをどのように移動させるかを担当する。それらの組み合わせ——5 つの次元、各次元に 3 から 4 の選択肢——が NCCL 性能チューニングの探索空間を構成する。では、この通信ドメインオブジェクトは一体どのようにゼロから構築されるのか？次章では ncclCommInitRank の呼び出しチェーンを深く掘り下げ、NCCL が初期化段階でデバイス検出、トポロジ発見、チャネル割り当てをどのように完了するかを見て、comm-&gt;rank、comm-&gt;nRanks、comm-&gt;channels などの重要なフィールドの代入タイミングを明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 前の章: 第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1491,6 +1572,21 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>次章ではトポロジー探索とグラフ検索を深掘りし、NCCL がマシン内の GPU、NIC、PCI スイッチをどのように列挙し、完全なトポロジーグラフを構築し、そのグラフ上で最適な ring と tree 構造を探索するかを見ていきます。本章で確立した bootstrap 通信、commAlloc メモリ骨格、initTransportsRank の主要フローは、次章でそのトポロジーの詳細を一つずつ展開します。</p>
 <p>ここまでで、ncclCommInitRank の呼び出しチェーンを完全に辿り、ncclComm オブジェクトがゼロから構築される全過程を明らかにしました。しかし初期化プロセスには、ざっと流しただけの重要な环节があります：NCCL はマシン内部の GPU と NIC をどのように検出し、それに基づいてデータがどの経路を通るべきかを決定するのか？これこそが次章で深掘りするテーマ——トポロジー探索とグラフ検索です。src/graph/topo.cc が PCI/NVLink/NIC デバイスをどのように列挙しトポロジーグラフを構築するか、src/graph/search.cc がそのグラフ上で最適経路をどのように探索するか、そして src/graph/rings.cc と trees.cc が検索結果を Ring と Tree アルゴリズムトポロジーとしてどのように具体化するかを分解します。この仕組みを理解すれば、NCCL が異なるマシンで自動的に適切なアルゴリズムを選択できる理由がわかるでしょう。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 前の章: 第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2044,6 +2140,21 @@ rank 7 -&gt; rank 0</code></pre></div>
 <p>次の章では tuning モジュールを深く掘り下げ、NCCL がトポロジ検索結果とメッセージサイズに基づいて、Ring、Tree、CollNet などのアルゴリズム間で最終選択をどのように行うかを見る。本章で確立したトポロジグラフ、パス検索結果、アルゴリズムテンプレートは、tuning モジュールの入力となる。</p>
 <p>topo.cc のグラフ構築、search.cc のパス検索、そして rings.cc と trees.cc のトポロジ生成を通じて、NCCL は汎用グラフ構造で任意のトポロジを記述し、設定可能な検索アルゴリズムで最適解を見つけ、シンプルなテンプレートで最終アルゴリズムを生成するという設計哲学を実現している。このメカニズムにより、NCCL は2カードのワークステーションから10000カードのクラスタまで、さまざまなマシンで自動的に適切なアルゴリズムを選択できる。しかし、トポロジグラフはアルゴリズムの候補パスを提供するだけで、特定の通信でどのパスを通り、どのプロトコルを使用するかについては、より精密な決定が必要である。次の章では src/tuning ディレクトリに焦点を当て、tuning モジュールがコストモデルとアルゴリズム推定を組み合わせて、Ring/Tree/NVLS/PAT および LL/LL128/Simple の間で最終選択をどのように行うかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 前の章: 第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2611,6 +2722,21 @@ not_valid:
 <p><span class="fact-pill" data-file="src/tuning/tuning.cc" data-lines="258-263" onclick="window.highlightFact('src/tuning/tuning.cc', '258-263')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/tuning.cc:258-263</code></span></p>
 <p>ここまでで、tuning モジュールの決定チェーンは明確になりました：トポロジグラフと通信パラメータを受け取り、コストモデルとアルゴリズム推定を通じて、マイクロ秒レベルで最適な (アルゴリズム, プロトコル, channel, warp) の組み合わせを出力します。しかし選定は始まりに過ぎません——この決定結果は下流でどのように使用されるのか？次の章では src/enqueue/enqueue.cc の幹に入り、一度の ncclAllReduce 呼び出しがパラメータ検証、アルゴリズム/プロトコル決定、channel 分割を経て、最終的に ncclInfo と ncclTaskColl 構造を生成する様子を見ていきます。これは本書が「ユーザー視点」から「エンジン視点」に切り替わる重要な章であり、一度の集合通信呼び出しが host 側で何に翻訳されるのか、そしてそれが後続の kernel 起動との境界を明らかにします。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 前の章: 第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2918,6 +3044,21 @@ exit:
 </details>
 <p>ここまでで、ncclAllReduce がユーザーの呼び出しから一連の実行可能な kernel タスクへとどのように変化するかを明らかにした：パラメータ検証、アルゴリズム/プロトコルの決定、channel 分割、最終的に ncclInfo と ncclTaskColl を生成する。しかしタスクが作成されただけでは最初の一歩に過ぎない——それらは複数の channel にスケジュールされ、kernel 起動パラメータを生成し、group セマンティクスの下でバッチ送信と依存関係の順序付けを処理する必要がある。次の章では src/enqueue/task_sched と src/enqueue/task_prep を深掘りし、「なぜ1回の AllReduce で複数の kernel が起動されるのか、それらの間の順序と依存関係はどのように保証されるのか」に答え、同時に src/group.cc の ncclGroupStart/ncclGroupEnd がどのように複数の API 呼び出しを1回の送信に統合するかを明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 前の章: 第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -3622,6 +3763,21 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
 <p><strong>Q1: もし</strong>：<code>ncclMemoryStackPush</code>内の</p>
 <p>ここまでで、タスク記述は実行可能な起動計画へと変わった：group セマンティクスは複数の API 呼び出しを一度のコミットに統合し、channel 分割はタスクを複数の実行ストリームに割り当て、doLaunches のラウンドスケジューリングはカーネル間の順序と依存関係を保証する。しかし計画はあくまで計画にすぎない。host 側のタスク記述はどのようにして GPU 上の一つの grid になるのか？次の章では ncclLaunchKernel を深く掘り下げ、パラメータ準備、カーネルバリアントの選択、cudaLaunchKernel 呼び出しを見て、host から device への最後の一跳びを完成させる。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 前の章: 第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -4235,6 +4391,21 @@ for kfn in kfns:
 <p><span class="fact-pill" data-file="src/device/generate.py" data-lines="130-154" onclick="window.highlightFact('src/device/generate.py', '130-154')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/generate.py:130-154</code></span></p>
 <p>ここまでで、kernel は GPU 上で起動され、デバイス側もワーク記述を取得しました。しかし真のパフォーマンスを決定するのは、デバイス内部でどのようにデータを転送するかです。次の章では src/device 配下の 3 つのプロトコルプリミティブ：LL、LL128、Simple を深掘りし、同じ AllReduce ロジックに为什么 3 セットの転送プリミティブが必要なのか、そしてそれらの同期方式、バッファレイアウト、flag セマンティクスの違いを見ていきます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 前の章: 第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -4465,6 +4636,21 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
 </details>
 <p>ここまでで、LL、LL128、Simple の三つのプリミティブのデータ転送メカニズムを把握した。これらは上位アルゴリズムに柔軟な性能調整手段を提供する。次の章では集合通信アルゴリズムカーネルに深く入り、AllReduce、AllGather、ReduceScatter などがこれらのプリミティブをどのように呼び出すか、また Ring、Tree、CollNet などのアルゴリズムがデータフローをどのように組織し、最終的にエンドツーエンドの集合通信を完了するかを見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 前の章: 第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -4780,6 +4966,21 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
 <p>ここまでで、デバイス側のアルゴリズムカーネルがどのようにデータフローを組織するかを見てきた。各アルゴリズムは<code>Primitives</code>を通じて前章のプリミティブを呼び出し、アルゴリズム層は「誰が誰に送るか、どの chunk を送るか、リダクションかコピーか」だけを関心ごととする。次章では転送層の抽象化に踏み込み、P2P、SHM、NET、NVLS がどのように一つのインターフェースに統一されるか、そして host 側の proxy スレッドがデバイス側 kernel と協調してクロスマシン通信を完了する仕組みを見ていく。</p>
 <p>核心的な法則：すべてのアルゴリズムは Primitives テンプレートクラスを通じてプリミティブを呼び出し、アルゴリズムは「データフローのトポロジー」のみを担当し、プリミティブは「データの移動」を担当する。この階層化により、新しいアルゴリズムを追加する際はトポロジーロジックを実装するだけでよく、低レベルの同期を気にする必要がない。しかしトポロジーがどう変わろうと、データは最終的に物理リンクを通じて転送される。次章では src/transport ディレクトリに踏み込み、NCCL が統一された transport インターフェースで P2P、SHM、NET、NVLS の差異をどのように隠蔽するか、そして各 transport の setup/connect/send/recv のセマンティクスを見ていく。これはクロスマシン通信を理解する基礎である。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 前の章: 第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -5472,6 +5673,21 @@ struct connectMap {
 <p><strong>落とし穴：MNNVL は NVLS buffer 登録をサポートしない。</strong>参照<code>ncclNvlsSetup</code>：</p>
 <p>ここまでで、NCCL は ncclTransport 抽象層を通じて、P2P、SHM、NET、NVLS の 4 つの異種チャネルを一貫したインターフェースに統一することに成功し、アルゴリズムカーネルは基盤が NVLink か NIC かを気にする必要がなくなった。しかし転送層は「チャネルをどう抽象化するか」を解決しただけで、「データがどう非同期に駆動されるか」にはまだ答えていない。次章では src/proxy.cc と src/include/proxy.h に焦点を当て、proxy スレッドがホスト側でどのようにネットワーク送受信を非同期に進め、GPU カーネルとプロデューサー・コンシューマー関係を形成するかを見て、NCCL の非同期性の鍵となるメカニズムを明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 前の章: 第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -5935,6 +6151,21 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
 </details>
 <p>ここまでで、proxyスレッドがネットワークI/Oとkernel実行をどのように分離し、GPU計算と通信を真に並行させるかを理解した。しかしproxyは単なる駆動者であり、基盤となるネットワーク転送の具体的な実装はまだ明らかにされていない。次の章では<code>net_ib</code>を深掘りし、NCCLがverbs APIをどのようにラップしてInfiniBand転送を実装しているか、そしてGPUDirect RDMAがどのようにNICにGPUメモリを直接読み書きさせるかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 前の章: 第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -6532,6 +6763,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p>もし素朴なダブルチェックロックに置き換えた場合、問題は<strong>メモリリオーダリング</strong>。<code>buildIbvSymbols</code>が<code>ibvSymbols</code>の各フィールドを埋め、その後<code>initResult</code>に書き込みます。メモリバリアがない場合、CPU またはコンパイラが<code>initResult = ncclSuccess</code>を `</p>
 <p>ここまでで、NCCL が net_ib を通じて libibverbs をプラグイン可能なトランスポート層としてカプセル化し、GPUDirect RDMA を利用してネットワークカードが GPU メモリに直接アクセスする仕組みを明らかにしました。このメカニズムは、マシン間通信のレイテンシと帯域幅のボトルネックを解決します。しかし、マシン内通信も同様に重要です——次章では対称メモリと NVLS に入り、NCCL が NVLink マルチキャストを利用してハードウェアアクセラレーションされた集合通信を実現する方法を見ていきます。その時、本章の RDMA メカニズムと NVLS が補完関係にあることがわかるでしょう：前者はマシン間を担当し、後者はマシン内を担当します。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 前の章: 第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -7110,6 +7356,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <details class="reader-details"><summary class="reader-summary">Q1: もし<code>ncclMcPartitionBindMem</code>内の境界チェック<code>if (offsetInPartition + bindSize &gt; partition-&gt;size)</code>を削除した場合、どのようなシナリオでメモリ境界違反が発生するか？なぜこのチェックを「UCとMCの粒度が同じ」で代替できないのか？</summary>
 <p><strong>参考解説</strong>：<span class="fact-pill" data-file="src/transport/multicast.cc" data-lines="200-208" onclick="window.highlightFact('src/transport/multicast.cc', '200-208')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/multicast.cc:200-208</code></span>：</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 前の章: 第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -7368,6 +7629,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 </details>
 <p>RMA の put/get セマンティクスから GIN の GPU 発起ネットワーク通信まで、私たちは NCCL が汎用リモートメモリアクセスエンジンへと進化する重要な一歩を歩み終えました。しかし、どんなに精巧なメカニズムであっても、最終的にはプラグイン体系を通じて外部ネットワークバックエンド、チューニング戦略、パフォーマンスコレクタと接続する必要があります。次の章ではプラグインの世界に入り、NCCL がコアコードを変更することなく、net、tuner、profiler、env などの拡張を動的にロードする方法を見て、google-fastsocket と google-CoMMA を例にエコシステム拡張性の実装要点を明らかにします。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=15" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-14" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-14">← 前の章: 第 14 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -7606,6 +7882,21 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <p>プラグイン体系により NCCL は閉鎖的から開放的へと移行しました：ネットワークバックエンド、チューニング戦略、性能コレクタ、設定ソースをコアコードを変更せずに置き換えられます。しかしプラグインは新たな故障面も導入します——バージョン不一致、ライフサイクル競合、参照カウントリーク。次章では RAS と診断サブシステムに入り、NCCL がどのように故障を検出し、進捗を監視し、長時間のトレーニングタスクで自己修復を実現するかを見ていきます。</p>
 <p>プラグイン体系は NCCL のコア通信パスと交換可能なコンポーネントの間に明確な境界を引き、net、tuner、profiler、env の4種類のプラグインがそれぞれ登録と参照カウントの仕組みを通じて安全にランタイム動作に介入します。しかし拡張可能な通信エンジンは、コンポーネントを柔軟に交換できるだけでなく、長時間のトレーニングで安定して動作する必要があります——ネットワークカードや GPU に故障が発生したとき、NCCL はどのように検出し、監視し、復旧をトリガーするのか？次章では RAS と診断メカニズムに入り、本番環境での信頼性がどのように体系的に保証されるかを見ていきます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=16" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-15" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-15">← 前の章: 第 15 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -7904,6 +8195,21 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <p>を累積し、後続の割り当てやコピーで範囲外アクセスを引き起こす。</p>
 <p>全章を貫く設計原則は、制御プレーンとデータプレーンの分離、状態のハッシュによるバージョン管理、タイムアウトの階層処理、並行処理における参照カウントによるライフサイクル保護である。これらの原則により、RAS は通信性能を損なうことなく障害検出と自己修復を実現できる。そして通信性能のもう一つの重要な支えであるメモリ管理もまた、精密なエンジニアリング上のトレードオフを必要とする。なぜ NCCL は通信前にメモリを登録する必要があるのか？登録キャッシュは性能にどう影響するのか？次章では allocator、登録キャッシュ、ユーザーバッファ登録を深掘りし、これらの疑問の答えを明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=17" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-16" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-16">← 前の章: 第 16 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -8184,6 +8490,21 @@ struct ncclShadowObject {
 <p>メモリ管理は NCCL パフォーマンスの見えない支柱です：<code>ncclSpace</code>極めて簡潔なカットポイント配列でアドレス空間を管理し、<code>ncclShadowPool</code>64 ビットビットマップとハッシュテーブルでデバイス/ホストオブジェクトのペアリングを管理し、<code>ncclMemManager</code>参照カウントと CUDA VMM API でサスペンド・レジュームを実現し、<code>ncclRegister</code>順序付き配列で登録結果をキャッシュして重複 pin を回避します。これら 4 層のメカニズムが共に「通信前にメモリを再登録する必要がない」という重要なパフォーマンス保証を支えています。次の章ではデバイス側コミュニケータと ABI 互換性に入り、<code>devcomm</code>がこれらの host 側のメモリレイアウトを GPU kernel からアクセス可能な構造にどのようにマッピングするかを見ていきます。</p>
 <p>上の図は登録のタイミングを示しています：キャッシュヒット時は参照カウントを増やすだけで、下位層の登録は呼び出しません。キャッシュミス時にのみ新しいエントリを作成し、下位層の登録をトリガーします。ここまでで、host 側のメモリ管理メカニズムは明確になりました。しかし通信は最終的に GPU 上で発生し、kernel は対向 rank のアドレスと接続状態に直接アクセスする必要があります。次の章ではデバイス側コミュニケータと ABI 互換性に入り、devcomm が host 側 ncclComm のメタデータをデバイス側からアクセス可能な構造にどのようにマッピングするか、そしてバージョン化された ABI が新旧 kernel とライブラリの互換性をどのように保証するかを見ていきます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=18" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-17" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-17">← 前の章: 第 17 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -8541,6 +8862,21 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 </details>
 <p>ここまでで、devcomm がバージョン化された ABI を通じて host 側通信ドメインの重要なメタデータをデバイス側に安全にマッピングし、kernel が host ポインタなしで rank、アドレス、接続状態を取得できる仕組みが明らかになりました。このメカニズムは kernel が通信ドメインにアクセスする基本的な問題を解決しましたが、デバイス側の能力はこれにとどまりません。ユーザーが自身の kernel 内で通信プリミティブを直接呼び出したり、通信と計算を同一 kernel に融合させたい場合には、より上位のデバイス側 API とカーネル融合技術が必要です。次の章では nccl_device ディレクトリと関連するサンプルを深掘りし、ncclBarrier、ncclLsaBarrier、ncclGinBarrier などのデバイス側 API がどのようにユーザー kernel の通信参加を可能にし、カーネル融合がどのように起動オーバーヘッドを削減するかを探求し、NCCL をライブラリからプログラミングモデルへと押し進めます。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=19" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-18" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-18">← 前の章: 第 18 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -8798,6 +9134,21 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <p>デバイス側 API とカーネル融合は、NCCL を「呼び出すライブラリ」から「プログラミングするモデル」へと変えた。<code>ncclTeam_t</code>は座標系を提供し、<code>CreateRequirement</code>はリソース予約機構を提供し、3 種類の barrier は共有メモリからネットワークシグナルまでのすべての同期範囲をカバーする。しかし、リソースを宣言し、融合カーネルを書いたからといって、性能が良いとは限らない——barrier の数、チームのサイズ、融合の粒度、その一つ一つの選択がエンドツーエンド性能に影響する。次章では性能チューニングの実践に入り、チューニングパラメータがアルゴリズム選択にどう影響するか、そして実際のベンチマークでチューニング効果をどう検証するかを見ていく。</p>
 <p>ここまでで、私たちはdevcommのメタデータマッピングからnccl_deviceのデバイス側プリミティブまでの全過程を歩み終え、NCCLが「hostで宣言し、deviceで消費する」モデルを通じて、ユーザーカーネルがbarrier系の同期操作を直接呼び出し、通信と計算を同一カーネルに融合させる仕組みを見てきた。しかしこれらのメカニズムを把握した後、より現実的な問題が自然に浮かび上がる。実際の訓練タスクで性能が基準に達しない場合、アルゴリズムの選択が不適切なのか、プロトコルが不一致なのか、それともチャネル数の設定が不合理なのかを、どう判断すればよいのか。次章では、前20章のメカニズムを一連の実行可能なチューニング方法論としてまとめ、性能レポート、コストモデル、環境変数を組み合わせて、現象から根本原因への調査パスを示す。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=20" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-19" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-19">← 前の章: 第 19 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -9480,6 +9831,21 @@ not_valid:
 <p><code>forced</code>配列は<code>ncclTuningContext_t</code>で定義されています（[</p>
 <p>重要なノブは3つだけです：アルゴリズム、プロトコル、チャネル数。他のパラメータはほとんどが補助的な診断や特定シナリオの最適化です。このチューニングパスを習得すれば、ほとんどのシナリオで NCCL をハードウェアに近い性能で動作させることができます。しかし性能以外に、本番環境にはさらに厄介な問題のカテゴリがあります：一見正常なコードが、特定の条件下でハングしたりエラーになったりする可能性です。次の章では、NCCL の本番環境における典型的な落とし穴事例——デッドロック、タイムアウト、バージョン不一致、よくある誤用——をまとめ、NCCL 内部がこれらの問題をどのように検出・報告するかを見ていきます。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=21" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-20" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-20">← 前の章: 第 20 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -10041,6 +10407,21 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 </details>
 <p>本章では本番環境における4種類の典型的な落とし穴とその内部防御メカニズムを分析した。これらの境界条件は、NCCL の安定した動作がコア実装だけでなく、周辺エコシステムの適応と拡張にも依存していることを思い起こさせる。次章ではエコシステムと拡張に移り、nccl4py、nccl4rust、nccl_ep、nccl_ubx といった周辺プロジェクトがどのように NCCL の能力をより広範なユーザーに届けているかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=22" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-21" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-21">← 前の章: 第 21 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -10326,6 +10707,21 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
 <p>次章では、アーキテクチャの進化と将来の方向性に目を向け、NCCL が集合通信ライブラリからプログラマブル通信エンジンへとどのように進化するかを見ていく。</p>
 <p>これらの周辺プロジェクトは、言語バインディング、デバイス API 拡張、シンボルインターセプトを通じて、NCCL のコア機能をさまざまなシナリオで再利用する方法を示している。そしてすべてのプロジェクトに共通する核心的な制約は NCCL ABI バージョンの互換性である——size-based ABI、ポインタ渡し、名前空間パッケージは、いずれもバージョン差異を安定したインターフェースの背後に隔離する技術的手段である。これらの手段を理解することが、これらの周辺プロジェクトを安全に使用する前提となる。これらの拡張プロジェクトがコアの境界を絶えず試す一方で、NCCL 自身も静かに進化している：固定された集合操作からプログラマブル通信エンジンへ、host proxy から GPU 直発へ、登録バッファから対称メモリへ。次章では、ソースコードに残された進化の痕跡に基づき、これらの変化が上位フレームワークの通信方式をどのように再形成するかを探る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=23" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-22" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-22">← 前の章: 第 22 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -10885,6 +11281,21 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
 <p>次の章は本書の最終章である。我々は一度のAllReduceの完全な経路をもう一度辿る——<code>ncclAllReduce</code>呼び出しから始まり、タスクのエンキュー、アルゴリズム選択、kernel起動、proxy推進、ネットワーク転送を経て、結果が返るまで。この振り返りでは、前の24章の知識点を繋ぎ合わせ、完全な認知マップを形成する。</p>
 <p>ここまでで、我々はNCCLが固定集合操作からプログラマブル通信エンジンへと進化する三条の主線を明らかにした：RMAプリミティブの組み合わせ、GPU直送ネットワーク、対称メモリモデル、そしてそれらを支えるteam抽象とバージョン化されたDevCommである。これらのメカニズムは共により柔軟でハードウェア能力に近い通信の未来を指し示している。しかし、アーキテクチャがどのように進化しようとも、一度のAllReduceの完全な経路は常にNCCLを理解する基盤である。次の章では新しいコードを導入せず、第3章から第10章のエンドツーエンドフローを再度通しで解説する——ncclAllReduce呼び出しから、通信ドメインの確立、トポロジ探索、アルゴリズム選定、タスクエンキュー、kernel起動、デバイス側プリミティブ実行、結果の書き戻しまで。あなたは各章に散らばったメカニズムを再び完全なメンタルモデルに組み立て、そして「問題に遭遇したらどの章を調べるべきか」の索引を得るだろう。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=24" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-23" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-23">← 前の章: 第 23 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -11575,6 +11986,21 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
 <p><strong>参考解説</strong>：このロジックは、すべての rank が各アルゴリズムの<code>nChannels</code>、<code>bwIntra</code>、<code>bwInter</code>などのパラメータで一致することを保証します。削除すると、各 rank は自身のローカルトポロジで計算した結果を使用します。異種クラスタを考えてみましょう：rank 0 は 8 カード NVLink マシン上、rank 8 は 4 カード PCIe マシン上にあります。rank 0 は ring に 8 本のチャネルがあると計算し、rank 8 は 4 本と計算します。それらが Ring AllReduce を実行すると、rank 0 は rank 8 が 8 本のチャネルでデータを送るのを待ちますが、rank</p>
 <p>ここまでで、1 回の AllReduce の完全な経路の振り返りを完了しました。初期化、トポロジ探索、アルゴリズム選択、タスクエンキュー、kernel 起動から、デバイス側の実行とネットワーク転送まで、各段階は前の章の詳細な分析に対応しています。この経路図は NCCL を理解するための骨格であるだけでなく、問題を調査するための索引でもあります：初期化失敗は第 3、4 章、アルゴリズム選択ミスは第 5 章、タスクエンキューのエラーは第 6、7 章、kernel 起動失敗は第 8 章、デバイス側のハングは第 9、10 章、ネットワーク問題は第 12、13 章を参照してください。NCCL がプログラマブル通信、GPU ダイレクト発信、対称メモリへと進化するにつれて、この経路はさらに延伸していきます——そしてあなたはすでにそれを追跡する方法を身につけています。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_ja&ch=25" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-24" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-24">← 前の章: 第 24 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -11626,7 +12052,10 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不変永久アンカー</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_nccl_ja" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ AiReadCode でリポジトリを読む →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        </div>
       </div>
     </aside>
   </div>

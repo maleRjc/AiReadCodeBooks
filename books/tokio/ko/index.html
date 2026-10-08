@@ -6,6 +6,54 @@
   <title>《Tokio 비동기 저수준 메커니즘과 런타임 해부》| AiReadCodeBooks</title>
   <meta name="description" content="Rust에서 비동기 프로그래밍은 라이브러리가 아니라 언어 차원의 프로토콜입니다. Tokio가 프로덕션급 런타임이 될 수 있었던 것은 Future를 발명했기 때문이 아니라, 이 프로토콜의 모든 계약에 대한 경계 조건을 정확히 구현했기 때문입니다. 이 장에서는 Tokio의 스케줄러 코드로 ">
   <meta name="keywords" content="tokio-rs/tokio, Tokio 비동기 저수준 메커니즘과 런타임 해부, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/tokio/en/">
+  <meta property="og:title" content="Tokio 비동기 저수준 메커니즘과 런타임 해부">
+  <meta property="og:description" content="Rust에서 비동기 프로그래밍은 라이브러리가 아니라 언어 차원의 프로토콜입니다. Tokio가 프로덕션급 런타임이 될 수 있었던 것은 Future를 발명했기 때문이 아니라, 이 프로토콜의 모든 계약에 대한 경계 조건을 정확히 구현했기 때문입니다. 이 장에서는 Tokio의 스케줄러 코드로 성급히 뛰어들지 않고, 먼저 '삼총사'——Future, Waker, Executor——의 책임 경계와 역방향 제어 흐름을 철저히 설명합니다. 이 세 가지가 어떻게 맞물리는지 이해해야 이후 장에서 Runtime의 조립, work-stealing 스케줄링, I/O 드라이버가 발판을 가질 수 있습니다.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tokio 비동기 저수준 메커니즘과 런타임 해부">
+  <meta name="twitter:description" content="Rust에서 비동기 프로그래밍은 라이브러리가 아니라 언어 차원의 프로토콜입니다. Tokio가 프로덕션급 런타임이 될 수 있었던 것은 Future를 발명했기 때문이 아니라, 이 프로토콜의 모든 계약에 대한 경계 조건을 정확히 구현했기 때문입니다. 이 장에서는 Tokio의 스케줄러 코드로 성급히 뛰어들지 않고, 먼저 '삼총사'——Future, Waker, Executor——의 책임 경계와 역방향 제어 흐름을 철저히 설명합니다. 이 세 가지가 어떻게 맞물리는지 이해해야 이후 장에서 Runtime의 조립, work-stealing 스케줄링, I/O 드라이버가 발판을 가질 수 있습니다.">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tokio 비동기 저수준 메커니즘과 런타임 해부",
+  "description": "Rust에서 비동기 프로그래밍은 라이브러리가 아니라 언어 차원의 프로토콜입니다. Tokio가 프로덕션급 런타임이 될 수 있었던 것은 Future를 발명했기 때문이 아니라, 이 프로토콜의 모든 계약에 대한 경계 조건을 정확히 구현했기 때문입니다. 이 장에서는 Tokio의 스케줄러 코드로 성급히 뛰어들지 않고, 먼저 '삼총사'——Future, Waker, Executor——의 책임 경계와 역방향 제어 흐름을 철저히 설명합니다. 이 세 가지가 어떻게 맞물리는지 이해해야 이후 장에서 Runtime의 조립, work-stealing 스케줄링, I/O 드라이버가 발판을 가질 수 있습니다.",
+  "inLanguage": "ko",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/tokio/ko/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "tokio"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_tokio_ko" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 코드베이스 무료 분석 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -284,6 +335,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 </details>
 <p>여기까지 Future, Waker, Executor 세 가지의 책임 경계와 협력 메커니즘이 명확해졌다: Future는 계산을 정의하고, Waker는 웨이크업을 담당하며, Executor는 실행을 구동한다. 그러나 단일 컴포넌트는 독립적으로 작동할 수 없으며, 이들은 통합된 런타임 환경에 조립되어야 한다. 다음 장에서는 Runtime::new와 Builder::build의 전체 조립 경로를 추적하여 스케줄러, I/O 드라이버, 시간 드라이버, 블로킹 스레드 풀이 어떻게 동일한 Runtime 인스턴스에 주입되는지 살펴보고, current_thread와 multi_thread 두 형태의 조립 단계에서의 근본적 차이를 밝힌다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -670,6 +736,21 @@ impl&lt;T&gt; AutoBox&lt;T&gt; {
 <p><strong>. 만약 런타임 판단으로 바꾸면, 코드 크기가 두 배가 되는 것 외에 어떤 경우에 성능 저하가 발생하는가?</strong>참고 해석<span class="fact-pill" data-file="tokio/src/runtime/mod.rs" data-lines="657-673" onclick="highlightFact('tokio/src/runtime/mod.rs', '657-673')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/mod.rs:657-673</code></span>:<code>if</code>의 주석에 따르면, 런타임<code>spawn_named</code>은<code>T</code>이 각<code>T</code>에 대해 두 번 단형화되게 한다(<code>Pin&lt;Box&lt;T&gt;&gt;</code>와<code>Pin&lt;Box&lt;T&gt;&gt;</code>가 각각 한 번씩). 코드 크기가 두 배가 되는 것 외에 성능 저하는: 1) 명령어 캐시(i-cache) 압력 증가, 두 세트의 harness 코드가 모두 상주해야 하므로; 2) 컴파일러가 '실제로는 한 분기만 타는' 것에 대한 최적화를 할 수 없고, 런타임 분기 예측이 일반적으로 정확하더라도 분기 자체와 두 세트 코드의 레지스터 할당 차이가 누적됨; 3) 더 은밀한 것은,<code>size_of</code>경로가 강제 힙 할당을 하며, 만약 런타임 판단이 어떤 이유로(예:</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 이전: 제 1 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -1031,6 +1112,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <div class="inference-box"><span class="inference-tag">〔설계 추론과 아키텍처 트레이드오프〕</span><p>worker 자신은 헤드에서 가져옵니다(LIFO). 가장 최근에 푸시된 작업이 CPU 캐시에 아직 남아 있을 가능성이 가장 높고, 「방금 깨어나 데이터가 아직 뜨거운」 작업일 가능성이 가장 높기 때문입니다. 도둑은 테일에서 가져옵니다(FIFO). 가장 오래된 작업이 이미 대부분의 작업을 완료했을 가능성이 가장 높아, 그것을 도둑질하면 피해자의 부하를 가장 빠르게 줄일 수 있기 때문입니다. 이 「LIFO 로컬 + FIFO 도둑질」 조합은 work-stealing 스케줄링의 고전적 설계로, 캐시 지역성과 부하 균형을 모두 고려합니다.</p></div>
 <p>여기까지 작업은 Future에서 스케줄 가능한 실체로의 변신을 완료했습니다: 참조 카운트가 할당되고,<code>Cell</code>의 메모리 레이아웃에 들어가, worker의 로컬 큐나 전역 주입 큐에 성공적으로 전달되었습니다. 하지만 작업이 큐에 들어가는 것은 시작일 뿐, 실제로 그것을 움직이게 하는 것은 worker 스레드의 스케줄링 루프입니다. 다음 장에서는 「작업의 일생」 하반부로 들어가, worker가 큐에서 작업을 꺼내<code>Future::poll</code>을 호출하고,<code>Pending</code>반환 시<code>Waker</code>을 통해 깨우기를 등록하여 최종적으로<code>schedule</code>재입대를 트리거하는——「깨우기 → 입대 → 재 poll」이라는 이闭环의 완전한 호출 경로, 그리고 work-stealing 전략과 LIFO 슬롯 최적화가 거기서 밝혀질 것입니다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 이전: 제 2 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -1238,6 +1334,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p><strong>을 반환하는가?</strong>：<code>self.core.borrow_mut().take()</code>참고 해석<code>None</code>이<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="716-724" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '716-724')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:716-724</code></span>을 반환한다는 것은 core가 이미 훔쳐졌다는 의미다<code>block_in_place</code>. core가 훔쳐지는 유일한 경로는 작업 내부에서<code>maybe_move_runtime</code>을 호출하는 것이며, 이는<code>cx.core</code>을 통해 core를<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="473-497" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '473-497')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:473-497</code></span>에서 꺼내 새 스레드<code>Continue</code>，<code>Context::run</code>에게 넘긴다. 이때 현재 스레드는 더 이상 스케줄링 능력을 보유하지 않으며, 만약<code>core.next_task()</code>을 반환하면 계속 루프를 돌며<code>self.core</code>등 core가 필요한 메서드를 호출하지만 core는 이미<code>Break</code>에 없으므로 panic 또는 상태 불일치가 발생한다.<code>Context::run</code>을 반환하면<code>return</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="594-597" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '594-597')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:594-597</code></span>이 직접<code>run</code>하여 제어권을<code>cx.defer.wake()</code> <span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="564" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '564')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:564</code></span>함수에 돌려주고, 그것이 후속(예:<span class="fact-pill" data-file="tokio/src/runtime/scheduler/multi_thread/worker.rs" data-lines="719-721" onclick="highlightFact('tokio/src/runtime/scheduler/multi_thread/worker.rs', '719-721')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio/src/runtime/scheduler/multi_thread/worker.rs:719-721</code></span>)을 처리한다. 주석도<code>reset_lifo_enabled</code>을 설명한다: 이때<code>Context::run</code>을 호출할 수 없는데, core가 훔쳐졌고 훔친 자가</p>
 </details>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 이전: 제 3 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -1432,6 +1543,21 @@ let res = self.0.head.compare_exchange_weak(prev_packed, next_packed, AcqRel, Ac
 <p>가 즉시 반환하게 하고, driver는 등록 집합을 다시 확인하고 블로킹을 종료할 수 있습니다.<code>unpark</code>만약 무조건<code>ScheduledIo</code>를 호출하면: 마지막이 아닌 참조를 등록 해제할 때마다 driver를 깨워 불필요한 웨이크업을 유발합니다. 많은 연결이 동일한<code>TcpStream</code>를 공유하는 시나리오(예:<code>split</code>후반 읽기/쓰기 두 부분), 매번 절반을 drop할 때마다 driver를 깨워 CPU 오버헤드가 증가한다. 더 심각하게는</p>
 <p>이 장에서는 Reactor가 epoll 이벤트를 Waker 깨우기로 변환하는 방법을 분석했다: TcpStream의 poll_read_ready에서 출발하여 Registration의 등록과 조회를 거쳐 ScheduledIo의 준비 비트와 Waker 슬롯에 도달하고, Driver가 이벤트 루프에서 Token을 기반으로 위치를 찾아 깨우기를 트리거한다. 핵심 설계로는 Token이 포인터로서 O(1) 조회를 구현하고, 읽기/쓰기 이중 Waker 슬롯이 동시 읽기/쓰기 분리를 지원하며, events_busy 독립 버퍼가 이벤트 기아를 방지하고, assume_ready 낙관적 추측이 accept 시나리오를 최적화한다. 여기까지 I/O 준비 알림의 폐쇄 루프가 완성되었다. 하지만 비동기 런타임은 또 다른 종류의 '준비'—시간—을 처리해야 한다. 다음 장에서는 tokio::time::sleep과 timeout의 구현을 분석할 것이다: 타이머가 어떻게 시간 휠에 삽입되는지, 시간 휠이 만료 시간에 따라 어떻게 계층화되는지, driver가 다음 park의 타임아웃을 어떻게 계산하고 만료된 작업을 트리거하는지. '시간도 하나의 I/O 이벤트'라는 통합 추상화와 start_paused 및 test clock이 테스트에서 시간을 어떻게 제어 가능하게 만드는지 살펴볼 것이다.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 이전: 제 4 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -1847,6 +1973,21 @@ while let Some(item) = entries.pop_back() {
 </details>
 <p>여기까지 우리는 시간 구동이 어떻게 I/O driver의 park/unpark 메커니즘을 재사용하여 타이머와 fd 준비가 동일한 대기 진입점을 공유하게 하는지 살펴보았다. 타이밍 휠의 계층화, 만료 계산 및 Waker 트리거는 비동기 런타임이 "시간 준비"를 처리하는 완전한 폐루프를 구성한다. 그러나 비동기 대기는 I/O와 시간에 그치지 않는다——여러 태스크가 같은 락을 두고 경쟁하거나 채널을 통해 메시지를 전달할 때, Waker는 어디에 저장되어야 하는가? 다음 장에서는 tokio::sync 패밀리로 들어가, Mutex, Semaphore 및 각종 채널이 "대기자 큐 + Waker 깨우기"에서 어떻게 서로 다른 절충을 하는지 살펴본다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 이전: 제 5 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -2135,6 +2276,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 <p>를 더 쉽게 지원한다. 여기까지, 우리는<code>tokio::sync</code>가 "대기자 큐 + Waker 깨움"이라는 통일된 패턴으로 Mutex, Semaphore 및 다양한 채널의 비동기 대기를 어떻게 지원하는지 명확히 보았다. 그러나 모든 블로킹이 비동기화될 수 있는 것은 아니다—일부 작업(예: 파일 시스템 호출, CPU 집약 계산)은 본질적으로 스레드를 블록한다. 다음 장에서는<code>spawn_blocking</code>스레드 풀과<code>block_on</code>의 경계로 들어가, Tokio가 비동기 런타임과 동기 블로킹 사이에 어떻게 다리를 놓는지 살펴본다.</p>
 <p>Waker의 저장 위치는 원시 연산에 따라 다르다: Mutex/Semaphore는 하위 세마포어의 대기 큐에, oneshot은 Inner의 tx_task/rx_task 필드에, mpsc는 chan 모듈의 송수신 큐에 저장된다. 그러나 깨우기 메커니즘은 통일되어 있다: 상태 변경 시 Waker를 꺼내 wake_by_ref를 호출하면 실행기가 태스크를 다시 스케줄링한다. 여기까지 비동기 원시 연산 내부의 대기와 깨우기가 명확히 드러났다. 그러나 모든 코드가 비동기화될 수 있는 것은 아니다—다음 장에서는 spawn_blocking으로 블로킹 작업을 브리징하는 방법과 block_on이 비동기 컨텍스트가 아닌 곳에서 Future를 구동하는 방법을 살펴본다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 이전: 제 6 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -2314,6 +2470,21 @@ match &amp;self.scheduler {
 </details>
 <p>블로킹 스레드 풀과 block_on은 비동기 런타임의 능력 경계를 설정합니다: 전자는 스레드를 양보할 수 없는 작업을 전용 스레드로 격리하고, 후자는 비동기 진입점이 아닌 곳에서도 Future를 구동할 수 있게 합니다. 하지만 이 두 경계는 코드에서 항상 직접 작성되는 것이 아닙니다——다음 장에서는 매크로의 세계로 들어가서 #[tokio::main], select! 및 join!이 컴파일 시점에 이러한 런타임 코드를 어떻게 생성하는지 살펴보겠습니다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 이전: 제 7 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -2451,6 +2622,21 @@ match &amp;self.scheduler {
 <p>매크로는 보일러플레이트 코드와 컴파일 타임 검증을 사용자로부터 대신 떠맡지만, 그것이 생성하는 것은 여전히 평범한 Future와<code>poll</code>호출이다. 다음 장에서 우리는 매크로의 컴파일 타임 세계를 떠나 런타임 I/O 추상화 계층으로 들어가,<code>AsyncRead</code>/<code>AsyncWrite</code>가 어떻게 바이트 스트림을 프레임으로 자르는지, 그리고<code>Framed</code>코덱 프레임워크가<code>select!</code>의 취소 안전 제약 아래에서 어떻게 올바르게 작동하는지 살펴본다.</p>
 <p><code>#[tokio::main]</code>의 본질은 「설정 파싱 + Builder 체인 생성 +<code>block_on</code>래핑」이며, 설정 검증은 컴파일 타임에 완료되고, flavor가 builder 시작점과 build 메서드를 결정한다.<code>select!</code>의 핵심은 「튜플에 Future 저장 + 비트마스크로 비활성화 기록 + 무작위 시작점으로 공정성 보장」이며, 패턴이 일치하지 않으면 분기를 비활성화하고, 취소 안전성은 drop된 Future가<code>.await</code>에서 재시작 가능한지에 달려 있다.<code>join!</code>와<code>select!</code>는 골격을 공유하지만 의미는 반대이며, 전자는 전부 완료될 때까지 기다리고 후자는 어느 하나라도 준비되면 반환한다. 세 가지 모두 Tokio 매크로 설계의 핵심 트레이드오프를 보여준다: 보일러플레이트 코드와 컴파일 타임 검증은 매크로에 맡기고, 런타임 의미의 복잡성(특히 취소 안전성)은 사용자가 명시적으로 이해하도록 남겨둔다. 매크로가 런타임 코드를 어떻게 생성하는지 이해한 후, 다음 자연스러운 질문은: 이 코드들이 실제로 바이트 스트림을 읽고 쓰기 시작할 때, Tokio는 어떤 추상화를 제공하는가? 제 10장에서는<code>AsyncRead</code>/<code>AsyncWrite</code>와 코덱 프레임워크를 분석하여,<code>BufReader</code>/<code>BufWriter</code>가 어떻게 시스템 호출을 줄이는지,<code>copy_bidirectional</code>가 어떻게 양방향 전달을 구동하는지,<code>Framed</code>가 어떻게 바이트 스트림을 프레임으로 분할하는지 살펴봄으로써 「비동기 I/O의 추상화 경계는 어디인가」에 답한다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 이전: 제 8 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -2767,6 +2953,21 @@ Ok(Some(n))</code></pre></div>
 <p><strong>참고 해석</strong>: 검사를 제거하면,<code>n</code>은(는)<code>usize</code>(으)로 변환되어<code>decode_data</code>。<code>decode_data</code>에 전달된다<code>src.len() &lt; n</code>을(를) 검사할 때<code>None</code>을(를) 반환하지만,<code>decode_head</code>끝의<code>src.reserve(n.saturating_sub(src.len()))</code> <span class="fact-pill" data-file="tokio-util/src/codec/length_delimited.rs" data-lines="559" onclick="highlightFact('tokio-util/src/codec/length_delimited.rs', '559')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/codec/length_delimited.rs:559</code></span>이(가) 4GB 메모리를 예약하려 시도하여 OOM 또는 할당 실패 panic을 유발한다. 검사는<code>length_adjustment</code>이전에 있어야 하는데,<code>length_adjustment</code>이(가) 음수일 수 있기 때문이다(예:<code>-2</code>). 만약 먼저 조정하고 나중에 검사하면,<code>0xFFFFFFFF - 2</code>은(는) 여전히 4GB에 가까워 검사가 무의미해지며; 또한 음수 조정으로 인해<code>checked_sub</code>이(가) 먼저 실패할 수 있어, 오류 메시지가 "오버플로"로 오인되어 "프레임 과대"가 아닌 것으로误导된다. 소스 코드 순서 [FACT:tokio-util/src/codec/length_delimited.rs:526-</p>
 <p>여기까지 우리는 Tokio가 바이트 스트림과 메시지 프레임 사이에 두는 두 계층의 추상화를 정리했다. tokio::io는 바이트 운반을 담당하고, tokio-util의 codec 프레임워크는 프레임 분할과 인코딩/디코딩을 담당한다. Framed가 프로토콜 구현의 출발점이 되는 이유는 바로 '완전한 메시지 하나 읽기'라는 고빈도 요구를 재사용 가능한 Stream/Sink 어댑터로 캡슐화하기 때문이다. 하지만 프레임은 데이터의 컨테이너일 뿐이며, 프로토콜이 동적 작업 집합, 구조적 취소, 또는 더 복잡한 스트리밍 조합을 처리해야 할 때 Framed만으로는 충분하지 않다. 다음 장에서는 tokio-stream과 tokio-util의 확장 메커니즘으로 들어가, StreamExt 조합자, StreamMap/JoinSet/TaskTracker, 그리고 CancellationToken이 어떻게 하위 Waker와 스케줄링 메커니즘을 재사용하여 비동기 반복과 작업 관리에 더 상위 수준의 도구를 제공하는지 살펴본다.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 이전: 제 9 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -3296,6 +3497,21 @@ fn notify_now(&amp;self) {
 <p><span class="fact-pill" data-file="tokio-util/src/task/task_tracker.rs" data-lines="452-464" onclick="highlightFact('tokio-util/src/task/task_tracker.rs', '452-464')" title="在右侧代码面板查看真实源码切片">📎 <code>tokio-util/src/task/task_tracker.rs:452-464</code></span></p>
 <p>여기까지 StreamExt는 poll_next를 조합 가능한 반복자로 만들었고, StreamMap과 TaskTracker는 동적 작업 집합에 귀속을 부여했으며, CancellationToken은 트리로 취소 신호를 전체 작업 트리에 전파합니다. 이 세 계층 확장의 공통점은: 새로운 스케줄링 원시 요소를 도입하지 않고, Waker, Notify, 원자적 카운트 같은 기존 메커니즘을 재조합하여 더 높은 수준의 추상화를 만든 것입니다. 하지만 핵심 질문이 떠오릅니다: 이 조합자, 작업 집합, 취소 트리가 같은 스케줄러에서 동시에 실행될 때, 어떤 작업이 오랫동안 양보하지 않아 다른 작업을 기아 상태로 만들지 않도록 어떻게 보장할까요? 다음 장에서는 Tokio의 coop 협력 예산 메커니즘을 깊이 파고들어, 각 작업이 한 스케줄링 주기에서 예산을 어떻게 소비하고, 소진 후 능동적으로 양보하며, budget이 스레드 로컬 저장소에서 어떻게 전달되는지 살펴봄으로써 이 고전적 문제를 해결합니다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 이전: 제 10 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -3607,6 +3823,21 @@ impl&lt;T&gt; Drop for WakeReceiverOnDrop&lt;'_, T&gt; {
 </details>
 <p>coop 메커니즘은 예산 제약을 통해 작업이 리소스 작업 중에 능동적으로 양보하도록 하여, 비선점 모델에서 스케줄링 공정성을 유지한다. 그러나 예산 소진으로 트리거된 Pending은 취소 경로에서 진정한 대기와 일관되게 동작해야 하며, 그렇지 않으면 select! 등의 조합자가 상태 일관성을 깨뜨린다. 다음 장에서는 생산 함정과 경계 조건: 취소 안전성, panic 전파와 종료 순서로 들어가며, 이러한 "겉보기에 무관한 메커니즘이 경계에서 결합되는" 사례를 더 많이 보게 될 것이다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 이전: 제 11 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -3863,6 +4094,21 @@ pub(super) struct Receiver {
 <p>다음 장에서는 아키텍처 트레이드오프와 미래 진화로 들어간다: io_uring에서 플러거블 드라이버까지. Tokio가 API 안정성을 유지하면서 차세대 I/O 인터페이스를 위해 어떻게 확장 공간을 확보하는지, 그리고 현재 아키텍처에서 어떤 설계 결정이 역사적 부담이고 어떤 것이 선제적 배치인지 살펴볼 것이다.</p>
 <p>이로써 우리는 Tokio 프로덕션 환경에서 가장 실수하기 쉬운 경계 지대를 모두 살펴보았다: 취소 안전성이 출력 저장이 힙에 있다는 것에 의존하는 점, try_read_output의 원자성; JoinHandle::drop은 태스크를 취소하지 않고 abort만이 실제로 취소하지만 spawn_blocking에는 효과가 없다는 점; panic이 catch_unwind에 의해 포착된 후 JoinError로 패키징되어 await하지 않으면 조용히 손실된다는 점; Runtime 종료에는 엄격한 순서가 있어 async 컨텍스트에서 drop하면 panic이 발생한다는 점; 시그널 핸들러는 프로세스 전역 상태이며 등록 후 절대 해제되지 않는다는 점. 이러한 규칙 뒤에는 정확성과 성능 사이의 Tokio의 반복적인 트레이드오프가 있다. 다음 장에서는 구체적인 메커니즘을 벗어나 아키텍처 높이에서 이러한 트레이드오프의 유래를 되돌아보고, io_uring, 드라이버 재구성, 커스텀 실행기 인터페이스가 Tokio를 어디로 이끌지 전망할 것이다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 이전: 제 12 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -4164,6 +4410,21 @@ memory leaks.</code></pre></div>
 </details>
 <p>여기까지, 우리는 구체적인 함정에서 아키텍처 트레이드오프로의 상승을 완료했다. 이 책 전체를 돌아보면, Future의 지연 평가에서 스케줄러의 공정성까지, 취소 안전성에서 종료 순서까지, 그리고 이 장의 io_uring과 플러그 가능 드라이버까지, 모든 논의는 하나의 핵심을 둘러싸고 있다: 비동기 경계에서 상태 소유권을 명확히 구분하는 것. Tokio의 아키텍처는 불변하지 않으며, io_uring의 제로 카피 I/O, 드라이버 계층의 디커플링, 커스텀 실행기 인터페이스의 개방이 모두 그것을 더 유연하고 더 효율적인 방향으로 진화시키고 있다. 이 책을 덮을 때, 남겨지길 바라는 것은 API 사용법 더미가 아니라 일련의 판단력이다: 언제 런타임을 신뢰해야 하는지, 언제 하위 계층에 개입해야 하는지, 그리고 프로덕션 환경에서 물어뜯는 조합을 어떻게 피할 것인지. 비동기 Rust 생태계는 여전히 빠르게 성장하고 있으며, 소스 코드와 공식 문서를 추적하는 것이 어떤 결론을 기억하는 것보다 더 중요하다.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">모든 코드베이스를 진정으로 이해할 수 있는 책으로</span>
+            <h3 class="cta-title">이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기</h3>
+            <p class="cta-desc">Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_tokio_ko&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 이전: 제 13 장</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">맨 위로 ↑</a>
@@ -4215,7 +4476,10 @@ memory leaks.</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 불변 영구 앵커링</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_tokio_ko" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ AiReadCode로 내 저장소 읽기 →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="tokio/src/future/mod.rs">tokio/src/future/mod.rs</span>
+        </div>
       </div>
     </aside>
   </div>

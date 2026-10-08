@@ -6,6 +6,54 @@
   <title>《vLLM 高性能推理引擎核心实现》· 源码全景架构精读 | AiReadCodeBooks</title>
   <meta name="description" content="本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。">
   <meta name="keywords" content="vllm-project/vllm, vLLM 高性能推理引擎核心实现, 源码解析, 架构设计, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <meta property="og:title" content="vLLM 高性能推理引擎核心实现">
+  <meta property="og:description" content="本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vllm/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="vLLM 高性能推理引擎核心实现">
+  <meta name="twitter:description" content="本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "vLLM 高性能推理引擎核心实现",
+  "description": "本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。",
+  "inLanguage": "zh",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vllm/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vllm"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
   <link rel="stylesheet" href="../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vllm_zh" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 深度解析你的代码库 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -72,7 +123,7 @@
           <span>vllm-project/vllm</span> · <span>★ 35.2k</span>
         </div>
       </div>
-      <nav aria-label="书籍目录导航">
+      <nav aria-label="全书章节目录">
         <ul class="reader-toc-list" id="reader-toc">
           <li><a href="#ch-01" class="toc-link active" data-target="ch-01"><span class="toc-num">01</span><span>第 1 章：vLLM 设计哲学与宏观架构：高吞吐大模型推理引擎</span></a></li>
           <li><a href="#ch-02" class="toc-link" data-target="ch-02"><span class="toc-num">02</span><span>第 2 章：核心抽象与数据结构：Request、Sequence 与 KV Cache</span></a></li>
@@ -308,6 +359,21 @@ class VllmConfig:
 <p><strong>参考解析</strong>：<code>compute_hash()</code> 的输出被用作 torch.compile 编译缓存的键。如果 <code>attention_sink_tokens</code> 影响计算图结构但未纳入哈希，那么当用户从 <code>attention_sink_tokens=0</code> 改为 <code>attention_sink_tokens=4</code> 时，哈希值不变，vLLM 会复用之前编译的图（不含 sink token 逻辑）。结果是模型静默地产生错误输出——不报错、不崩溃，只是结果不对。这类故障特别危险的原因在于：(1) 它不会触发任何异常或日志警告；(2) 输出仍然是「看起来合理」的文本，只是质量下降或行为异常；(3) 排查时需要对比编译缓存命中情况和实际配置差异，定位成本极高。这就是为什么注释中反复强调新字段必须评估是否影响计算图。</p>
 <p>本章从一次朴素推理请求的崩溃现场出发，揭示了 vLLM 必须解决的两个根本矛盾：显存碎片与批处理空转，并给出了 PagedAttention 与 Continuous Batching 这两把钥匙。我们随后鸟瞰了 vLLM v1 的整体架构，理清了进程模型、组件分层以及请求的完整生命周期。有了这张全局地图，下一章将深入 vLLM 最核心的数据结构——Request、Sequence 和 KV Cache 的 block 管理机制，揭示 PagedAttention 如何在代码层面实现「逻辑连续、物理离散」的显存映射。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -375,6 +441,21 @@ class VllmConfig:
 <p>本章剖析了 vLLM v1 的两个核心数据结构。<code>Request</code> 是请求在引擎内部的生命周期载体，它通过双 token 列表、异步调度计数器和 block hash 机制，支撑了连续批处理和前缀缓存两大核心功能。<code>KVCacheSpec</code> 及其继承体系则定义了 KV cache 的显存布局规格，从标准的 <code>FullAttentionSpec</code> 到 <code>MLAAttentionSpec</code>、<code>MambaSpec</code>，覆盖了多样化的模型架构需求。注册表模式使得新增 spec 类型无需修改核心代码，保证了系统的可扩展性。</p>
 <p>至此，我们已经看清了 Request 如何从 EngineCoreRequest 转换而来，以及它如何通过状态计数器、block hash 等机制支撑调度决策。但一个外部请求究竟如何穿越 API Server、chat template 与多模态处理，最终变成 EngineCoreRequest？下一章将进入请求入口层，完整追踪这条从 HTTP/CLI 到 EngineCore 的链路。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 上一章：第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -518,6 +599,21 @@ class VllmConfig:
 <p>下一章将进入调度器，看 EngineCore 如何用连续批处理与显存感知策略编排这些请求。</p>
 <p>至此，请求已经完成从外部输入到 EngineCoreRequest 的规范化转换，并抵达引擎核心的入口。但请求进入之后并不会立即执行——引擎需要决定在每一步中处理哪些请求、如何分配有限的显存资源。下一章将深入 EngineCore 的调度循环，剖析 Scheduler 如何在连续批处理中权衡吞吐与延迟，以及 chunked prefill、prefix caching 与 KV block 分配如何协同工作。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 上一章：第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -662,6 +758,21 @@ class VllmConfig:
 <p><strong>参考解析</strong>：<code>num_computed_tokens = 0</code> 意味着重新调度时从第一个 token 开始 <span class="fact-pill" data-file="vllm/v1/core/sched/scheduler.py" data-lines="1561" onclick="window.highlightFact('vllm/v1/core/sched/scheduler.py', '1561')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/core/sched/scheduler.py:1561</code></span>。<code>request.num_tokens</code> 保持不变，包含原始 prompt 和已生成的输出 token。如果前缀缓存未命中，需要重算全部 <code>num_tokens</code> 个 token 的 prefill。如果命中，<code>get_computed_blocks</code> 会返回命中的块，<code>num_computed_tokens</code> 从命中位置开始 <span class="fact-pill" data-file="vllm/v1/core/kv_cache_manager.py" data-lines="296-300" onclick="window.highlightFact('vllm/v1/core/kv_cache_manager.py', '296-300')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/core/kv_cache_manager.py:296-300</code></span>。注意被抢占请求的输出 token 也在 <code>num_tokens</code> 中，它们的前缀哈希在生成时已被缓存（如果启用），所以重新调度时这些输出 token 的前缀也可能命中。但 <code>max_cache_hit_length = num_tokens - 1</code> 意味着最后一个 token 总要重算。</p>
 <p>调度器输出的 <code>SchedulerOutput</code> 明确了这一步的执行内容：新请求的块 ID、缓存请求的 token 数、投机 token、编码器输入等。下一章将追踪这个输出如何被 ModelRunner 消费，从 <code>SchedulerOutput</code> 一路走到 GPU 前向传播。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 上一章：第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -856,6 +967,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 <p><strong>参考解析</strong>：<code>set_forward_context</code> 是一个上下文管理器 <span class="fact-pill" data-file="vllm/forward_context.py" data-lines="278-288" onclick="window.highlightFact('vllm/forward_context.py', '278-288')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/forward_context.py:278-288</code></span>，在 <code>with</code> 块退出时通过 <code>override_forward_context</code> 的 <code>finally</code> 恢复旧值 <span class="fact-pill" data-file="vllm/forward_context.py" data-lines="263-274" onclick="window.highlightFact('vllm/forward_context.py', '263-274')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/forward_context.py:263-274</code></span>。在 <code>execute_model</code> 中，<code>set_forward_context</code> 的 <code>with</code> 块只包裹 <code>_model_forward</code> 调用 <span class="fact-pill" data-file="vllm/v1/worker/gpu_model_runner.py" data-lines="4408-4433" onclick="window.highlightFact('vllm/v1/worker/gpu_model_runner.py', '4408-4433')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/worker/gpu_model_runner.py:4408-4433</code></span>，前向返回后上下文即被恢复。如果 <code>sample_tokens</code> 在前向完成后调用，<code>get_forward_context()</code> 会断言失败 <span class="fact-pill" data-file="vllm/forward_context.py" data-lines="208-214" onclick="window.highlightFact('vllm/forward_context.py', '208-214')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/forward_context.py:208-214</code></span>，因为 <code>_forward_context</code> 已被重置为 <code>None</code>（或外层值）。这正是 <code>ExecuteModelState</code> 存在的原因 <span class="fact-pill" data-file="vllm/v1/worker/gpu_model_runner.py" data-lines="463-476" onclick="window.highlightFact('vllm/v1/worker/gpu_model_runner.py', '463-476')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/worker/gpu_model_runner.py:463-476</code></span>：采样所需的状态（<code>logits</code>、<code>hidden_states</code>、<code>slot_mappings</code>）被显式保存在 NamedTuple 中，而非依赖 <code>ForwardContext</code> 的隐式传递。如果误以为 <code>ForwardContext</code> 在 <code>sample_tokens</code> 中仍可用，会触发断言错误或读取到错误的元数据。</p>
 <p>至此，我们走完了从 SchedulerOutput 到 GPU 前向传播的完整路径：Executor 分发、Worker 执行、GPUModelRunner 将逻辑清单翻译为物理张量，并通过 forward_context 将批描述注入每一层。然而，模型前向传播中最耗时的部分——注意力计算——尚未展开。下一章将深入注意力后端，看 attn_metadata 中的 block table 和 slot mapping 如何被 PagedAttention 内核消费，以及 FlashAttention、FlashInfer、Triton 等不同后端如何通过统一接口被选择和调度。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 上一章：第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -998,6 +1124,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 <p><strong>参考解析</strong>：注释说明 fused draft decode 跨 draft 步复用捕获的元数据对象，而 DCP 的 build-time 主机侧决策（如 <code>skip_dcp_context_attention()</code>）会改变元数据形状/控制路径，例如 <code>max_dcp_context_kv_len</code> <span class="fact-pill" data-file="vllm/v1/attention/backends/flash_attn.py" data-lines="736-741" onclick="window.highlightFact('vllm/v1/attention/backends/flash_attn.py', '736-741')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/attention/backends/flash_attn.py:736-741</code></span>。这些 Python 字段在 CUDA graph replay 之间不会原地刷新。具体错误：draft 步之间序列长度增长，<code>skip_dcp_context_attention</code> 的判定可能从 True 变 False（或反之），但复用的元数据对象仍保留旧值。若旧值是 <code>max_dcp_context_kv_len = 0</code>，内核会走&quot;无 DCP context&quot;路径 <span class="fact-pill" data-file="vllm/v1/attention/backends/flash_attn.py" data-lines="1565-1589" onclick="window.highlightFact('vllm/v1/attention/backends/flash_attn.py', '1565-1589')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/v1/attention/backends/flash_attn.py:1565-1589</code></span>，跳过跨 rank 的 context 注意力，导致输出缺失上下文信息——静默错误，不崩溃。这正是&quot;性能优化与正确性冲突时选择正确性&quot;的体现。</p>
 <p>至此，注意力后端从抽象接口到内核实现的完整链路已经打通：模型层通过 AttentionImpl 统一调用，后端负责将 block_table、slot_mapping 等元数据翻译为具体内核参数，而 FlashAttentionBackend 的 PagedAttention 实现则展示了分页 KV Cache 下的 gather 语义与 CUDA Graph 兼容策略。但注意力计算产出的只是隐藏状态，模型最终要输出的是下一个 token。这些隐藏状态如何变成 logits，logits 又如何经过采样与后处理，最终以流式文本返回给客户端？下一章将追踪这最后一公里。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 上一章：第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1132,6 +1273,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 <p><strong>参考解析</strong>：功能上正确——从 0 搜索能找到所有匹配，包括跨 token 边界的。但性能上，每步都对整个 <code>output_text</code> 做 <code>find</code>，复杂度从 O(new_char_count) 退化为 O(total_length)，长序列下是 O(n²)。更严重的是，从 0 搜索可能匹配到<strong>已经发送给用户的历史文本</strong>中的 stop string 子串，导致重复触发 stop 或错误截断。原设计的偏移 <code>1 - new_char_count - stop_string_len</code> 精确覆盖&quot;新增字符 + 可能跨界的 stop string 前缀&quot;这一最小必要窗口，既保证不漏检又避免历史误匹配。</p>
 <p>至此，单机上的推理全链路已经打通：从注意力计算到采样输出，每个环节都直接影响最终交付的文本质量。但当模型规模超出单卡容量时，这条链路必须跨越多个设备协同完成。下一章我们将离开单机，进入分布式并行：TP、PP、EP 如何切分模型，通信原语如何在 rank 间同步这些采样结果。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 上一章：第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1296,6 +1452,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 <p><strong>参考解析</strong>：<code>_all_ranks_result_ready</code> 对 <code>has_result</code> 做 all-reduce 求和，然后判断是否等于组大小 <span class="fact-pill" data-file="vllm/distributed/eplb/eplb_state.py" data-lines="1030-1032" onclick="window.highlightFact('vllm/distributed/eplb/eplb_state.py', '1030-1032')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/distributed/eplb/eplb_state.py:1030-1032</code></span>。如果某个 rank 的 <code>rebalanced</code> 提前变 False，它的 <code>pending_result</code> 可能已被消费，<code>has_result</code> 为 0，导致求和结果小于组大小，其他 rank 会一直等待。更糟的是，如果这个 rank 已经退出 <code>while ms.rebalanced</code> 循环，它不会再参与后续的 all-reduce，其他 rank 的 all-reduce 会永久阻塞——这就是注释所说的&quot;hang at collective communication calls&quot;。防护手段是 <code>_all_ranks_result_ready</code> 用 CPU 组而非 device 组，且 <code>drain_async</code> 在重排前显式排空所有 pending result <span class="fact-pill" data-file="vllm/distributed/eplb/eplb_state.py" data-lines="985-1022" onclick="window.highlightFact('vllm/distributed/eplb/eplb_state.py', '985-1022')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/distributed/eplb/eplb_state.py:985-1022</code></span>。</p>
 <p>至此，我们理清了卡间通信的建组、切分与负载再平衡机制。但分布式推理的通信挑战不止于单实例内部——当 prefill 与 decode 被拆到不同实例上时，KV Cache 需要跨节点传输。下一章我们将离开“卡间通信”，进入“实例间通信”：KV Cache 如何在分离式部署的 prefill 与 decode 实例之间传输，KV Connector 抽象如何统一 NIXL、Mooncake 等传输后端。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 上一章：第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1650,6 +1821,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 <p><strong>参考解析</strong>：<code>_engines_with_inflight_transfers</code> <span class="fact-pill" data-file="vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py" data-lines="3534-3546" onclick="window.highlightFact('vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py', '3534-3546')" title="在右侧代码面板查看真实源码切片">📎 <code>vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py:3534-3546</code></span> 的注释解释了一个关键场景：&quot;The timestamp is stamped when a read is issued and not refreshed while it runs, so a transfer that outlives the TTL leaves its engine looking idle. A peer that has lost its NIC holds one indefinitely.&quot; 假设对端网卡故障，一个 NIXL 读操作挂起超过 TTL（默认 3600 秒）。<code>_engine_last_active</code> 时间戳在读取发起时打上，读取期间不刷新，所以引擎看起来已经空闲。如果此时 <code>_evict_stale_engines</code> 驱逐了这个引擎，会调用 <code>_cleanup_remote_engine</code> 释放 <code>dst_xfer_side_handles</code> 并移除 remote agent。但正在进行的 DMA 还在使用这些资源，释放后会导致传输失败甚至崩溃。<code>busy</code> 集合显式保护了这种情况，确保有进行中传输的引擎不会被驱逐。</p>
 <p>至此，我们已经看清 KV Connector 如何在 prefill 与 decode 实例之间建立可靠的数据通道，以及它如何用租约、心跳和失败恢复机制守住状态一致性。但跨实例传输只是 PD 分离的一半故事——当 KV Cache 抵达 decode 实例后，推理引擎仍需在单实例内部高效执行每一步前向计算。而 Python 调度与内核启动开销，正是制约单步延迟的下一道瓶颈。下一章将转向编译加速与 CUDA Graph，看 vLLM 如何用 torch.compile 和 piecewise backend 消除这些开销，并让 CUDA Graph 与动态批处理形状协调共存。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 上一章：第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1774,6 +1960,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 <p>下一章将转向量化与自定义内核，看 vLLM 如何从权重加载阶段就介入精度控制，并用高度特化的算子把量化收益真正兑现为吞吐提升。</p>
 <p>本章剖析了 vLLM 编译加速的两层机制。第一层是 CompilerInterface 与 PiecewiseBackend：前者定义了编译器适配契约与缓存哈希策略，用 AlwaysHitShapeEnv 绕过 Dynamo 上下文缺失的问题；后者把单个 FX 子图编译成多个形状档位，运行时按 token 数派发。第二层是 CUDAGraphWrapper：它按 BatchDescriptor 分档捕获 CUDA Graph，通过 runtime mode 匹配实现嵌套派发，让 FULL 与 PIECEWISE 两种模式在同一编译图上共存。两者的解耦是本次重构的核心——编译产物可被两种 CUDA Graph 模式复用，CUDA Graph 也可脱离编译独立工作。不过，编译与图捕获解决的是调度开销，模型本身的权重精度与算子效率仍是另一条优化主线。下一章将转向量化与自定义内核，看 vLLM 如何解析量化配置、在权重加载时完成 FP8/INT4/AWQ/GPTQ 等格式转换，并借助 _custom_ops 与 Triton 内核进一步压榨硬件性能。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 上一章：第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1974,6 +2175,21 @@ class QuantSpec:
 <p>下一章将转向高级推理特性，看前缀缓存如何复用 KV block、投机解码如何用小模型加速大模型、以及 LoRA 如何在不改基座权重的前提下动态切换适配器。</p>
 <p>本章剖析了 vLLM 量化与自定义内核的两层基础设施。第一层是量化配置解析：QuantSpec 与 QuantizationConfigArgs 把 CLI 字符串、checkpoint 元数据、逐层覆盖统一归一化为 QuantKey，resolve_quantization_config 处理简写展开与字段合并，_DEFERRED_ONLINE_SHORTHANDS 解决了名字冲突场景。第二层是算子适配：_custom_ops 通过 hasattr 守卫与 register_fake 实现跨平台算子注册，fake 实现精确镜像真实算子的输出形状以支持 torch.compile；dispatcher 通过 KernelOverride 与全模块扫描实现 Triton 内核的平台替换。两者共同支撑了从权重加载到前向计算的量化收益兑现。接下来，我们将转向提升吞吐与降低延迟的高级推理特性：自动前缀缓存如何复用跨请求的 KV，投机解码如何用草稿模型加速生成，以及 LoRA 如何动态切换适配器。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 上一章：第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2105,6 +2321,21 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
 <p>下一章将转向插件系统与可扩展性，看 vLLM 如何通过平台抽象、IO 处理器与端点扩展支持多样化的部署形态。</p>
 <p>本章剖析了 vLLM 三大高级推理特性的底层机制。前缀缓存的核心是链式 block hash：hash_block_tokens 把父哈希、token 元组、额外键一起哈希，NONE_HASH 的种子策略在跨进程共享与碰撞安全之间权衡。投机解码通过 is_eagle_group 标注区分草稿 KV 组。LoRA 通过双 LRU 缓存与 slot 数组管理适配器生命周期，并在 block hash 中掺入适配器名实现缓存隔离。这些特性共同展现了 vLLM 在推理优化上的深度与灵活性。接下来，我们将转向 vLLM 的插件系统与可扩展性，看平台插件如何适配新硬件，IO processor 插件如何介入多模态输入处理，以及端点插件如何注入自定义 API 路由。理解插件注册与发现的加载顺序，将揭示如何在不修改核心代码的前提下扩展 vLLM 的能力。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 上一章：第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2300,6 +2531,21 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
 <p>下一章将转向架构权衡、生产踩坑与未来演进，我们会把前十三章拆解过的机制放在一起，审视 vLLM 在性能、可维护性与扩展性之间的取舍，并展望推理引擎的演进方向。</p>
 <p>至此，我们已经看清 vLLM 如何通过 entry_points 的分组机制、进程边界感知的加载时机，以及平台、IO processor、端点三类插件的差异化策略，在保持核心代码稳定的同时打开扩展面。这套插件体系让新硬件、新输入格式和新 API 路由都能以非侵入方式接入，但扩展性本身也意味着更多需要权衡的维度。下一章将收束全书，系统梳理 vLLM 关键设计决策中的张力——连续批处理与显存碎片、CUDA Graph 与动态形状、分离式部署与网络开销——并给出一份生产环境踩坑清单与诊断路径，同时展望 Rust 前端、IR 层与异构硬件方向的演进趋势。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 上一章：第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2449,6 +2695,21 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
 <p>至此，全书十四章的源码解读告一段落。我们从一次 API 调用出发，穿过调度器、KV cache 管理器、注意力后端、分布式通信层，最终抵达 GPU kernel 的发射点，又回到生产运维的诊断台。vLLM 的每一个设计决策背后都有明确的权衡，理解这些权衡，才能在面对新的硬件、新的模型、新的负载时，做出正确的工程判断。推理引擎的演进不会停止——Rust 前端、IR 层、异构硬件支持都在快速推进——但底层的权衡逻辑是稳定的，这正是本书希望传递的核心能力。</p>
 <p>至此，我们走完了从请求入口到 GPU Kernel 的完整旅程，也看清了生产环境中那些让系统从“能跑”变成“跑得稳”的权衡与踩坑。vLLM 的演进不会止步于当前架构，更高效的注意力实现、更智能的调度策略、更无缝的异构支持都在路上。但无论未来如何变化，理解这些机制之间的张力与取舍，始终是驾驭推理引擎的关键。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_zh&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 上一章：第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2458,13 +2719,13 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
         
 
       <div style="margin-top: 60px; padding: 28px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 12px; text-align: center;">
-        <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任意复杂项目，其实只需要一本好书</h3>
+        <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任何复杂项目，你真正需要的是一本专著</h3>
         <p style="font-size: 14px; color: var(--text-secondary); max-width: 560px; margin: 0 auto 20px;">
-          本书由 AiReadCode 扫描官方开源仓库全自动编撰而成，真实 Commit 行号永久锚定。
+          本书由 AiReadCode 扫描官方开源仓库全自动编撰，结合真实不可变 Commit 节点与 FACT 药丸行号溯源，提供纯静态、零服务依赖的极致双栏交互式在线阅读体验。
         </p>
         <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">Star GitHub 仓库 ★</a>
-          <a href="../index.html" class="btn btn-secondary btn-sm">浏览更多开源好书 →</a>
+          <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">在 GitHub 上 Star 本项目 ★</a>
+          <a href="../index.html" class="btn btn-secondary btn-sm">浏览更多架构专著 →</a>
         </div>
       </div>
     </main>
@@ -2480,27 +2741,30 @@ ENDPOINT_PLUGINS_GROUP = &quot;vllm.endpoint_plugins&quot;</code></pre></div>
           <span id="code-pane-lines" class="badge-lines">全览</span>
         </div>
         <div class="code-pane-actions">
-          <button class="btn-code-action" id="btn-copy-code" onclick="window.copyCurrentCode(this)" title="复制当前高亮切片（若无高亮则复制全文）">
+          <button class="btn-code-action" id="btn-copy-code" onclick="window.copyCurrentCode(this)" title="复制当前高亮代码切片（如无则复制全文件）">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span class="btn-text">复制选段</span>
+            <span class="btn-text">复制代码切片</span>
           </button>
-          <button class="btn-code-action" id="btn-copy-all" onclick="window.copyFullFile(this)" title="复制整个源文件全文">
+          <button class="btn-code-action" id="btn-copy-all" onclick="window.copyFullFile(this)" title="复制当前完整源码文件">
             <span class="btn-text">复制全文</span>
           </button>
-          <button class="btn-code-action" id="btn-locate-target" onclick="window.locateTargetLines()" title="回到高亮行所在位置">
+          <button class="btn-code-action" id="btn-locate-target" onclick="window.locateTargetLines()" title="平滑滚动至高亮行">
             <span>定位</span>
           </button>
         </div>
       </div>
       <div class="code-pane-body" id="code-pane-content">
-        <div class="code-loading-msg">⚡ 正在载入源文件...</div>
+        <div class="code-loading-msg">⚡ 正在加载源码文件...</div>
       </div>
       <div class="code-pane-footer">
         <div class="code-pane-status">
           <span class="status-dot"></span>
-          <span id="code-pane-file-stats">Commit 永久不可变锚定</span>
+          <span id="code-pane-file-stats">Commit 不可变永久锚定</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vllm_zh" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ 分析私有代码库 →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        </div>
       </div>
     </aside>
   </div>

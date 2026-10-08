@@ -6,6 +6,54 @@
   <title>《Панорама исходного кода и инженерии Vue 3》| AiReadCodeBooks</title>
   <meta name="description" content="Прежде чем начать отслеживать любую строку реализации реактивности или виртуального DOM, нам сначала нужно понять инженерную основу, на которой существует этот ">
   <meta name="keywords" content="vuejs/core, Панорама исходного кода и инженерии Vue 3, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <meta property="og:title" content="Панорама исходного кода и инженерии Vue 3">
+  <meta property="og:description" content="Прежде чем начать отслеживать любую строку реализации реактивности или виртуального DOM, нам сначала нужно понять инженерную основу, на которой существует этот код. Открыв репозиторий Vue core, первое, что бросается в глаза, — вовсе не核心 логика фреймворка, аpackage.jsonиpnpm-workspace.yaml— такие конфигурационные файлы проекта, которые не содержат никакой функциональности времени выполнения, но определяют, может ли весь фреймворк быть корректно собран, протестирован и опубликован. Именно на этот предварительный вопрос и отвечает данная глава: что такое репозиторий core. Это не@vue/runtime-coreтот npm-пакет, а инженерная основа, несущаяruntime-core、reactivity、compiler-sfcи ещё более десяти публично публикуемых пакетов, плюсsfc-playground、template-explorerи другие приватные экспериментальные пакеты. Понимание способа организации этой основы является предпосылкой для всех последующих глав (сборка, типы, релиз, бюджет размера). Данная глава будет разворачиваться по трём основным линиям: двойная структура каталогов workspace, унифицированные ограничения корневого TypeScript и Rollup, а также философия развязки «репозитория исходного кода» и «публикуемых артефактов».">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Панорама исходного кода и инженерии Vue 3">
+  <meta name="twitter:description" content="Прежде чем начать отслеживать любую строку реализации реактивности или виртуального DOM, нам сначала нужно понять инженерную основу, на которой существует этот код. Открыв репозиторий Vue core, первое, что бросается в глаза, — вовсе не核心 логика фреймворка, аpackage.jsonиpnpm-workspace.yaml— такие конфигурационные файлы проекта, которые не содержат никакой функциональности времени выполнения, но определяют, может ли весь фреймворк быть корректно собран, протестирован и опубликован. Именно на этот предварительный вопрос и отвечает данная глава: что такое репозиторий core. Это не@vue/runtime-coreтот npm-пакет, а инженерная основа, несущаяruntime-core、reactivity、compiler-sfcи ещё более десяти публично публикуемых пакетов, плюсsfc-playground、template-explorerи другие приватные экспериментальные пакеты. Понимание способа организации этой основы является предпосылкой для всех последующих глав (сборка, типы, релиз, бюджет размера). Данная глава будет разворачиваться по трём основным линиям: двойная структура каталогов workspace, унифицированные ограничения корневого TypeScript и Rollup, а также философия развязки «репозитория исходного кода» и «публикуемых артефактов».">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Панорама исходного кода и инженерии Vue 3",
+  "description": "Прежде чем начать отслеживать любую строку реализации реактивности или виртуального DOM, нам сначала нужно понять инженерную основу, на которой существует этот код. Открыв репозиторий Vue core, первое, что бросается в глаза, — вовсе не核心 логика фреймворка, аpackage.jsonиpnpm-workspace.yaml— такие конфигурационные файлы проекта, которые не содержат никакой функциональности времени выполнения, но определяют, может ли весь фреймворк быть корректно собран, протестирован и опубликован. Именно на этот предварительный вопрос и отвечает данная глава: что такое репозиторий core. Это не@vue/runtime-coreтот npm-пакет, а инженерная основа, несущаяruntime-core、reactivity、compiler-sfcи ещё более десяти публично публикуемых пакетов, плюсsfc-playground、template-explorerи другие приватные экспериментальные пакеты. Понимание способа организации этой основы является предпосылкой для всех последующих глав (сборка, типы, релиз, бюджет размера). Данная глава будет разворачиваться по трём основным линиям: двойная структура каталогов workspace, унифицированные ограничения корневого TypeScript и Rollup, а также философия развязки «репозитория исходного кода» и «публикуемых артефактов».",
+  "inLanguage": "ru",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vue3"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vue3_ru" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ Анализ вашего кода бесплатно →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -489,6 +540,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>Браузерная сборка (<code>isGlobalBuild || isBrowserESMBuild</code>) при<code>!packageOptions.enableNonBrowserBranches</code>возвращает только<code>treeShakenDeps</code>（<code>source-map-js</code>、<code>@babel/parser</code>、<code>estree-walker</code>、<code>entities/decode</code>). Это означает, что<code>foo-lib</code>отсутствует в списке external,</p>
 <p>На этом мы уже с макроуровня увидели общую философию проектирования репозитория core как инженерной основы: структура workspace с двумя каталогами задаёт границу между публичными и приватными экспериментальными пакетами, корневые конфигурации TypeScript и Rollup обеспечивают единые ограничения, а разделение исходного репозитория и публикуемых артефактов делает возможным вывод в нескольких форматах. Эти знания проложили путь для дальнейшего углубления в конкретные инженерные цепочки. В следующей главе мы переведём взгляд со статической структуры на динамический процесс и, начиная с<code>node scripts/build.js vue</code>, проследим полный путь одного запроса на сборку — от разбора аргументов командной строки, определения целевого пакета и генерации конфигурации Rollup до записи артефактов на диск, — чтобы увидеть, как build.js через parseArgs разбирает флаги formats/devOnly/release, как динамически require-ит package.json целевого пакета и читает buildOptions и в итоге управляет rollup.config.js, порождая артефакты в нескольких форматах, таких как esm-bundler, cjs, global.</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -669,6 +735,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>Но проблема в том, что Rollup перед Tree-shaking должен сначала разрешить модули. Если эти зависимости не установлены (например, в минималистичном CI-окружении), Rollup выдаст ошибку «не удалось разрешить модуль». Указание их как external — это защитная мера: даже если зависимости отсутствуют, Rollup не будет пытаться их разрешить, а лишь выдаст предупреждение (а<code>scripts/dev.js</code>отфильтрует предупреждения о нециклических зависимостях).</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← Пред: Глава 1</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -843,6 +924,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>Границы взаимодействия этих трёх компонентов очень чёткие:<code>pre-dev-sfc</code>управляет тем, «готов ли артефакт»,<code>dev.js</code>управляет тем, «как быстро обновляется артефакт»,<code>aliases</code>управляет тем, «как тесты разрешают исходный код». Цепочка в режиме разработки решает проблему скорости, но на этапе сборки есть ещё один, более скрытый класс оптимизаций — те преобразования, которые выполняются до того, как код будет исполнен браузером. В следующей главе мы перейдём к магии этапа компиляции и посмотрим, как механизмы встраивания enum и проверки Tree-shaking заменяют TypeScript enum на литералы во время сборки и гарантируют, что обещание о подключении по требованию не будет нарушено.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← Пред: Глава 2</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -978,6 +1074,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>枚举内联解决了「构建期如何消除运行时开销」，验证脚本解决了「如何确认优化没被破坏」。但构建产物除了 JS，还有一类同样需要流水线加工的产物——类型声明文件。下一章将进入类型产物流水线，看 Vue 如何从源码<code>.d.ts</code>生成发布级类型包，以及<code>dts-test</code>如何用类型契约测试守住公开 API 的类型形状。</p>
 <p>本章拆解了编译期的两个关键脚本。inline-enums.js 用 git grep 定位枚举、Babel 解析 AST、new Function 求值成员、MagicString 精确重写声明，最终通过 defines 全局替换表把枚举引用变成字面量，让枚举对象可被 Tree-shaking 摇掉。verify-treeshaking.js 则在构建后用字符串哨兵检查产物，确保三类已知的 Tree-shaking 泄漏不会回归。两者一个负责「优化」，一个负责「验证优化没被破坏」，共同守护 Vue 的体积承诺。接下来，我们将从编译期转向类型产物的生成链路，看 Vue 如何保证源码类型与发布类型严格一致。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← Пред: Глава 3</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1231,6 +1342,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>Конвейер типов решает «как генерировать типы уровня публикации из исходного кода»,<code>dts-built-test</code>решает «как проверить форму артефактов типов». Но контракт типов не ограничивается «правильностью формы», он также включает «соответствие поверхности API ожиданиям» — какие типы должны экспортироваться, какие нет, точны ли ограничения дженериков. В следующей главе мы перейдём к<code>dts-test</code>, посмотрим, как Vue использует тесты типовых контрактов для защиты поверхности публичного API.</p>
 <p>Эти три компонента образуют замкнутый цикл «генерация → форматирование → проверка», гарантируя строгое соответствие типов исходного кода и опубликованных типов. Однако корректность самого пакета типов не означает, что типовая форма публичного API зафиксирована. В следующей главе мы углубимся в<code>packages-private/dts-test</code>, чтобы увидеть, как более 20<code>.test-d.ts</code>файлов используют<code>expectType</code>и другие инструменты, превращая «типы как контракт API» в автоматизированные регрессионные тесты.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← Пред: Глава 4</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1406,6 +1532,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>Контрактные тесты типов решают вопрос «соответствует ли поверхность API ожиданиям». Но типы — лишь половина инженерии Vue; другая половина — «как пользователь может в реальном времени проверить поведение этих API в браузере». Следующая глава посвящена SFC Playground: как Vue упаковывает компилятор, рантайм и систему типов в среду отладки в браузере, позволяя пользователю мгновенно видеть результат компиляции и выполнения при изменении кода.</p>
 <p>Контрактные тесты защищают не только «правильность типов», но и «точность типов» (<code>IsAny</code>/<code>IsUnion</code>), «стабильность порядка параметров обобщения» (<code>DefineComponent</code>13 параметров), «независимость от рендерера» (<code>__typeEl</code>не ограничен<code>Element</code>). Как только эти ограничения нарушаются, подсказки IDE на стороне пользователя,<code>vue-tsc</code>сгенерированные типы начинают дрейфовать. А стабильность контрактов типов в конечном счёте должна служить повседневному опыту отладки разработчика — в следующей главе мы заглянем в<code>packages-private/sfc-playground</code>и посмотрим, как чисто фронтендный Playground замыкает цикл компиляции SFC и живого превью прямо в браузере.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← Пред: Глава 5</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1671,6 +1812,21 @@ function resetVueVersion() {
 <p>и посмотрим, как Vue визуализирует промежуточные продукты компилятора (AST, результаты преобразований, генерацию кода), позволяя разработчику шаг за шагом наблюдать каждое преобразование от шаблона к функции рендеринга. В отличие от «сквозного чёрного ящика» Playground, Template Explorer — это «белый зонд».<code>packages-private/template-explorer</code>Итак, мы увидели, как SFC Playground переносит конвейер компиляции в браузер: инициализация точки входа, переключение состояния Header и внедрение констант времени сборки вместе образуют песочницу, отлаживаемую в реальном времени. Но перспектива Playground всегда — «компиляция и выполнение целого SFC», и она не отвечает напрямую на вопрос «что именно компилятор делает с тем или иным выражением шаблона». В следующей главе мы заглянем в Template Explorer и посмотрим, как он раскладывает построчно результаты компиляции</p>
 <p>и<code>@vue/compiler-dom</code>, используя SourceMapConsumer для построения соответствия между исходным кодом и артефактами, превращая внутреннее поведение компилятора в наблюдаемый и обратно выводимый зонд.<code>@vue/compiler-ssr</code>← Предыдущая глава: Глава 6</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← Пред: Глава 6</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -1850,6 +2006,21 @@ function resetVueVersion() {
 <p>В следующей главе мы перейдём к<code>scripts/release.js</code>, чтобы увидеть, как Vue с помощью одного интерактивного конечного автомата оркестрирует весь процесс обновления версии, сборки, тестирования, Git-коммита, создания тега и npm publish. В отличие от «наблюдения» в Template Explorer, release.js — это «исполнение»: ему нужно поддерживать состояние между несколькими шагами, обрабатывать откат при сбое и находить баланс между интерактивным подтверждением и автоматизацией.</p>
 <p>Через Template Explorer мы освоили, как превратить внутреннее состояние компилятора — AST, артефакты компиляции, SourceMap — в интерактивные визуализационные зонды, тем самым превращая «почему компилятор генерирует именно так» из догадки в наблюдение. Этот точный контроль и оркестрация внутреннего состояния также проявляются в процессе релиза Vue: в следующей главе мы углубимся в scripts/release.js и посмотрим, как конечный автомат более чем на 500 строк с помощью parseArgs разбирает более десяти флагов, через enquirer интерактивно подтверждает номер версии и последовательно запускает сборку, тестирование, Git-коммит, создание тега и npm publish, раскрывая полный поток состояний и стратегию отката при сбое за одним официальным релизом.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← Пред: Глава 7</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2088,6 +2259,21 @@ if (process.env.CI &amp;&amp; !args.registry)
 <p>Следующая глава перейдёт к<code>.github/workflows/</code>, чтобы посмотреть, как после отправки tag из release.js GitHub Actions берёт на себя последующую сборку и публикацию, а также полную реализацию CI-гейтов.</p>
 <p>Итак, мы увидели, как release.js с помощью конечного автомата и интерактивной оркестрации сводит к минимуму необратимые риски релиза. Но сам скрипт релиза — лишь исполнитель; тот, кто действительно решает, когда запускать и при каких условиях пропускать, — это автоматизированный привратник более высокого уровня. Следующая глава разберёт систему CI/CD в каталоге .github/workflows: как ci.yml выполняет тройной гейт lint/typecheck/test на этапе PR, как release.yml запускает публикацию при отправке tag, как size-report.yml и size-data.yml отслеживают регрессии размера пакета, как autofix.yml автоматически исправляет проблемы форматирования. Вы поймёте, как Vue с помощью GitHub Actions превращает инженерные стандарты в непреодолимый конвейер.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← Пред: Глава 8</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2396,6 +2582,21 @@ concurrency:
 <p>下一章将深入体积预算机制的核心：<code>scripts/size-report.js</code>如何解析体积数据、如何计算增量、如何格式化输出，以及<code>usage-size</code>的度量哲学——为什么 Vue 选择测量「实际使用体积」而非「完整包体积」。</p>
 <p>从 PR 门禁到 tag 发布，四个 workflow 文件共同构成了一条不可绕过的自动化守门链。但流水线能阻断合并，前提是它掌握可量化的判断依据。下一章将聚焦 Vue 对包体积这一核心指标的工程化治理：<code>scripts/size-report.js</code>如何计算各产物 gzip 后大小并与基线对比，<code>scripts/usage-size.js</code>如何模拟真实用户引入场景估算实际开销，以及 CI 如何在体积超标时阻断合并。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← Пред: Глава 9</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2574,6 +2775,21 @@ concurrency:
 <p>Механизм бюджета размера решает проблемы «что измерять» и «как сравнивать», но он опирается на предпосылку: сами артефакты сборки воспроизводимы. Следующая глава перейдёт к минимальной песочнице отладки:<code>vite-debug</code>как запустить интерактивную среду разработки Vue с минимальной конфигурацией и как она взаимодействует с локальными артефактами сборки, образуя замкнутый цикл от изменения исходного кода до проверки во время выполнения.</p>
 <p>На этом цикл измерения бюджета размера стал ясен: size-report.js с помощью сравнения каталогов отвечает на вопрос «насколько больше», usage-size.js с помощью виртуальных модулей имитирует реальные сценарии импорта и отвечает на вопрос «где больше», а решение о пороговом контроле остаётся на уровне рабочего процесса. Этот механизм превращает регрессию размера из расплывчатых жалоб в прослеживаемые данные. Но данные могут лишь сообщить о наличии проблемы; чтобы действительно локализовать и исправить её, нужна минимальная среда, способная быстро воспроизвести проблему. Следующая глава перейдёт к packages-private/vite-debug, чтобы посмотреть, как Vue с помощью Vite + SFC создаёт минималистичную песочницу отладки, превращая «минимальное воспроизведение на реальном исходном коде» в повседневную практику.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← Пред: Глава 10</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2779,6 +2995,21 @@ export default defineConfig({
 <p>Бюджет размера говорит вам «проблема существует»,<code>vite-debug</code>позволяет вам «воспроизвести проблему своими руками». Но когда вы пытаетесь распространить этот режим песочницы на весь monorepo, вы сталкиваетесь с рядом граничных условий: различия в разрешении протокола workspace в среде CI,<code>catalog:</code>трудности обновления при фиксации версий,<code>packages-private</code>и<code>packages</code>ограничения направления зависимостей между... Следующая глава перейдёт к архитектурным компромиссам и руководству по избеганию ошибок, системно разбирая граничные условия, которые инженерия monorepo проявляет в реальных проектах.</p>
 <p>На этом мы завершили инженерный цикл от измерения размера до минимального воспроизведения: vite-debug с помощью минималистичных четырёх файлов превратил «быструю проверку на реальном исходном коде» в повседневно применимую практику. Но когда вы действительно начнёте воспроизводить эту систему, вы обнаружите больше скрытых компромиссов — почему packages-private должен быть физически изолирован от packages? Почему встраивание перечислений должно быть завершено до Rollup? Следующая глава обобщит ключевые точки принятия решений и записи о производственных ошибках, выявленные в предыдущих двенадцати главах, предоставив вам полный список по избеганию ошибок и основания для решений.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← Пред: Глава 11</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -2899,6 +3130,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>Двойной каталог-контракт, определение принадлежности сборочных скриптов, вторичная фильтрация скриптов публикации — эти механизмы совместно очерчивают границы безопасности инженерии monorepo. Но границы не являются неизменными: по мере миграции инструментов сборки с Rollup на Rolldown и сближения типовых и runtime-тестов существующие стратегии компромиссов столкнутся с новыми вызовами. В следующей главе мы, опираясь на траекторию изменений с 3.0 по 3.4, рассмотрим направления эволюции инженерной системы следующего поколения.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← Пред: Глава 12</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -3136,6 +3382,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>Через окно наблюдения журнала изменений мы выявили точки напряжения текущей системы инженерии и на их основе вывели возможные направления эволюции системы следующего поколения. Эти направления не витают в воздухе, а выросли из реальных производственных ошибок и компромиссов. На этом анализ системы инженерии Vue в книге завершается, но исследование инженерии бесконечно — следующая глава, как заключительная, отдалит перспективу от самого Vue и рассмотрит, как этот опыт переносится на более широкие инженерные сценарии.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Превратите любой код в понятную архитектурную книгу</span>
+            <h3 class="cta-title">Понравилась глава? Создайте книгу по своему приватному проекту</h3>
+            <p class="cta-desc">Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_ru&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← Пред: Глава 13</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Наверх ↑</a>
@@ -3187,7 +3448,10 @@ const skipGit = args.skipGit</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Неизменяемый постоянный коммит-анкор</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vue3_ru" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ Читайте свой репозиторий с AiReadCode →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        </div>
       </div>
     </aside>
   </div>

@@ -6,6 +6,54 @@
   <title>《NCCL 源码解读：一个 AllReduce 的 GPU 旅程》· 源码全景架构精读 | AiReadCodeBooks</title>
   <meta name="description" content="全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。">
   <meta name="keywords" content="NVIDIA/nccl, NCCL 源码解读：一个 AllReduce 的 GPU 旅程, 源码解析, 架构设计, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/nccl/en/">
+  <meta property="og:title" content="NCCL 源码解读：一个 AllReduce 的 GPU 旅程">
+  <meta property="og:description" content="全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/nccl/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="NCCL 源码解读：一个 AllReduce 的 GPU 旅程">
+  <meta name="twitter:description" content="全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "NCCL 源码解读：一个 AllReduce 的 GPU 旅程",
+  "description": "全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 InfiniBand GPUDirect RDMA。",
+  "inLanguage": "zh",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/nccl/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "nccl"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../assets/favicon.svg">
   <link rel="stylesheet" href="../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_nccl_zh" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 深度解析你的代码库 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -72,7 +123,7 @@
           <span>NVIDIA/nccl</span> · <span>★ 6.2k</span>
         </div>
       </div>
-      <nav aria-label="书籍目录导航">
+      <nav aria-label="全书章节目录">
         <ul class="reader-toc-list" id="reader-toc">
           <li><a href="#ch-01" class="toc-link active" data-target="ch-01"><span class="toc-num">01</span><span>第 1 章：运行与现象：从一个 AllReduce 开始看外部行为</span></a></li>
           <li><a href="#ch-02" class="toc-link" data-target="ch-02"><span class="toc-num">02</span><span>第 2 章：核心抽象模型：通信算子、拓扑、算法、协议与传输层</span></a></li>
@@ -444,17 +495,17 @@ ncclResult_t  ncclCommDestroy(ncclComm_t comm);</code></pre></div>
 <p>3. <strong>一次 AllReduce 的完整外部行为</strong>：从 <code>ncclGroupStart</code> 包裹多个 <code>ncclAllReduce</code> 调用，到 <code>ncclGroupEnd</code> 提交，再到 <code>cudaStreamSynchronize</code> 等待完成，最后验证结果。Group 机制是单线程多卡场景避免死锁的关键。</p>
 <p>4. <strong>通信域生命周期</strong>：<code>ncclCommFinalize</code>（全局静默）+ <code>ncclCommDestroy</code>（本地释放）的两阶段销毁，以及&quot;先同步、再销毁通信域、再销毁 stream、最后释放宿主内存&quot;的顺序约束。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <span class="fact-pill" data-file="docs/examples/03_collectives/01_allreduce/c/main.cc" data-lines="130-136" onclick="window.highlightFact('docs/examples/03_collectives/01_allreduce/c/main.cc', '130-136')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/03_collectives/01_allreduce/c/main.cc:130-136</code></span> 的 ncclGroupStart/ncclGroupEnd 去掉，改成直接循环调用 ncclAllReduce，在单进程多卡场景下会发生什么？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <span class="fact-pill" data-file="docs/examples/03_collectives/01_allreduce/c/main.cc" data-lines="130-136" onclick="window.highlightFact('docs/examples/03_collectives/01_allreduce/c/main.cc', '130-136')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/03_collectives/01_allreduce/c/main.cc:130-136</code></span> 的 ncclGroupStart/ncclGroupEnd 去掉，改成直接循环调用 ncclAllReduce，在单进程多卡场景下会发生什么？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：会发生死锁。头文件 <span class="fact-pill" data-file="src/nccl.h.in" data-lines="844-864" onclick="window.highlightFact('src/nccl.h.in', '844-864')" title="在右侧代码面板查看真实源码切片">📎 <code>src/nccl.h.in:844-864</code></span> 解释了原因：集合通信调用可能执行 inter-CPU 同步，需要所有 rank 同时参与。在单线程里，第一次循环迭代调用 <code>ncclAllReduce(comms[0], ...)</code> 时，NCCL 需要等待其他 rank 也发起 AllReduce 才能推进。但其他 rank 的调用还在循环里没执行到（因为当前线程被阻塞在第一次调用上），于是第一次调用永远等不到其他 rank，死锁。</p>
 <p>Group 机制的作用是把&quot;发起&quot;和&quot;执行&quot;分离：<code>ncclGroupStart</code> 之后的所有调用只做登记，<code>ncclGroupEnd</code> 时才把所有登记的操作一起提交，让它们能并发推进。这从根本上避免了单线程死锁。</p>
 <p>验证方法：去掉 Group 后运行程序，用 <code>gdb</code> attach 看堆栈，会停在 NCCL 内部的等待逻辑上，CPU 占用率接近 0。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <span class="fact-pill" data-file="docs/examples/03_collectives/01_allreduce/c/main.cc" data-lines="139-142" onclick="window.highlightFact('docs/examples/03_collectives/01_allreduce/c/main.cc', '139-142')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/03_collectives/01_allreduce/c/main.cc:139-142</code></span> 的 cudaStreamSynchronize 能否用 cudaDeviceSynchronize 替代？两者在语义上有什么区别？在什么场景下这个替代会出问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <span class="fact-pill" data-file="docs/examples/03_collectives/01_allreduce/c/main.cc" data-lines="139-142" onclick="window.highlightFact('docs/examples/03_collectives/01_allreduce/c/main.cc', '139-142')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/03_collectives/01_allreduce/c/main.cc:139-142</code></span> 的 cudaStreamSynchronize 能否用 cudaDeviceSynchronize 替代？两者在语义上有什么区别？在什么场景下这个替代会出问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：可以用 <code>cudaDeviceSynchronize</code> 替代，但语义不同。<code>cudaStreamSynchronize(streams[i])</code> 只等待指定 stream 上的操作完成；<code>cudaDeviceSynchronize</code> 等待当前设备上<strong>所有</strong> stream 的操作完成。</p>
 <p>在单进程多卡场景下，<code>cudaDeviceSynchronize</code> 只同步当前设备（由 <code>cudaSetDevice</code> 决定），所以需要配合 <code>cudaSetDevice(i)</code> 循环使用。如果省略 <code>cudaSetDevice</code>，<code>cudaDeviceSynchronize</code> 只会同步默认设备（通常是 device 0），其他设备的 AllReduce 可能还没完成。</p>
 <p>头文件 <span class="fact-pill" data-file="src/nccl.h.in" data-lines="854-856" onclick="window.highlightFact('src/nccl.h.in', '854-856')" title="在右侧代码面板查看真实源码切片">📎 <code>src/nccl.h.in:854-856</code></span> 强调 <code>ncclGroupEnd</code> 只保证入队不保证完成，所以同步是必须的。用 <code>cudaStreamSynchronize</code> 更精确，因为它只等待相关 stream，不会误等无关操作。用 <code>cudaDeviceSynchronize</code> 的问题是：如果设备上有其他无关的长时间运行 kernel，会被误等，降低性能。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <span class="fact-pill" data-file="docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc" data-lines="233-240" onclick="window.highlightFact('docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc', '233-240')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240</code></span> 的销毁顺序是&quot;先 Finalize 所有通信域，再 Destroy 所有通信域&quot;。如果改成&quot;对每个通信域先 Finalize 再 Destroy&quot;（即在一个循环里完成两个操作），会有什么问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: <span class="fact-pill" data-file="docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc" data-lines="233-240" onclick="window.highlightFact('docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc', '233-240')" title="在右侧代码面板查看真实源码切片">📎 <code>docs/examples/01_communicators/01_multiple_devices_single_process/c/main.cc:233-240</code></span> 的销毁顺序是&quot;先 Finalize 所有通信域，再 Destroy 所有通信域&quot;。如果改成&quot;对每个通信域先 Finalize 再 Destroy&quot;（即在一个循环里完成两个操作），会有什么问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：会破坏 Group 语义。当前的写法是：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">ncclGroupStart();
 for (i) ncclCommFinalize(comms[i]);
@@ -467,9 +518,24 @@ for (i) ncclCommDestroy(comms[i]);</code></pre></div>
 }</code></pre></div>
 <p>第一次迭代的 <code>ncclCommFinalize(comms[0])</code> 会阻塞等待所有 rank 静默，但其他通信域的 Finalize 还没发起，导致死锁——这与 Q1 的死锁是同一类问题。</p>
 <p>另外，头文件 <span class="fact-pill" data-file="src/nccl.h.in" data-lines="309-309" onclick="window.highlightFact('src/nccl.h.in', '309-309')" title="在右侧代码面板查看真实源码切片">📎 <code>src/nccl.h.in:309-309</code></span> 说明 <code>ncclCommFinalize</code> 返回时通信域可能还处于 <code>ncclInProgress</code> 状态，需要等待全局静默才能进入 <code>ncclSuccess</code>。如果紧接着就 <code>ncclCommDestroy</code>，可能在通信域还没完全静默时就释放本地资源，导致未定义行为。正确做法是 Finalize 后轮询 <code>ncclCommGetAsyncError</code> 确认状态，再 Destroy。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>这些外部行为构成了后续所有源码分析的参照系。第 2 章我们将建立核心心智模型：通信域、通道、算法、协议、传输层这五件套，看看 NCCL 内部是如何组织这些概念的。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1075,30 +1141,45 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <li>传输层：4 种（P2P/SHM/NET/CollNet）</li>
 </ul>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果将 <span class="fact-pill" data-file="src/include/comm.h" data-lines="731-731" onclick="window.highlightFact('src/include/comm.h', '731-731')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/comm.h:731-731</code></span> 中的 <code>intraPad1[64 - sizeof(uint64_t)]</code> 改为 <code>intraPad1[0]</code>（即去掉缓存行填充），在多进程场景下会出现什么性能问题？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果将 <span class="fact-pill" data-file="src/include/comm.h" data-lines="731-731" onclick="window.highlightFact('src/include/comm.h', '731-731')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/comm.h:731-731</code></span> 中的 <code>intraPad1[64 - sizeof(uint64_t)]</code> 改为 <code>intraPad1[0]</code>（即去掉缓存行填充），在多进程场景下会出现什么性能问题？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>去掉填充后，<code>intraBarrierPhase</code>、<code>intraBarrierCounter</code>、<code>intraBarrierGate</code> 三个字段会紧密排列在内存中，很可能共享同一个缓存行（通常 64 字节）。</p>
 <p>在多进程场景下，每个进程有自己的 <code>ncclComm</code> 副本，但 <code>intraComm0</code> 指向的 leader 通信域的 <code>intraBarrierCounter</code> 和 <code>intraBarrierGate</code> 会被所有进程读写。当进程 A 调用 <code>ncclCommIntraBarrierIn</code> 更新 <code>intraBarrierCounter</code>（<span class="fact-pill" data-file="src/include/comm.h" data-lines="943-959" onclick="window.highlightFact('src/include/comm.h', '943-959')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/comm.h:943-959</code></span>）时，会导致进程 B 的 <code>intraBarrierGate</code> 缓存行失效。进程 B 在 <code>ncclCommIntraBarrierOut</code> 中轮询 <code>intraBarrierGate</code>（<span class="fact-pill" data-file="src/include/comm.h" data-lines="962-977" onclick="window.highlightFact('src/include/comm.h', '962-977')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/comm.h:962-977</code></span>），每次缓存失效都要重新从内存加载，延迟从纳秒级上升到微秒级。</p>
 <p>这就是<strong>伪共享（False Sharing）</strong>问题。填充 56 字节确保每个字段独占一个缓存行，消除伪共享。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: 如果将 <span class="fact-pill" data-file="src/include/collectives.h" data-lines="106-108" onclick="window.highlightFact('src/include/collectives.h', '106-108')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/collectives.h:106-108</code></span> 的 <code>incRefCount</code> 从 <code>memory_order_relaxed</code> 改为 <code>memory_order_seq_cst</code>，会有什么影响？为什么作者选择 <code>relaxed</code>？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: 如果将 <span class="fact-pill" data-file="src/include/collectives.h" data-lines="106-108" onclick="window.highlightFact('src/include/collectives.h', '106-108')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/collectives.h:106-108</code></span> 的 <code>incRefCount</code> 从 <code>memory_order_relaxed</code> 改为 <code>memory_order_seq_cst</code>，会有什么影响？为什么作者选择 <code>relaxed</code>？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>memory_order_seq_cst</code> 会强制全局顺序一致性，每次增加引用计数都要插入内存屏障，导致性能下降。</p>
 <p><code>incRefCount</code> 只需要保证原子性，不需要同步其他内存操作。因为增加引用计数不会触发对象销毁，也不会依赖其他线程的写操作。<code>memory_order_relaxed</code> 正好满足这个需求——只保证原子性，不插入屏障。</p>
 <p>相比之下，<code>decRefCount</code>（<span class="fact-pill" data-file="src/include/collectives.h" data-lines="109-111" onclick="window.highlightFact('src/include/collectives.h', '109-111')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/collectives.h:109-111</code></span>）使用 <code>memory_order_release</code>，因为减少引用计数可能触发对象销毁，需要确保之前的写操作对其他线程可见。</p>
 <p>这是 C++ 内存模型的经典应用：根据操作语义选择最弱的内存序，在保证正确性的前提下最大化性能。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: 如果将 <span class="fact-pill" data-file="src/include/channel.h" data-lines="32-32" onclick="window.highlightFact('src/include/channel.h', '32-32')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/channel.h:32-32</code></span> 的 <code>reverseBits(base, log2Up(comm-&gt;p2pnChannels))</code> 改为直接返回 <code>base % comm-&gt;p2pnChannels</code>，在什么场景下会导致性能下降？为什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: 如果将 <span class="fact-pill" data-file="src/include/channel.h" data-lines="32-32" onclick="window.highlightFact('src/include/channel.h', '32-32')" title="在右侧代码面板查看真实源码切片">📎 <code>src/include/channel.h:32-32</code></span> 的 <code>reverseBits(base, log2Up(comm-&gt;p2pnChannels))</code> 改为直接返回 <code>base % comm-&gt;p2pnChannels</code>，在什么场景下会导致性能下降？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>reverseBits</code> 是位反转操作，用于打散通道分配。直接取模会导致通道分配呈现规律性：round 0 用通道 0，round 1 用通道 1，...，round N 用通道 N%p2pnChannels。</p>
 <p>在多节点场景下，如果多个 rank 的 P2P 通信同时进行，规律性的通道分配会导致热点集中——某些通道被多个 rank 同时使用，而其他通道空闲。这会造成链路拥塞，降低整体带宽利用率。</p>
 <p><code>reverseBits</code> 打散了通道分配，让不同 round 使用看似随机的通道，均匀分布负载。这是<strong>负载均衡</strong>的经典手法。</p>
 <p>另外，<code>reverseBits</code> 是纯位操作，比取模运算更快（取模需要除法指令，位操作只需几条指令）。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>---</p>
 <p>下一章我们将深入 <code>ncclCommInitRank</code> 的内部实现，看看 NCCL 如何从一个空的 <code>ncclComm</code> 结构体开始，逐步建立拓扑图、初始化通道、建立传输连接，最终构建出一个可用的通信域。本章建立的五件套心智模型，将在下一章中逐一落地。</p>
 <p>这五个抽象并非孤立存在：通信域是容器，通道是并行执行的单位，算法决定数据如何规约，协议规定数据如何编码，传输层负责数据如何移动。它们的组合——5 个维度、每个维度 3 到 4 种选择——构成了 NCCL 性能调优的搜索空间。那么，这个通信域对象究竟是如何从零开始被构建出来的？下一章我们将深入 ncclCommInitRank 的调用链，看 NCCL 如何在初始化阶段完成设备探测、拓扑发现与通道分配，并揭示 comm-&gt;rank、comm-&gt;nRanks、comm-&gt;channels 等关键字段的赋值时机。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 上一章：第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1466,7 +1547,7 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p><strong>坑二：<code>workFifoBytes</code> 必须是 2 的幂。</strong> 如果不是，NCCL 会警告并使用默认值：</p>
 <p><span class="fact-pill" data-file="src/init.cc" data-lines="757-762" onclick="window.highlightFact('src/init.cc', '757-762')" title="在右侧代码面板查看真实源码切片">📎 <code>src/init.cc:757-762</code></span></p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果将 <span class="fact-pill" data-file="src/init.cc" data-lines="1291-1296" onclick="window.highlightFact('src/init.cc', '1291-1296')" title="在右侧代码面板查看真实源码切片">📎 <code>src/init.cc:1291-1296</code></span> 中检测&quot;多个 rank 使用同一 GPU&quot;的逻辑去掉，在什么场景下会导致问题？为什么 NCCL 默认拒绝这种配置？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果将 <span class="fact-pill" data-file="src/init.cc" data-lines="1291-1296" onclick="window.highlightFact('src/init.cc', '1291-1296')" title="在右侧代码面板查看真实源码切片">📎 <code>src/init.cc:1291-1296</code></span> 中检测&quot;多个 rank 使用同一 GPU&quot;的逻辑去掉，在什么场景下会导致问题？为什么 NCCL 默认拒绝这种配置？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>这段代码检测同一主机上两个 rank 的 GPU UUID 是否相同。如果相同且 <code>NCCL_MULTI_RANK_GPU_ENABLE=0</code>（默认），就返回 <code>ncclInvalidUsage</code>。</p>
 <p>去掉这个检查后，多个 rank 会共享同一个 GPU。这会导致：</p>
@@ -1474,8 +1555,8 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>2. <strong>通道分配冲突</strong>：<code>comm-&gt;channels</code> 中的通道资源（缓冲区、FIFO）是按 rank 分配的。共享 GPU 的 rank 会争抢同一份资源。</p>
 <p>3. <strong>性能灾难</strong>：即使没有正确性问题，两个 rank 共享一个 GPU 的算力和显存带宽，性能会急剧下降。</p>
 <p>NCCL 默认拒绝这种配置是为了&quot;快速失败&quot;——与其让用户在一个错误配置上浪费数小时调试，不如在初始化时就明确报错。<code>NCCL_MULTI_RANK_GPU_ENABLE=1</code> 是给那些明确知道自己在做什么的用户（比如 MPS 场景）准备的逃生通道。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: 如果将 <span class="fact-pill" data-file="src/bootstrap.cc" data-lines="1129-1134" onclick="window.highlightFact('src/bootstrap.cc', '1129-1134')" title="在右侧代码面板查看真实源码切片">📎 <code>src/bootstrap.cc:1129-1134</code></span> 中等待&quot;同一 (peer, tag) 的更早发送&quot;的逻辑去掉，在什么场景下会导致接收方匹配错误？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: 如果将 <span class="fact-pill" data-file="src/bootstrap.cc" data-lines="1129-1134" onclick="window.highlightFact('src/bootstrap.cc', '1129-1134')" title="在右侧代码面板查看真实源码切片">📎 <code>src/bootstrap.cc:1129-1134</code></span> 中等待&quot;同一 (peer, tag) 的更早发送&quot;的逻辑去掉，在什么场景下会导致接收方匹配错误？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>这段代码在异步发送线程中等待，直到队列中没有更早的、发往同一 (peer, tag) 的发送。</p>
 <p>去掉这个等待后，两个发往同一 (peer, tag) 的发送可能并发执行，到达接收方的顺序不确定。接收方的 <code>socketAccept</code> 按 (peer, tag) 匹配连接：</p>
@@ -1483,17 +1564,32 @@ extern struct ncclTransport collNetTransport;</code></pre></div>
 <p>如果发送方 A 先调用 <code>bootstrapSend</code> 但后到达，发送方 B 后调用但先到达，接收方会把 B 的消息当作 A 的响应。这会导致数据错位——接收方以为收到的是第一个请求的响应，实际上是第二个请求的。</p>
 <p>源码注释明确指出了这个场景：&quot;NVLS setup broadcasts to the same peers with the same tag several times during init&quot;。NVLS 初始化期间会多次向同一 peer 用同一 tag 广播，如果顺序颠倒，NVLS 配置会完全错乱。</p>
 <p>这个顺序保证的代价是：同一 (peer, tag) 的发送被串行化。但不同 (peer, tag) 的发送仍然并发，所以整体吞吐量不受影响。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: 如果将 <span class="fact-pill" data-file="src/init.cc" data-lines="1691-1697" onclick="window.highlightFact('src/init.cc', '1691-1697')" title="在右侧代码面板查看真实源码切片">📎 <code>src/init.cc:1691-1697</code></span> 中对齐策略从&quot;nChannels 取 min、typeIntra 取 max&quot;改为&quot;全部取 min&quot;或&quot;全部取 max&quot;，会分别导致什么问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: 如果将 <span class="fact-pill" data-file="src/init.cc" data-lines="1691-1697" onclick="window.highlightFact('src/init.cc', '1691-1697')" title="在右侧代码面板查看真实源码切片">📎 <code>src/init.cc:1691-1697</code></span> 中对齐策略从&quot;nChannels 取 min、typeIntra 取 max&quot;改为&quot;全部取 min&quot;或&quot;全部取 max&quot;，会分别导致什么问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>当前策略是：<code>nChannels</code>、<code>sameChannels</code>、<code>bwIntra</code>、<code>bwInter</code> 取 min，<code>typeIntra</code>、<code>typeInter</code>、<code>crossNic</code> 取 max。</p>
 <p><strong>如果全部取 min</strong>：<code>typeIntra</code> 和 <code>typeInter</code> 取 min 会导致某些 rank 的传输类型被降级。比如 rank A 支持 P2P（typeIntra=P2P），rank B 只支持 SHM（typeIntra=SHM），取 min 后所有 rank 都用 SHM。但 SHM 的枚举值可能比 P2P 小，取 min 会选到错误的类型。实际上 <code>typeIntra</code> 是一个位掩码或枚举，取 max 是为了选择&quot;能力最强&quot;的类型。</p>
 <p><strong>如果全部取 max</strong>：<code>nChannels</code> 取 max 会导致某些 rank 被分配超过其能力的通道数。比如 rank A 只能支持 4 个通道，rank B 支持 8 个，取 max 后所有 rank 都尝试用 8 个通道，rank A 会失败或性能下降。<code>bwIntra</code> 取 max 会导致带宽估计过于乐观，tuning 模块可能选择不适合的算法。</p>
 <p>这个对齐策略的本质是：<strong>资源约束取交集（min），能力枚举取并集（max）</strong>。通道数和带宽是&quot;上限&quot;约束，必须取最保守的值；传输类型是&quot;能力&quot;枚举，取最大值确保所有 rank 都能找到兼容的传输方式。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>下一章我们将深入拓扑发现与图搜索，看 NCCL 如何枚举机器里的 GPU、网卡、PCI 交换机，构建出一张完整的拓扑图，并在这张图上搜索最优的 ring 和 tree 结构。本章建立的 bootstrap 通信、commAlloc 内存骨架、initTransportsRank 主干流程，将在下一章中逐一展开其拓扑细节。</p>
 <p>至此，我们已经完整走过了 ncclCommInitRank 的调用链，看清了 ncclComm 对象从零构建的全过程。但初始化过程中有一个关键环节我们只是匆匆掠过：NCCL 是如何探测机器内部的 GPU 和网卡，并据此决定数据该走哪条路的？这正是下一章要深入的主题——拓扑发现与图搜索。我们将拆解 src/graph/topo.cc 如何枚举 PCI/NVLink/网卡设备并构建拓扑图，src/graph/search.cc 如何在该图上搜索最优路径，以及 src/graph/rings.cc 与 trees.cc 如何将搜索结果具体化为 Ring 与 Tree 算法拓扑。理解了这套机制，你就能明白为什么 NCCL 能在不同机器上自动选到合适的算法。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 上一章：第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2036,18 +2132,33 @@ rank 7 -&gt; rank 0</code></pre></div>
 <p>2. <strong>路径搜索</strong>（<code>search.cc</code> + <code>paths.cc</code>）：先用 BFS 预计算所有节点对之间的最短路径，再用递归搜索尝试不同的 Ring/Tree 结构，找到带宽最高的方案。</p>
 <p>3. <strong>算法拓扑生成</strong>（<code>rings.cc</code> + <code>trees.cc</code>）：把搜索结果转换成具体的 rank 顺序，Ring 用 <code>ncclBuildRings</code> 生成环，Tree 用 <code>ncclGetBtree</code> 生成二叉树。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclTopoConnectNodes</code> 中的带宽累加 <code>link-&gt;bw += bw</code> 改成 <code>link-&gt;bw = std::max(link-&gt;bw, bw)</code>，在什么场景下会导致性能下降？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclTopoConnectNodes</code> 中的带宽累加 <code>link-&gt;bw += bw</code> 改成 <code>link-&gt;bw = std::max(link-&gt;bw, bw)</code>，在什么场景下会导致性能下降？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：带宽累加处理的是多条并行链路的情况。以 4 条 NVLink 各 25 GB/s 为例，累加后是 100 GB/s，取 max 后只有 25 GB/s。在 <code>ncclTopoSetPaths</code> 中，路径带宽是 <code>std::min(path-&gt;bw, link-&gt;bw)</code>，如果链路带宽被低估，整条路径的带宽都会被低估。这会导致 <code>ncclTopoCompareGraphs</code> 选择错误的图——可能选了一个 channel 数更多但每个 channel 带宽更低的方案，实际性能反而更差。具体场景：8 卡 A100 全 NVLink 互联，每对 GPU 之间有 4 条 NVLink。累加得到 100 GB/s，取 max 得到 25 GB/s。搜索算法会认为 NVLink 和 PCIe Gen4 x16（约 25 GB/s）带宽相同，可能选择走 PCIe 的路径。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>ncclTopoSearchRecGpu</code> 中 <code>(*time)--</code> 在函数入口处执行。如果搜索超时（<code>*time &lt;= 0</code>），函数直接返回。这个设计在什么情况下会导致搜索陷入死循环？如何修复？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <code>ncclTopoSearchRecGpu</code> 中 <code>(*time)--</code> 在函数入口处执行。如果搜索超时（<code>*time &lt;= 0</code>），函数直接返回。这个设计在什么情况下会导致搜索陷入死循环？如何修复？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>(*time)--</code> 在入口处递减，如果 <code>*time</code> 初始值为 0 或负数，函数直接返回，不会递减。但如果 <code>*time</code> 是一个很大的正数，每次递归都会递减，最终会到 0。问题在于：如果某个分支的递归深度很大，但每次递减后 <code>*time</code> 仍然大于 0，搜索会继续。真正的风险是 <code>ncclTopoSearchRec</code> 中的 <code>goto search</code> 循环——如果 <code>time</code> 在循环中没有被正确重置，可能无限循环。看 <code>ncclTopoCompute</code> 中的 <code>globalTimeout</code> 逻辑：<code>globalTimeout -= time</code> 在每次 <code>search</code> 标签处执行，如果 <code>globalTimeout</code> 变成负数，会 <code>goto done</code>。但如果 <code>time</code> 被重置为 <code>NCCL_SEARCH_TIMEOUT</code>，<code>globalTimeout</code> 可能永远不会变成负数。修复方法是确保 <code>globalTimeout</code> 在每次搜索后都递减，且有一个硬上限。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>ncclTopoFollowPath</code> 在搜索失败时会调用 <code>followPath(path, node1, step, -bw, &amp;step)</code> 恢复带宽。如果某个递归分支在恢复之前就返回了（比如 <code>NCCLCHECKGOTO</code> 跳转到 <code>exit</code>），会发生什么？如何检测这种问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: <code>ncclTopoFollowPath</code> 在搜索失败时会调用 <code>followPath(path, node1, step, -bw, &amp;step)</code> 恢复带宽。如果某个递归分支在恢复之前就返回了（比如 <code>NCCLCHECKGOTO</code> 跳转到 <code>exit</code>），会发生什么？如何检测这种问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：如果恢复被跳过，路径上的链路带宽会保持被扣减的状态。后续搜索会看到错误的带宽，可能错过最优解。检测方法：在 <code>ncclTopoCompute</code> 结束后，遍历所有链路，检查带宽是否与初始值一致。如果发现不一致，说明有恢复遗漏。修复方法：使用 RAII 风格的守卫对象，在析构时自动恢复带宽。或者，在每次搜索前保存所有链路的带宽快照，搜索后恢复。NCCL 当前的做法是在每个 <code>ncclTopoFollowPath</code> 调用点手动配对正向和反向调用，这容易出错。一个更健壮的设计是把带宽扣减和恢复封装成一个函数，确保成对出现。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>下一章我们将深入 tuning 模块，看 NCCL 如何根据拓扑搜索结果和消息大小，在 Ring、Tree、CollNet 等算法之间做出最终选择。本章建立的拓扑图、路径搜索结果和算法模板，将成为 tuning 模块的输入。</p>
 <p>通过 topo.cc 的图构建、search.cc 的路径搜索以及 rings.cc 和 trees.cc 的拓扑生成，NCCL 实现了用通用图结构描述任意拓扑、用可配置搜索算法找到最优解、用简单模板生成最终算法的设计哲学。这套机制让 NCCL 能在从 2 卡工作站到 10000 卡集群的各种机器上自动选到合适的算法。然而，拓扑图只是提供了算法的候选路径，具体到一次通信该走哪条路、用哪种协议，还需要更精细的决策。下一章我们将聚焦 src/tuning 目录，看看 tuning 模块如何结合代价模型与算法估计，在 Ring/Tree/NVLS/PAT 以及 LL/LL128/Simple 之间做出最终选择。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 上一章：第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2616,6 +2727,21 @@ not_valid:
 <p><span class="fact-pill" data-file="src/tuning/tuning.cc" data-lines="258-263" onclick="window.highlightFact('src/tuning/tuning.cc', '258-263')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/tuning.cc:258-263</code></span></p>
 <p>至此，tuning 模块的决策链条已经清晰：它接收拓扑图与通信参数，通过代价模型和算法估计，在微秒级内输出最优的 (算法, 协议, channel, warp) 组合。但选型只是开始——这个决策结果如何被下游使用？下一章我们将进入 src/enqueue/enqueue.cc 的主干，看一次 ncclAllReduce 调用如何经过参数校验、算法/协议确定、channel 切分，最终生成 ncclInfo 与 ncclTaskColl 结构。这是全书从「用户视角」切换到「引擎视角」的关键一章，你将探明一次集合通信调用在 host 侧被翻译成了什么，以及它与后续 kernel 启动之间的边界。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 上一章：第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -2887,11 +3013,11 @@ ncclAllReduceConfig(..., &amp;config);
 </ul>
 <p>下一章我们将进入 <code>task_sched</code>，看 NCCL 如何编排多 channel 多 kernel 的执行顺序。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>collTaskAppend</code> 中的 <code>aggIsolate</code> 判断去掉（即 <code>src/enqueue/enqueue.cc:2821-2822</code> 永远返回 false），在什么场景下会导致用户设置的 <code>maxCTAs</code> 失效？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>collTaskAppend</code> 中的 <code>aggIsolate</code> 判断去掉（即 <code>src/enqueue/enqueue.cc:2821-2822</code> 永远返回 false），在什么场景下会导致用户设置的 <code>maxCTAs</code> 失效？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>aggIsolate</code> 的作用是标记&quot;这个任务不能被聚合&quot;。如果去掉这个判断，设置了 per-call config 的任务会和相邻任务合并。在 <code>ncclPrepareTasks</code> 的聚合循环中（<code>src/enqueue/enqueue.cc:507-508</code>），聚合条件是 <code>aggEnd-&gt;trafficBytes &lt; 4 * aggBeg-&gt;trafficBytes &amp;&amp; !aggBeg-&gt;aggIsolate &amp;&amp; !aggEnd-&gt;aggIsolate</code>。如果 <code>aggIsolate</code> 永远为 false，那么即使任务设置了 <code>maxCTAs=4</code>，它也可能和一个 <code>maxCTAs=32</code> 的任务合并。合并后的 <code>agg</code> 会取两者的某种组合（具体取决于 <code>ncclGetAlgoInfo</code> 的实现），导致实际使用的 CTA 数量不符合用户预期。</p>
 <p>更严重的是，在 <code>scheduleCollTasksToPlan</code> 中（<code>src/enqueue/enqueue.cc:665-666</code>），<code>taskAggIsolate</code> 用于确保配置了 per-call 资源的任务单独占一个 plan。如果这个判断失效，多个任务会共享 plan 的 channel 预算，导致资源分配不符合预期。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: 在 <code>ncclEnqueueCheck</code> 中，如果 <code>ncclGroupEndInternal()</code> 返回错误（比如某个 rank 的 ArgsCheck 失败），但 <code>taskAppend</code> 已经成功执行了，会发生什么？NCCL 如何保证状态一致性？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: 在 <code>ncclEnqueueCheck</code> 中，如果 <code>ncclGroupEndInternal()</code> 返回错误（比如某个 rank 的 ArgsCheck 失败），但 <code>taskAppend</code> 已经成功执行了，会发生什么？NCCL 如何保证状态一致性？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <code>src/enqueue/enqueue.cc:3513-3519</code> 的控制流：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">NCCLCHECKGOTO(taskAppend(info-&gt;comm, info), ret, fail);
 info-&gt;comm-&gt;opCount++;
@@ -2902,8 +3028,8 @@ exit:
 <p>如果 <code>taskAppend</code> 成功但 <code>ncclGroupEndInternal</code> 失败，<code>opCount</code> 已经递增了。这会导致后续操作的 opCount 与对端不匹配，可能触发 hang。</p>
 <p>NCCL 的处理方式是：<code>ncclGroupErrCheck(ret)</code> 会检查是否有错误，如果有，会设置 comm 的错误状态。后续的 API 调用会通过 <code>ncclCommGetAsyncError</code> 检测到这个错误并立即返回。这是一种&quot;快速失败&quot;策略——一旦出错，整个 comm 进入错误状态，不再尝试恢复。</p>
 <p>在生产环境中，这意味着一旦出现 group 错误，用户需要销毁并重建 communicator。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>scheduleCollTasksToPlan</code> 中的 cell 切分算法（<code>src/enqueue/enqueue.cc:740-845</code>）有一个边界条件：当 <code>cellsLo == 0</code> 时，会跳过最少的 channel。如果这个跳过逻辑有 bug（比如 <code>channelId</code> 没有正确递增），会导致什么后果？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: <code>scheduleCollTasksToPlan</code> 中的 cell 切分算法（<code>src/enqueue/enqueue.cc:740-845</code>）有一个边界条件：当 <code>cellsLo == 0</code> 时，会跳过最少的 channel。如果这个跳过逻辑有 bug（比如 <code>channelId</code> 没有正确递增），会导致什么后果？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <code>src/enqueue/enqueue.cc:770-780</code>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">if (cellsLo == 0) {
   // Least channel skipped. Make the next channel the new least.
@@ -2921,9 +3047,24 @@ exit:
 <p>2. <strong>数据损坏</strong>：kernel 会重复处理或遗漏数据</p>
 <p>3. <strong>性能下降</strong>：channel 负载不均衡</p>
 <p>更隐蔽的是，这种 bug 可能只在特定消息大小下触发（当 <code>cellsLo == 0</code> 时），难以复现。NCCL 通过 <code>plan-&gt;channelMask |= (2ull &lt;&lt; devWork-&gt;channelHi) - (1ull &lt;&lt; devWork-&gt;channelLo)</code> 来跟踪已使用的 channel，但这只是记录，不能防止重叠。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>至此，我们已经看清 ncclAllReduce 如何从用户调用变成一串可执行的 kernel 任务：参数校验、算法/协议确定、channel 切分，最终生成 ncclInfo 与 ncclTaskColl。但任务被创建出来只是第一步——它们还需要被调度到多个 channel 上，生成 kernel 启动参数，并在 group 语义下处理批量提交与依赖排序。下一章将深入 src/enqueue/task_sched 与 src/enqueue/task_prep，回答“为什么一次 AllReduce 会启动多个 kernel，它们之间的顺序和依赖是怎么保证的”，同时揭示 src/group.cc 中 ncclGroupStart/ncclGroupEnd 如何把多次 API 调用合并成一次提交。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 上一章：第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -3625,10 +3766,25 @@ ncclResult_t ncclGroupJobAbort(struct ncclGroupJob* groupJob) {
 <p>5. <strong>新架构</strong>：<code>groupLaunchEnqueueRearch</code> 是正在开发的新调度框架，目前回退到 legacy 的 <code>doLaunches</code>。</p>
 <p>下一章将进入 kernel 启动的最后一公里：<code>ncclLaunchKernel</code> 如何把 <code>ncclKernelPlan</code> 变成 GPU 上真正执行的 kernel，以及设备侧如何读取 <code>DevComm</code> 元数据。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclGroupCommJoin</code> 中的 <code>ncclMemoryStackPush(&amp;comm-&gt;memScoped)</code> 去掉，会发生什么？在什么场景下会导致内存泄漏或数据损坏？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclGroupCommJoin</code> 中的 <code>ncclMemoryStackPush(&amp;comm-&gt;memScoped)</code> 去掉，会发生什么？在什么场景下会导致内存泄漏或数据损坏？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>ncclMemoryStackPush</code> 为 comm 在 group</p>
 <p>至此，任务描述已经变成了可执行的启动计划：group 语义把多次 API 调用合并成一次提交，channel 切分把任务分配到多个执行流，doLaunches 的轮次调度则保证了 kernel 之间的顺序与依赖。但计划终究只是计划，host 侧的任务描述如何变成 GPU 上的一个 grid？下一章我们将深入 ncclLaunchKernel，看参数准备、kernel 变体选择与 cudaLaunchKernel 调用，完成从 host 到 device 的最后一跃。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 上一章：第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -4243,6 +4399,21 @@ for kfn in kfns:
 <p><span class="fact-pill" data-file="src/device/generate.py" data-lines="130-154" onclick="window.highlightFact('src/device/generate.py', '130-154')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/generate.py:130-154</code></span></p>
 <p>至此，kernel 已经在 GPU 上启动，设备侧也拿到了工作描述。但真正决定性能的，是设备内部如何搬运数据。下一章将深入 src/device 下的三种协议原语：LL、LL128 和 Simple，看看同一份 AllReduce 逻辑为什么需要三套搬运原语，以及它们在同步方式、缓冲区布局和 flag 语义上的差异。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 上一章：第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -4463,17 +4634,32 @@ st_relaxed_sys_global(connStepPtr, step);</code></pre></div>
 <p>3. <strong>Simple</strong>：用 FIFO 缓冲区 + step 指针通知实现大消息高吞吐。<code>flags</code> 位标志编码角色，<code>waitPeer</code> 轮询 step，<code>postPeer</code> 更新 step 并 fence。完整支持 Direct 模式。</p>
 <p>三套原语共享同一个模板骨架，通过 <code>Proto</code> 模板参数特化。算法层只调用统一接口，不关心底层协议。这就是「同一份 AllReduce 逻辑为什么需要三套搬运原语」的答案：不同消息大小需要不同的同步策略和缓冲区布局，三套原语分别针对小、中、大消息优化。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>incSend</code> 里的 cleanup 逻辑（<span class="fact-pill" data-file="src/device/prims_ll.h" data-lines="99-106" onclick="window.highlightFact('src/device/prims_ll.h', '99-106')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_ll.h:99-106</code></span>）去掉，在什么场景下会触发数据损坏？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>incSend</code> 里的 cleanup 逻辑（<span class="fact-pill" data-file="src/device/prims_ll.h" data-lines="99-106" onclick="window.highlightFact('src/device/prims_ll.h', '99-106')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_ll.h:99-106</code></span>）去掉，在什么场景下会触发数据损坏？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：cleanup 逻辑在 <code>sendStep[i] &amp; NCCL_LL_CLEAN_MASK == NCCL_LL_CLEAN_MASK</code> 时，把整个 slice 的所有行都用当前 flag 写一遍（数据填 0）。如果去掉，当 step 回绕到 <code>NCCL_LL_CLEAN_MASK</code> 边界时，某些行的 flag 可能还是上一轮的值。如果上一轮的 flag 恰好等于这一轮接收方期望的 flag，接收方会误以为数据已就绪，读到上一轮的残留数据。这是一个典型的 ABA 问题。触发条件是长时间运行（step 超过 <code>NCCL_LL_CLEAN_MASK</code> 周期）且 flag 恰好回绕到相同值。这类 bug 极难复现，因为需要精确的 step 对齐。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: Simple 协议的析构函数里，NetRegMode 下的等待（<span class="fact-pill" data-file="src/device/prims_simple.h" data-lines="794-804" onclick="window.highlightFact('src/device/prims_simple.h', '794-804')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_simple.h:794-804</code></span>）和 DirectRead 下的等待（<span class="fact-pill" data-file="src/device/prims_simple.h" data-lines="814-824" onclick="window.highlightFact('src/device/prims_simple.h', '814-824')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_simple.h:814-824</code></span>）分别在防什么？如果去掉其中一个，在高并发场景下会发生什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: Simple 协议的析构函数里，NetRegMode 下的等待（<span class="fact-pill" data-file="src/device/prims_simple.h" data-lines="794-804" onclick="window.highlightFact('src/device/prims_simple.h', '794-804')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_simple.h:794-804</code></span>）和 DirectRead 下的等待（<span class="fact-pill" data-file="src/device/prims_simple.h" data-lines="814-824" onclick="window.highlightFact('src/device/prims_simple.h', '814-824')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_simple.h:814-824</code></span>）分别在防什么？如果去掉其中一个，在高并发场景下会发生什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：NetRegMode 等待的是 proxy 线程把 <code>connFifo[prevStep].size</code> 设为 -1，表示网卡已完成发送。如果去掉，下一个 kernel 可能覆盖正在被网卡 DMA 读取的发送缓冲区，导致网卡读到脏数据。DirectRead 等待的是接收方推进 tail（<code>*tail &gt; *head</code>），表示接收方已读完直接缓冲区。如果去掉，发送方可能在接收方还没读完时就覆盖了缓冲区，导致接收方读到新数据而非旧数据。在高并发场景下，这两个等待都是必须的，去掉任何一个都会导致数据竞争。区别是 NetRegMode 防的是「网卡读」，DirectRead 防的是「对端 GPU 读」。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: LL128 的 <code>loadRegsBegin</code> 在非对齐时走共享内存重排版（<span class="fact-pill" data-file="src/device/prims_ll128.h" data-lines="115-141" onclick="window.highlightFact('src/device/prims_ll128.h', '115-141')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_ll128.h:115-141</code></span>），这个路径比对齐路径慢多少？为什么 NCCL 不直接要求用户缓冲区必须 16 字节对齐？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: LL128 的 <code>loadRegsBegin</code> 在非对齐时走共享内存重排版（<span class="fact-pill" data-file="src/device/prims_ll128.h" data-lines="115-141" onclick="window.highlightFact('src/device/prims_ll128.h', '115-141')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/prims_ll128.h:115-141</code></span>），这个路径比对齐路径慢多少？为什么 NCCL 不直接要求用户缓冲区必须 16 字节对齐？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：非对齐路径多了三步：写共享内存、<code>__syncwarp()</code>、从共享内存读。共享内存的带宽虽然高，但 <code>__syncwarp()</code> 是一个同步点，会阻塞 warp 直到所有线程完成写入。粗略估计，非对齐路径比对齐路径慢 20-40%，具体取决于共享内存 bank 冲突情况。NCCL 不强制要求对齐，是因为用户可能传入任意偏移的缓冲区（比如 tensor 切片），强制对齐会限制 API 的灵活性。NCCL 的策略是「对齐时走快路径，非对齐时走慢路径但保证正确性」。生产环境建议用户尽量按 16 字节对齐分配缓冲区，以走快路径。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>至此，我们已经掌握了 LL、LL128、Simple 三种原语的数据搬运机制，它们为上层算法提供了灵活的性能调节手段。下一章将深入集合通信算法内核，看 AllReduce、AllGather、ReduceScatter 等如何调用这些原语，以及 Ring、Tree、CollNet 等算法如何组织数据流，最终完成端到端的集合通信。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 上一章：第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -4778,18 +4964,33 @@ const int gatherWarps = work-&gt;regUsed ? 1 : (totalWarps - reduceWarps - bcast
 <p>5. <strong>Broadcast/Reduce</strong>（<span class="fact-pill" data-file="src/device/broadcast.h" data-lines="14-64" onclick="window.highlightFact('src/device/broadcast.h', '14-64')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/broadcast.h:14-64</code></span>、<span class="fact-pill" data-file="src/device/reduce.h" data-lines="14-53" onclick="window.highlightFact('src/device/reduce.h', '14-53')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/reduce.h:14-53</code></span>）：最简单的 Ring 变体。</p>
 <p>6. <strong>CollNet/NVLS</strong>（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="247-635" onclick="window.highlightFact('src/device/all_reduce.h', '247-635')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:247-635</code></span>）：硬件卸载，只支持 SIMPLE 协议。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 在 Ring AllReduce 的 reduce-scatter 阶段，第 0 步用 <code>directSend</code>，中间步用 <code>directRecvReduceDirectSend</code>，最后一步用 <code>directRecvReduceCopyDirectSend</code>。如果去掉最后一步的 <code>postOp=true</code>，在什么场景下会产生错误结果？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 在 Ring AllReduce 的 reduce-scatter 阶段，第 0 步用 <code>directSend</code>，中间步用 <code>directRecvReduceDirectSend</code>，最后一步用 <code>directRecvReduceCopyDirectSend</code>。如果去掉最后一步的 <code>postOp=true</code>，在什么场景下会产生错误结果？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>postOp=true</code> 触发后置操作（如求平均时的除法）。以 <code>ncclAvg</code> 为例，归约是求和，postOp 是除以 nranks。如果去掉 <code>postOp</code>，最后一步只做归约不做除法，recvbuff 里存的是「和」而非「平均」。在 reduce-scatter 阶段，每个 rank 只保留一个 chunk 的最终结果，这个 chunk 恰好是 <code>ringIx+0</code>（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="60" onclick="window.highlightFact('src/device/all_reduce.h', '60')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:60</code></span>）。如果 postOp 缺失，这个 chunk 的和没有除以 nranks，后续 all-gather 阶段会把这个错误的「和」传播给所有 rank。注意：只有最后一步需要 postOp，因为只有这一步产生「完整归约」的结果；中间步的归约是部分和，不需要 postOp。生产环境如果发现 AllReduce 结果偏大 nranks 倍，检查 postOp 是否正确传递。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>runTreeSplit</code> 在 LL/LL128 协议下把线程按 7:3 拆分（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="163" onclick="window.highlightFact('src/device/all_reduce.h', '163')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:163</code></span>），而 Simple 协议下按 1:1 拆分（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="157" onclick="window.highlightFact('src/device/all_reduce.h', '157')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:157</code></span>）。如果强行把 LL 协议也改成 1:1，会发生什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <code>runTreeSplit</code> 在 LL/LL128 协议下把线程按 7:3 拆分（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="163" onclick="window.highlightFact('src/device/all_reduce.h', '163')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:163</code></span>），而 Simple 协议下按 1:1 拆分（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="157" onclick="window.highlightFact('src/device/all_reduce.h', '157')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:157</code></span>）。如果强行把 LL 协议也改成 1:1，会发生什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：LL/LL128 的归约组要从最多 3 个子节点收数据并做归约（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="187" onclick="window.highlightFact('src/device/all_reduce.h', '187')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:187</code></span> 的 <code>FanAsymmetric&lt;NCCL_MAX_TREE_ARITY, 1&gt;</code>），计算密集；广播组只做复制转发（<span class="fact-pill" data-file="src/device/all_reduce.h" data-lines="208" onclick="window.highlightFact('src/device/all_reduce.h', '208')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_reduce.h:208</code></span> 的 <code>FanAsymmetric&lt;1, NCCL_MAX_TREE_ARITY&gt;</code>），计算轻。7:3 拆分让归约组有足够线程处理 3 路归约，广播组线程少但够用。如果改成 1:1，归约组线程不足，归约成为瓶颈；广播组线程过剩，浪费。更严重的是，LL 协议的 flag 轮询是忙等待，线程多了会增加 flag 竞争。生产环境如果发现 Tree AllReduce 在 LL 协议下性能异常，检查 <code>nthreadsSplit</code> 的计算是否被修改。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: AllGather 的 <code>isNetOffload</code> 模式下，只用 1 个 warp 驱动 Ring 通信（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="32" onclick="window.highlightFact('src/device/all_gather.h', '32')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:32</code></span>），其余 warp 并行拷贝（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="76-82" onclick="window.highlightFact('src/device/all_gather.h', '76-82')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:76-82</code></span>）。如果去掉最后的 <code>barrier_sync(14, nthreads)</code>（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="87" onclick="window.highlightFact('src/device/all_gather.h', '87')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:87</code></span>），在什么场景下会导致数据竞争？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: AllGather 的 <code>isNetOffload</code> 模式下，只用 1 个 warp 驱动 Ring 通信（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="32" onclick="window.highlightFact('src/device/all_gather.h', '32')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:32</code></span>），其余 warp 并行拷贝（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="76-82" onclick="window.highlightFact('src/device/all_gather.h', '76-82')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:76-82</code></span>）。如果去掉最后的 <code>barrier_sync(14, nthreads)</code>（<span class="fact-pill" data-file="src/device/all_gather.h" data-lines="87" onclick="window.highlightFact('src/device/all_gather.h', '87')" title="在右侧代码面板查看真实源码切片">📎 <code>src/device/all_gather.h:87</code></span>），在什么场景下会导致数据竞争？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>barrier_sync</code> 保证所有 warp（包括通信 warp 和拷贝 warp）都完成本 work 后才进入下一个 work。如果去掉，通信 warp 可能在拷贝 warp 还没写完 outputBuf 时就开始下一个 work 的通信，而下一个 work 可能复用同一块 outputBuf。具体场景：连续两次 AllGather，第一次的拷贝 warp 还在写 outputBuf 的尾部，第二次的通信 warp 已经开始往 outputBuf 写新数据，导致第一次的数据被覆盖。注释里说得很清楚：「otherwise, we can have contention if next work will use the outputBuf in this work」。用 barrier 14 而非默认 barrier，是为了避开 prims 内部的 barrier 和 <code>__syncthreads()</code>，防止死锁。生产环境如果发现 AllGather 结果偶发错误，检查 <code>isNetOffload</code> 路径的 barrier 是否被优化掉。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>至此，我们已经看完了设备侧算法内核如何组织数据流。每种算法都通过 <code>Primitives</code> 调用上一章的原语，算法层只关心「谁发给谁、发哪个 chunk、归约还是复制」。下一章将深入传输层抽象，看 P2P、SHM、NET、NVLS 如何统一成一套接口，以及 host 侧的 proxy 线程如何与设备侧 kernel 协作完成跨机通信。</p>
 <p>核心规律：所有算法都通过 Primitives 模板类调用原语，算法只负责「数据流拓扑」，原语负责「数据搬运」。这种分层让新增算法只需实现拓扑逻辑，无需关心底层同步。但无论拓扑如何变化，数据最终都要通过物理链路传输。下一章将深入 src/transport 目录，看 NCCL 如何用统一的 transport 接口屏蔽 P2P、SHM、NET、NVLS 的差异，以及每种 transport 的 setup/connect/send/recv 语义。这是理解跨机通信的基础。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 上一章：第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -5483,6 +5684,21 @@ struct connectMap {
 <p><strong>坑：MNNVL 不支持 NVLS buffer 注册。</strong> 看 <code>ncclNvlsSetup</code>：</p>
 <p>至此，NCCL 通过 ncclTransport 抽象层，成功将 P2P、SHM、NET、NVLS 四种异构通道统一为一致的接口，算法内核无需关心底层是 NVLink 还是网卡。但传输层只解决了「通道如何抽象」，尚未回答「数据如何被异步驱动」。下一章我们将聚焦 src/proxy.cc 与 src/include/proxy.h，看 proxy 线程如何在 host 侧异步推进网络收发，与 GPU kernel 形成生产者-消费者关系，揭开 NCCL 异步性的关键机制。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 上一章：第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -5915,15 +6131,15 @@ state-&gt;thread.join();</code></pre></div>
 <p>4. <strong>四阶段状态机</strong>：send/recv 各自的 posted → transmitted → received → done 计数器驱动流水线。</p>
 <p>5. <strong>硬件级 flush</strong>：GDRDMA 场景下用 <code>mfence</code> + PCIe 读强制提交 posted write。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>sendProxyProgress</code> 中 <code>sub-&gt;done == sub-&gt;nsteps</code> 时更新 <code>sendHead</code> 的逻辑去掉（即不通知 GPU slot 已释放），在什么场景下会触发死锁？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>sendProxyProgress</code> 中 <code>sub-&gt;done == sub-&gt;nsteps</code> 时更新 <code>sendHead</code> 的逻辑去掉（即不通知 GPU slot 已释放），在什么场景下会触发死锁？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>sendHead</code> 是 GPU 判断「哪些 slot 可以复用」的唯一依据。看 <span class="fact-pill" data-file="src/transport/net.cc" data-lines="1469-1473" onclick="window.highlightFact('src/transport/net.cc', '1469-1473')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/net.cc:1469-1473</code></span>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">if (resources-&gt;shared == 0) {
     volatile uint64_t* sendHead = resources-&gt;gdcSync ? resources-&gt;gdcSync : &amp;resources-&gt;sendMem-&gt;head;
     *sendHead = sub-&gt;base + sub-&gt;done;
 }</code></pre></div>
 <p>如果去掉这段，GPU 的 head 永远停在初始值（shared 模式下是 <code>-NCCL_STEPS</code>，非 shared 是 0）。GPU kernel 在 <code>waitSend</code> 时会检查 <code>head + NCCL_STEPS &gt; step</code> 才认为有 credit 可写。head 不推进，GPU 写满 <code>NCCL_STEPS</code> 个 slot 后就永远阻塞在等待 credit 上，而 proxy 又在等 GPU 写新数据才能 isend——经典的生产者-消费者死锁。在 shared 模式下更严重，因为初始 head 是负值，GPU 一开始就没有 credit。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>ncclLocalOpAppend</code> 在累积 op 达到 <code>MAX_OPS_PER_PEER</code> 时会触发批量投递，但代码特意「不投递最后一个 opCount 的所有 op」。如果改成简单地把所有 op 都投递，会破坏什么机制？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <code>ncclLocalOpAppend</code> 在累积 op 达到 <code>MAX_OPS_PER_PEER</code> 时会触发批量投递，但代码特意「不投递最后一个 opCount 的所有 op」。如果改成简单地把所有 op 都投递，会破坏什么机制？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/proxy.cc" data-lines="525-548" onclick="window.highlightFact('src/proxy.cc', '525-548')" title="在右侧代码面板查看真实源码切片">📎 <code>src/proxy.cc:525-548</code></span> 的注释和逻辑：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">// Do not post last operations as we could have more coming with the same opCount, and posting
 // them in different batches would break proxyArgs aggregation with subs.
@@ -5938,15 +6154,30 @@ for (int op = proxyOps-&gt;nextOps; op != proxyOps-&gt;nextOpsEnd; op = pool-&gt
     }
 }</code></pre></div>
 <p><code>ProxyAppend</code> 的聚合逻辑 <span class="fact-pill" data-file="src/proxy.cc" data-lines="443-443" onclick="window.highlightFact('src/proxy.cc', '443-443')" title="在右侧代码面板查看真实源码切片">📎 <code>src/proxy.cc:443-443</code></span> 依赖 <code>args-&gt;opCount == op-&gt;opCount</code> 来判断是否追加 sub。如果同一个 opCount 的多个 channel op 被拆到两个批次投递，第一批会创建一个 args，第二批到达时 <code>args-&gt;opCount</code> 已经不等于新 op 的 opCount（因为 args 可能已经被推进），导致本应聚合的 sub 被拆成独立的 args。这不仅降低性能，还可能破坏 <code>ncclProxyOpToArgs</code> 里的 <code>nChannels</code>/<code>nPeers</code> 取 min 的逻辑 <span class="fact-pill" data-file="src/proxy.cc" data-lines="399-400" onclick="window.highlightFact('src/proxy.cc', '399-400')" title="在右侧代码面板查看真实源码切片">📎 <code>src/proxy.cc:399-400</code></span>，导致错误的通道数计算。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>recvProxyProgress</code> 的 Ready 阶段会按 <code>recvComm</code> 对 sub 重新排序分组。如果去掉这个分组逻辑，让每个 sub 独立调用 <code>irecv</code>，在 <code>maxRecvs &gt; 1</code> 的网卡上会有什么后果？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: <code>recvProxyProgress</code> 的 Ready 阶段会按 <code>recvComm</code> 对 sub 重新排序分组。如果去掉这个分组逻辑，让每个 sub 独立调用 <code>irecv</code>，在 <code>maxRecvs &gt; 1</code> 的网卡上会有什么后果？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/transport/net.cc" data-lines="1495-1538" onclick="window.highlightFact('src/transport/net.cc', '1495-1538')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/net.cc:1495-1538</code></span> 的分组逻辑和 <span class="fact-pill" data-file="src/transport/net.cc" data-lines="1613-1614" onclick="window.highlightFact('src/transport/net.cc', '1613-1614')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/net.cc:1613-1614</code></span> 的 multirecv 调用：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">NCCLCHECK(proxyState-&gt;ncclNet-&gt;irecv(resources-&gt;netRecvComm, subCount, ptrs, sizes, tags, mhandles, phandles,
                                      requestPtr));</code></pre></div>
 <p><code>maxRecvs</code> 是网卡插件声明的「单次 irecv 能接收的最大 buffer 数」<span class="fact-pill" data-file="src/transport/net.cc" data-lines="1525-1525" onclick="window.highlightFact('src/transport/net.cc', '1525-1525')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/net.cc:1525-1525</code></span>。当 <code>maxRecvs &gt; 1</code> 时，插件（如 IB）支持一次 WQE 接收多个 buffer，能显著降低 doorbell 开销和 CQE 处理成本。如果去掉分组，每个 sub 单独 irecv，<code>subCount</code> 永远是 1，插件退化为单 buffer 模式，吞吐量会下降。更关键的是，<code>recvRequestsCache</code> 和 <code>irecvConsumed</code> 机制 <span class="fact-pill" data-file="src/transport/net.cc" data-lines="1616-1617" onclick="window.highlightFact('src/transport/net.cc', '1616-1617')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/net.cc:1616-1617</code></span> 是为 multirecv 设计的——单 buffer 模式下这些缓存逻辑会失效，可能导致请求泄漏。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>至此，我们理解了 proxy 线程如何将网络 I/O 与 kernel 执行解耦，让 GPU 计算与通信真正并行。但 proxy 只是驱动者，底层网络传输的具体实现仍待揭晓。下一章我们将深入 <code>net_ib</code>，看 NCCL 如何封装 verbs API 实现 InfiniBand 传输，以及 GPUDirect RDMA 如何让网卡直接读写 GPU 显存。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 上一章：第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -6536,7 +6767,7 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p>4. <strong>GPUDirect RDMA</strong>：<code>wrap_ibv_reg_dmabuf_mr</code> 通过 DMA-BUF 机制让网卡直接映射 GPU 显存，<code>wrap_direct_ibv_reg_dmabuf_mr</code> 用于能力探测。</p>
 <p>5. <strong>错误诊断</strong>：<code>ibvWcStatusStr</code>、<code>ibvWcOpcodeStr</code>、<code>ibvWrOpcodeStr</code> 把硬件错误码翻译成可读字符串，是生产排查的关键工具。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>wrap_ibv_symbols</code> 里的 <code>std::call_once</code> 换成普通的 <code>if (initResult == ncclSuccess) return initResult;</code> 双检锁，在什么并发场景下会出问题？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>wrap_ibv_symbols</code> 里的 <code>std::call_once</code> 换成普通的 <code>if (initResult == ncclSuccess) return initResult;</code> 双检锁，在什么并发场景下会出问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/misc/ibvwrap.cc" data-lines="26-29" onclick="window.highlightFact('src/misc/ibvwrap.cc', '26-29')" title="在右侧代码面板查看真实源码切片">📎 <code>src/misc/ibvwrap.cc:26-29</code></span>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">ncclResult_t wrap_ibv_symbols(void) {
   std::call_once(initOnceFlag, []() { initResult = buildIbvSymbols(&amp;ibvSymbols); });
@@ -6545,6 +6776,21 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p>如果换成朴素的双检锁，问题在于<strong>内存重排序</strong>。<code>buildIbvSymbols</code> 会填充 <code>ibvSymbols</code> 的各个字段，然后写入 <code>initResult</code>。在没有内存屏障的情况下，CPU 或编译器可能把 <code>initResult = ncclSuccess</code> 重排到 `</p>
 <p>至此，我们看清了 NCCL 如何通过 net_ib 将 libibverbs 封装为可插拔的传输层，并利用 GPUDirect RDMA 实现网卡对 GPU 显存的直接访问。这套机制解决了跨机通信的延迟与带宽瓶颈。但机内通信同样关键——下一章我们将进入对称内存与 NVLS，看 NCCL 如何利用 NVLink 多播实现硬件加速的集合通信。届时你会发现，本章的 RDMA 机制与 NVLS 形成互补：前者负责跨机，后者负责机内。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 上一章：第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -7121,9 +7367,24 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p>3. <strong>LSA 指针解析</strong>：设备侧根据地址范围自动判断是否走多播路径，不需要软件翻译。<code>NCCL_NVLS_MIN_POLL</code> 标志优化轮询开销。</p>
 <p>4. <strong>错误处理</strong>：<code>ncclMcPartitionTryBindAddr</code> 区分永久性失败和临时性失败，<code>ncclMcGroupBuildPartitions</code> 的 fail 路径用 <code>CUCALL</code> 确保资源释放。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclMcPartitionBindMem</code> 里的边界检查 <code>if (offsetInPartition + bindSize &gt; partition-&gt;size)</code> 去掉，在什么场景下会触发内存越界？为什么这个检查不能用&quot;UC 和 MC 粒度相同&quot;来替代？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclMcPartitionBindMem</code> 里的边界检查 <code>if (offsetInPartition + bindSize &gt; partition-&gt;size)</code> 去掉，在什么场景下会触发内存越界？为什么这个检查不能用&quot;UC 和 MC 粒度相同&quot;来替代？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/transport/multicast.cc" data-lines="200-208" onclick="window.highlightFact('src/transport/multicast.cc', '200-208')" title="在右侧代码面板查看真实源码切片">📎 <code>src/transport/multicast.cc:200-208</code></span>：</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 上一章：第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -7367,22 +7628,37 @@ struct ncclIbvSymbols ibvSymbols;</code></pre></div>
 <p><strong>陷阱一：后端版本不匹配。</strong> 如果设备代码版本低于后端要求的最低版本，<code>backendVersion</code> 会停留在较低值。<span class="fact-pill" data-file="src/gin/gin_host.cc" data-lines="301-303" onclick="window.highlightFact('src/gin/gin_host.cc', '301-303')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host.cc:301-303</code></span> 这可能导致某些新特性不可用（比如信号永不重置），但不会导致错误。然而，如果设备代码版本高于所有已知版本，<code>backendVersion</code> 会取最大值，可能触发未定义行为。</p>
 <p><strong>陷阱二：stride 校验的边界。</strong> 如果 <code>requestedStride % connectedStride != 0</code>，创建失败。<span class="fact-pill" data-file="src/gin/gin_host.cc" data-lines="331-337" onclick="window.highlightFact('src/gin/gin_host.cc', '331-337')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host.cc:331-337</code></span> 这个检查假设 connectedStride 是 2 的幂（FULL 模式为 1，RAIL 模式为 <code>contiguousRanksPerHost</code>）。如果 <code>contiguousRanksPerHost</code> 不是 2 的幂（比如 3），倍数检查可能拒绝合法的 stride。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 在 <code>scheduleRmaTasksToPlan</code> 的 WaitSignal 分支中，如果去掉 <code>plan-&gt;rmaArgs-&gt;nRmaTasks = (npeersCe &gt; 0 ? 1 : 0) + (npeersProxy &gt; 0 ? 1 : 0)</code> 这一行，改为直接设为 1，在什么场景下会导致问题？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 在 <code>scheduleRmaTasksToPlan</code> 的 WaitSignal 分支中，如果去掉 <code>plan-&gt;rmaArgs-&gt;nRmaTasks = (npeersCe &gt; 0 ? 1 : 0) + (npeersProxy &gt; 0 ? 1 : 0)</code> 这一行，改为直接设为 1，在什么场景下会导致问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/rma/rma.cc" data-lines="248" onclick="window.highlightFact('src/rma/rma.cc', '248')" title="在右侧代码面板查看真实源码切片">📎 <code>src/rma/rma.cc:248</code></span>。<code>nRmaTasks</code> 记录的是实际入队的任务数。如果所有 peers 都是 LSA 可达的（<code>npeersProxy == 0</code>），实际只有 1 个 CE 任务入队，<code>nRmaTasks</code> 应该为 1。如果所有 peers 都不可达（<code>npeersCe == 0</code>），实际只有 1 个 Proxy 任务入队，<code>nRmaTasks</code> 也应该为 1。但如果 peers 混合分布，两个任务都入队，<code>nRmaTasks</code> 应该为 2。</p>
 <p>如果把这一行改为 <code>plan-&gt;rmaArgs-&gt;nRmaTasks = 1</code>，在混合分布场景下，<code>nRmaTasks</code> 会低估实际任务数。后续 <code>ncclRmaWaitSignal</code> 中的判断 <code>plan-&gt;rmaArgs-&gt;nRmaTasksProxy &gt; 0 &amp;&amp; plan-&gt;rmaArgs-&gt;nRmaTasksCe &gt; 0</code> 仍然能正确工作（因为用的是 <code>nRmaTasksProxy</code> 和 <code>nRmaTasksCe</code>），<span class="fact-pill" data-file="src/rma/rma.cc" data-lines="47" onclick="window.highlightFact('src/rma/rma.cc', '47')" title="在右侧代码面板查看真实源码切片">📎 <code>src/rma/rma.cc:47</code></span> 但任何依赖 <code>nRmaTasks</code> 做资源估算或日志统计的代码会得到错误结果。更严重的是，如果后续代码用 <code>nRmaTasks</code> 来分配数组或计算循环次数，可能导致缓冲区溢出或任务遗漏。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: 在 <code>proxyGinPollGfd</code> 中，如果把 <code>hostGpuCtx-&gt;sis[targetRank]++</code> 移到 <code>proxyGinProcessGfd</code> 调用之后，在什么并发场景下会导致 GFD 被重复处理？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: 在 <code>proxyGinPollGfd</code> 中，如果把 <code>hostGpuCtx-&gt;sis[targetRank]++</code> 移到 <code>proxyGinProcessGfd</code> 调用之后，在什么并发场景下会导致 GFD 被重复处理？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/gin/gin_host_proxy.cc" data-lines="228" onclick="window.highlightFact('src/gin/gin_host_proxy.cc', '228')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host_proxy.cc:228</code></span>。<code>sis</code> 是&quot;已见索引&quot;，表示 proxy 已经看到并开始处理的 GFD 数量。<code>proxyGinPollGfd</code> 在拷贝完 GFD 后立即递增 <code>sis</code>，然后返回 1 表示成功。调用者 <code>ncclGinProxyProgress</code> 在循环中调用 <code>proxyGinPollGfd</code>，如果返回 1 则继续处理下一个 GFD。<span class="fact-pill" data-file="src/gin/gin_host_proxy.cc" data-lines="648-669" onclick="window.highlightFact('src/gin/gin_host_proxy.cc', '648-669')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host_proxy.cc:648-669</code></span></p>
 <p>如果把 <code>sis++</code> 移到 <code>proxyGinProcessGfd</code> 之后，那么在 <code>proxyGinProcessGfd</code> 执行期间（可能涉及网络插件的异步调用），<code>sis</code> 仍然指向当前 GFD。如果此时 GPU 写入了一个新的 GFD 到同一个槽位（因为队列是环形的，<code>pis</code> 可能已经回绕），<code>proxyGinPollGfd</code> 会再次看到这个槽位，但 <code>sis</code> 没有前进，导致重复处理同一个槽位。</p>
 <p>更危险的是，<code>proxyGinPollGfd</code> 在拷贝 GFD 后会清零队列中的 GFD。<span class="fact-pill" data-file="src/gin/gin_host_proxy.cc" data-lines="206-208" onclick="window.highlightFact('src/gin/gin_host_proxy.cc', '206-208')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host_proxy.cc:206-208</code></span> 如果 <code>sis</code> 没有前进，下一次轮询会看到清零后的 GFD（flag 为 0），<code>isGfdAvailable</code> 返回 false，导致 GFD 丢失。这会造成 GPU 侧等待一个永远不会被处理的请求，最终死锁。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: 在 <code>ncclRmaProxyProgressThread</code> 中，如果 <code>rmaProgress == 2</code> 分支中忘记调用 <code>rmaProxyState-&gt;cond.notify_one()</code>，在什么场景下会导致主线程永久阻塞？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: 在 <code>ncclRmaProxyProgressThread</code> 中，如果 <code>rmaProgress == 2</code> 分支中忘记调用 <code>rmaProxyState-&gt;cond.notify_one()</code>，在什么场景下会导致主线程永久阻塞？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/rma/rma_proxy.cc" data-lines="373-378" onclick="window.highlightFact('src/rma/rma_proxy.cc', '373-378')" title="在右侧代码面板查看真实源码切片">📎 <code>src/rma/rma_proxy.cc:373-378</code></span>。<code>rmaProgress == 2</code> 是&quot;暂停请求&quot;状态，用于资源回收。主线程设置 <code>rmaProgress = 2</code> 后，会等待进度线程确认暂停。进度线程在 <code>cond.wait(lock)</code> 中等待，主线程需要调用 <code>cond.notify_one()</code> 来唤醒它。<span class="fact-pill" data-file="src/rma/rma_proxy.cc" data-lines="377" onclick="window.highlightFact('src/rma/rma_proxy.cc', '377')" title="在右侧代码面板查看真实源码切片">📎 <code>src/rma/rma_proxy.cc:377</code></span></p>
 <p>如果进度线程在设置 <code>rmaProgress = 0</code> 后忘记 <code>notify_one()</code>，主线程会一直等待条件变量。但更关键的是，进度线程在 <code>cond.wait(lock)</code> 中等待时，主线程需要先获取锁才能设置 <code>rmaProgress = 2</code>。如果进度线程在 <code>wait</code> 之前没有释放锁，主线程无法获取锁，形成死锁。</p>
 <p>正确的顺序是：进度线程设置 <code>rmaProgress = 0</code>，调用 <code>notify_one()</code> 唤醒主线程，然后调用 <code>cond.wait(lock)</code> 释放锁并等待。主线程被唤醒后获取锁，设置 <code>rmaProgress = 2</code>，调用 <code>notify_one()</code> 唤醒进度线程，然后等待进度线程确认。进度线程被唤醒后，设置 <code>rmaProgress = 0</code>，再次 <code>notify_one()</code>，然后 <code>wait</code>。这个握手协议中任何一步的 <code>notify_one()</code> 缺失都会导致永久阻塞。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>从 RMA 的 put/get 语义到 GIN 的 GPU 发起网络通信，我们走完了 NCCL 向通用远程内存访问引擎演进的关键一步。但无论机制多么精巧，最终都要通过插件体系与外部网络后端、调优策略和性能采集器对接。下一章将进入插件世界，看 NCCL 如何在不修改核心代码的前提下，动态加载 net、tuner、profiler、env 等扩展，并以 google-fastsocket 和 google-CoMMA 为例揭示生态扩展性的实现要点。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=15" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-14" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-14">← 上一章：第 14 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -7603,25 +7879,40 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <h3>坑三：tuner 插件的引用计数泄漏</h3>
 <p><code>ncclTunerPluginLoad</code> 在成功时递增 <code>tunerPluginRefCount</code>。<span class="fact-pill" data-file="src/plugin/tuner.cc" data-lines="98" onclick="window.highlightFact('src/plugin/tuner.cc', '98')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/tuner.cc:98</code></span> <code>ncclTunerPluginUnload</code> 在 <code>comm-&gt;tunerPluginLoaded</code> 为真时递减。<span class="fact-pill" data-file="src/plugin/tuner.cc" data-lines="111-123" onclick="window.highlightFact('src/plugin/tuner.cc', '111-123')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/tuner.cc:111-123</code></span> 如果某个通信域加载了 tuner 但销毁时 <code>tunerPluginLoaded</code> 被意外清零，引用计数永远不会归零，插件库永远不会卸载。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclNetPluginLoad</code> 里&quot;从高版本到低版本尝试&quot;的循环改成&quot;只尝试最高版本&quot;，在什么场景下会导致原本可用的插件无法加载？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclNetPluginLoad</code> 里&quot;从高版本到低版本尝试&quot;的循环改成&quot;只尝试最高版本&quot;，在什么场景下会导致原本可用的插件无法加载？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/plugin/net.cc" data-lines="108-112" onclick="window.highlightFact('src/plugin/net.cc', '108-112')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/net.cc:108-112</code></span>。循环遍历 <code>NCCL_NET_VERSION_COUNT</code> 个版本，从 v12 降到 v6，第一个返回非空的被采用。如果只尝试 v12，那么一个只实现了 v11 的旧插件会加载失败。</p>
 <div class="inference-box"><span class="inference-tag">〔设计推断与架构权衡〕</span><p>这个设计是为了向后兼容：NCCL 核心升级到支持 v12 后，仍然能加载只提供 v11 的插件。插件作者被鼓励提供多个版本的符号（见 <span class="fact-pill" data-file="plugins/net/README.md" data-lines="35-37" onclick="window.highlightFact('plugins/net/README.md', '35-37')" title="在右侧代码面板查看真实源码切片">📎 <code>plugins/net/README.md:35-37</code></span>），这样同一个 <code>.so</code> 能服务多个 NCCL 版本。</p></div>
 <p>如果去掉降级尝试，用户升级 NCCL 后旧插件会突然不可用，只能回退到内置 Socket 插件，性能大幅下降。这正是版本协商存在的意义。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: 在 <code>profilerProgressOps</code> 里，如果把 <code>wc &lt;= op-&gt;workStarted[ch].data[slot].counter</code> 改成 <code>wc == op-&gt;workStarted[ch].data[slot].counter</code>，在什么高并发场景下会导致事件永远不触发？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: 在 <code>profilerProgressOps</code> 里，如果把 <code>wc &lt;= op-&gt;workStarted[ch].data[slot].counter</code> 改成 <code>wc == op-&gt;workStarted[ch].data[slot].counter</code>，在什么高并发场景下会导致事件永远不触发？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/plugin/profiler.cc" data-lines="969-972" onclick="window.highlightFact('src/plugin/profiler.cc', '969-972')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/profiler.cc:969-972</code></span>。注释明确说明设备会环绕 <code>MAX_PROFILER_EVENTS_PER_CHANNEL</code> 个槽位。如果主机消费速度落后于设备生产速度，设备可能已经用计数器 <code>wc + N</code> 覆盖了槽位 <code>wc % MAX_PROFILER_EVENTS_PER_CHANNEL</code>。</p>
 <p>此时 <code>op-&gt;workStarted[ch].data[slot].counter</code> 的值是 <code>wc + N</code>，而 <code>op-&gt;workCounter</code> 是 <code>wc</code>。用 <code>==</code> 判断会失败，事件永远不会触发，工作对象永远留在 <code>active</code> 链表里，<code>inflight</code> 只增不减，最终耗尽内存池。</p>
 <p>用 <code>&lt;=</code> 则能正确处理这种情况：只要设备写入的计数器不小于期望值，就认为事件已就绪。这是一个典型的&quot;生产者-消费者环绕缓冲区&quot;的正确性条件。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: 如果 <code>ncclProfilerThreadDestroy</code> 里去掉等待 <code>iterationActive</code> 变假的循环，在什么时序下会导致 profiler 插件访问已释放的通信域上下文？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: 如果 <code>ncclProfilerThreadDestroy</code> 里去掉等待 <code>iterationActive</code> 变假的循环，在什么时序下会导致 profiler 插件访问已释放的通信域上下文？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：看 <span class="fact-pill" data-file="src/plugin/profiler.cc" data-lines="1162-1166" onclick="window.highlightFact('src/plugin/profiler.cc', '1162-1166')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/profiler.cc:1162-1166</code></span>。注释说明 <code>ncclProfilerPluginFinalize</code> 会在 <code>ncclProfilerThreadDestroy</code> 返回后立即销毁通信域的 <code>profilerContext</code>。</p>
 <p>消费线程在 <code>profilerProgressOps</code> 里调用插件回调时，传入的是 <code>op-&gt;profilerContext</code>。<span class="fact-pill" data-file="src/plugin/profiler.cc" data-lines="938" onclick="window.highlightFact('src/plugin/profiler.cc', '938')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/profiler.cc:938</code></span> 如果销毁线程不等待 <code>iterationActive</code> 变假就返回，<code>ncclProfilerPluginFinalize</code> 会释放上下文，而消费线程可能正在用这个上下文调用插件——use-after-free。</p>
 <p><code>iterationActive</code> 的握手协议是：消费线程在锁内置为 <code>true</code> 后释放锁去调用插件，销毁线程在锁内等待它变回 <code>false</code>。<span class="fact-pill" data-file="src/plugin/profiler.cc" data-lines="1028" onclick="window.highlightFact('src/plugin/profiler.cc', '1028')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/profiler.cc:1028</code></span><span class="fact-pill" data-file="src/plugin/profiler.cc" data-lines="1054-1057" onclick="window.highlightFact('src/plugin/profiler.cc', '1054-1057')" title="在右侧代码面板查看真实源码切片">📎 <code>src/plugin/profiler.cc:1054-1057</code></span> 这个协议保证插件回调期间上下文始终有效。</p>
 <p>去掉等待后，销毁线程可能在消费线程刚进入插件回调时就返回，导致插件拿到悬空指针。这是一个典型的&quot;生命周期与并发访问&quot;竞态。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>插件体系让 NCCL 从封闭走向开放：网络后端、调优策略、性能采集器、配置来源都可以在不改核心代码的前提下替换。但插件也引入了新的故障面——版本不匹配、生命周期竞态、引用计数泄漏。下一章我们将进入 RAS 与诊断子系统，看 NCCL 如何检测故障、监控进度并在长时间训练任务中实现自愈。</p>
 <p>插件体系让 NCCL 的核心通信路径与可替换组件之间划出了清晰边界，net、tuner、profiler、env 四类插件各自通过注册与引用计数机制安全地介入运行时行为。但一个可扩展的通信引擎不仅要能灵活替换组件，更要在长时间训练中稳定运行——当网卡或 GPU 出现故障时，NCCL 如何检测、监控并触发恢复？下一章我们将进入 RAS 与诊断机制，看生产环境下的可靠性如何被系统性地保障。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=16" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-15" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-15">← 上一章：第 15 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -7904,23 +8195,38 @@ static unsigned long subsys[NUM_LIBS];        // 日志子系统位掩码</code>
 <li><strong><code>peers.cc</code></strong>：排序数组 + 哈希同步的 peer 名单管理，死 peer 单独存放以节省带宽</li>
 </ul>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1：<code>rasLocalNotify</code> 用 <code>rasNotificationMutex</code> 串行化写入，但 <code>rasLocalHandle</code> 读取时没有对应的锁。为什么这样是安全的？如果把 <code>static_assert(sizeof(struct rasNotification) &lt;= PIPE_BUF)</code> 去掉，在什么场景下会出问题？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1：<code>rasLocalNotify</code> 用 <code>rasNotificationMutex</code> 串行化写入，但 <code>rasLocalHandle</code> 读取时没有对应的锁。为什么这样是安全的？如果把 <code>static_assert(sizeof(struct rasNotification) &lt;= PIPE_BUF)</code> 去掉，在什么场景下会出问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：安全性来自 POSIX 对管道写入原子性的保证——小于 <code>PIPE_BUF</code> 的写入是原子的 <span class="fact-pill" data-file="src/ras/ras.cc" data-lines="47" onclick="window.highlightFact('src/ras/ras.cc', '47')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/ras.cc:47</code></span>。<code>rasLocalNotify</code> 的循环写 <span class="fact-pill" data-file="src/ras/ras.cc" data-lines="224-237" onclick="window.highlightFact('src/ras/ras.cc', '224-237')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/ras.cc:224-237</code></span> 在单次写入就能完成时不会与其他写入交错。<code>rasLocalHandle</code> 的循环读 <span class="fact-pill" data-file="src/ras/ras.cc" data-lines="247-256" onclick="window.highlightFact('src/ras/ras.cc', '247-256')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/ras.cc:247-256</code></span> 可能读到部分数据，但由于写入是原子的，读到的必然是完整消息的前缀，下次读补齐即可。</p>
 <p>去掉 <code>static_assert</code> 后，若 <code>rasNotification</code> 超过 <code>PIPE_BUF</code>，写入可能被拆成多次非原子写。两个线程并发写时，它们的字节可能交错，导致 RAS 线程读到拼接了两次通知的畸形数据。<code>msg.type</code> 可能来自线程 A 而 <code>msg.addRanks.ranks</code> 来自线程 B，触发 <code>rasLocalHandle</code> 的未知类型分支 <span class="fact-pill" data-file="src/ras/ras.cc" data-lines="267-269" onclick="window.highlightFact('src/ras/ras.cc', '267-269')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/ras.cc:267-269</code></span> 或更糟的野指针解引用。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2：<code>ncclProgressCounterMonitorDestroy</code> 在释放锁后才执行 <code>cudaStreamSynchronize</code> <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="381-400" onclick="window.highlightFact('src/ras/progress_monitor.cc', '381-400')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:381-400</code></span>。如果在同步期间另一个线程也调用 Destroy 销毁同一个 comm，会发生什么？<code>destroyRefs</code> 如何防止问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2：<code>ncclProgressCounterMonitorDestroy</code> 在释放锁后才执行 <code>cudaStreamSynchronize</code> <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="381-400" onclick="window.highlightFact('src/ras/progress_monitor.cc', '381-400')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:381-400</code></span>。如果在同步期间另一个线程也调用 Destroy 销毁同一个 comm，会发生什么？<code>destroyRefs</code> 如何防止问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>destroyRefs</code> 是防止 worker 被过早删除的引用计数。第一个线程删除 comm 后 <code>destroyRefs++</code> <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="371" onclick="window.highlightFact('src/ras/progress_monitor.cc', '371')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:371</code></span>，此时 <code>haveDestroyRef = true</code>。第二个线程尝试删除同一 comm 时，<code>ncclIntruQueueDelete</code> 返回 nullptr（已被删），<code>haveDestroyRef</code> 保持 false <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="368" onclick="window.highlightFact('src/ras/progress_monitor.cc', '368')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:368</code></span>，直接跳过同步和释放。</p>
 <p>第一个线程完成 <code>cudaStreamSynchronize</code> 后调用 <code>releaseGpuProgressCounterMonitorDestroyRef</code> <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="402" onclick="window.highlightFact('src/ras/progress_monitor.cc', '402')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:402</code></span>，递减 <code>destroyRefs</code> 到 0，且注册队列为空，才真正 join 线程并 delete <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="225" onclick="window.highlightFact('src/ras/progress_monitor.cc', '225')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:225</code></span>。</p>
 <p>若没有 <code>destroyRefs</code>，第一个线程可能在同步期间被第二个线程的 <code>delete g</code> 释放 worker，导致 use-after-free。注意 <code>releaseGpuProgressCounterMonitorDestroyRef</code> 在全局锁 + worker 锁内递减 <span class="fact-pill" data-file="src/ras/progress_monitor.cc" data-lines="222-225" onclick="window.highlightFact('src/ras/progress_monitor.cc', '222-225')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/progress_monitor.cc:222-225</code></span>，保证检查 <code>registrations</code> 为空和 <code>destroyRefs == 0</code> 的原子性。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3：<code>rasDiagnosticsSummarizePeerPayloads</code> 第一遍扫描时校验 <code>checkHeader-&gt;payloadBytes != checkHeader-&gt;nRecords * checkHeader-&gt;recordStride</code> <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="451-454" onclick="window.highlightFact('src/ras/diagnostics.cc', '451-454')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:451-454</code></span>。如果某个恶意或损坏的 peer 发送 <code>recordStride = 0</code> 且 <code>nRecords = 0</code>，这个校验会通过吗？后续会发生什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3：<code>rasDiagnosticsSummarizePeerPayloads</code> 第一遍扫描时校验 <code>checkHeader-&gt;payloadBytes != checkHeader-&gt;nRecords * checkHeader-&gt;recordStride</code> <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="451-454" onclick="window.highlightFact('src/ras/diagnostics.cc', '451-454')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:451-454</code></span>。如果某个恶意或损坏的 peer 发送 <code>recordStride = 0</code> 且 <code>nRecords = 0</code>，这个校验会通过吗？后续会发生什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>recordStride &lt;= 0</code> 会被第一个条件拦截 <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="451" onclick="window.highlightFact('src/ras/diagnostics.cc', '451')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:451</code></span>，返回 <code>ncclInternalError</code>。所以 <code>recordStride = 0</code> 不会通过。</p>
 <p>但若 <code>recordStride &gt; 0</code> 且 <code>nRecords = 0</code>，则 <code>payloadBytes = 0</code>，校验通过。<code>rasDiagnosticsAccountCheckRecords</code> 对 <code>nRecords == 0</code> 直接返回成功 <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="378" onclick="window.highlightFact('src/ras/diagnostics.cc', '378')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:378</code></span>，不更新 <code>combined</code>。后续分配时 <code>recordsBytes == 0</code> 不分配 <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="473" onclick="window.highlightFact('src/ras/diagnostics.cc', '473')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:473</code></span>，拷贝时 <code>payloadBytes &gt; 0</code> 为假跳过 <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="490" onclick="window.highlightFact('src/ras/diagnostics.cc', '490')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:490</code></span>。最终 <code>summarize</code> 收到 <code>records = nullptr, recordsBytes = 0</code>，各检查的 summarize 实现需要处理空输入。</p>
 <p>真正的风险在 <code>nRecords &gt; INT_MAX / recordStride</code> 的检查 <span class="fact-pill" data-file="src/ras/diagnostics.cc" data-lines="453" onclick="window.highlightFact('src/ras/diagnostics.cc', '453')" title="在右侧代码面板查看真实源码切片">📎 <code>src/ras/diagnostics.cc:453</code></span>——这防止 <code>nRecords * recordStride</code> 整数溢出绕过相等校验。若去掉这个检查，攻击者可以构造 <code>nRecords = 2^31, recordStride = 2</code>，乘积溢出为 0，与 <code>payloadBytes = 0</code> 相等，通过校验后 <code>rasDiagnosticsAccountCheckRecords</code> 会累计一个巨大的 <code>nRecords</code>，导致后续分配或拷贝越界。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>RAS 让 NCCL 在长时间训练中具备了故障感知与自愈能力，但它依赖的是一套独立于数据面的控制网络。下一章我们将进入内存管理子系统，看 NCCL 如何通过 allocator、注册缓存和用户缓冲区注册来优化显存分配与 RDMA 注册开销——这是性能与可靠性之外的第三个支柱。</p>
 <p>贯穿全章的设计原则是：控制面与数据面解耦、状态用哈希做版本、超时分层处理、并发用引用计数保护生命周期。这些原则让 RAS 能在不拖累通信性能的前提下实现故障发现与自愈。而通信性能的另一个关键支撑点——内存管理，同样需要精细的工程权衡：为什么 NCCL 通信前需要注册内存？注册缓存如何影响性能？下一章我们将深入 allocator、注册缓存与用户缓冲区注册，揭开这些问题的答案。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=17" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-16" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-16">← 上一章：第 16 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -8187,21 +8493,36 @@ struct ncclShadowObject {
     GPU--&gt;&gt;Net: 返回 handle
     Net--&gt;&gt;App: 注册完成</code></pre></div>
 <h2>本章思考与自测</h2>
-<details class="reader-details">
-<summary class="reader-summary">Q1: 若将 <code>ncclSpaceFree</code> 中的 <code>if (a-&gt;count == 0 || a-&gt;cuts[a-&gt;count - 1] &lt;= offset)</code> 检查 <span class="fact-pill" data-file="src/allocator.cc" data-lines="231-237" onclick="window.highlightFact('src/allocator.cc', '231-237')" title="在右侧代码面板查看真实源码切片">📎 <code>src/allocator.cc:231-237</code></span> 去掉，在什么场景下会触发越界访问？</summary>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q1: 若将 <code>ncclSpaceFree</code> 中的 <code>if (a-&gt;count == 0 || a-&gt;cuts[a-&gt;count - 1] &lt;= offset)</code> 检查 <span class="fact-pill" data-file="src/allocator.cc" data-lines="231-237" onclick="window.highlightFact('src/allocator.cc', '231-237')" title="在右侧代码面板查看真实源码切片">📎 <code>src/allocator.cc:231-237</code></span> 去掉，在什么场景下会触发越界访问？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：这个检查有两个作用。第一，<code>a-&gt;count == 0</code> 防止空数组访问 <code>cuts[-1]</code>。第二，<code>a-&gt;cuts[a-&gt;count-1] &lt;= offset</code> 防止 <code>offset</code> 超出已分配范围。如果去掉，当 <code>count == 0</code> 时，<code>a-&gt;cuts[a-&gt;count - 1]</code> 会读取 <code>cuts[-1]</code>，这是未定义行为，可能读到堆元数据或触发段错误。更隐蔽的是，即使 <code>count &gt; 0</code>，如果 <code>offset</code> 大于最后一个切割点，后续的 <code>while (a-&gt;cuts[i] &lt;= offset) i += 2</code> 循环 <span class="fact-pill" data-file="src/allocator.cc" data-lines="247" onclick="window.highlightFact('src/allocator.cc', '247')" title="在右侧代码面板查看真实源码切片">📎 <code>src/allocator.cc:247</code></span> 会一直递增 <code>i</code> 直到越界，因为 <code>cuts[]</code> 中不存在大于 <code>offset</code> 的元素。这在生产中的触发场景是：调用方传入了一个从未分配过的偏移量（比如缓冲区被外部释放后再次调用 free），或者 <code>ncclSpace</code> 被并发修改导致状态不一致。修复方式是保留这个检查，并在返回错误时打印 <code>offset</code> 和 <code>count</code> 便于排查。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q2: <code>ncclMemManagerDestroy</code> 中，如果 <code>refCount</code> 递减后仍大于 0，只清除当前 comm 的指针而不释放资源 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="78-83" onclick="window.highlightFact('src/mem_manager.cc', '78-83')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:78-83</code></span>。如果此时另一个 comm 正在调用 <code>ncclMemTrack</code>，会发生什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q2: <code>ncclMemManagerDestroy</code> 中，如果 <code>refCount</code> 递减后仍大于 0，只清除当前 comm 的指针而不释放资源 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="78-83" onclick="window.highlightFact('src/mem_manager.cc', '78-83')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:78-83</code></span>。如果此时另一个 comm 正在调用 <code>ncclMemTrack</code>，会发生什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>ncclMemTrack</code> 首先检查 <code>manager-&gt;initialized</code> <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="136" onclick="window.highlightFact('src/mem_manager.cc', '136')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:136</code></span>。由于 <code>refCount &gt; 0</code> 时不会设置 <code>initialized = 0</code>，所以检查通过。然后它会获取 <code>manager-&gt;lock</code> 并修改 <code>entries</code> 链表 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="188-192" onclick="window.highlightFact('src/mem_manager.cc', '188-192')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:188-192</code></span>。这是安全的，因为 <code>refCount &gt; 0</code> 意味着至少还有一个 comm 持有引用，内存管理器不会被销毁。真正的风险在于：如果最后一个 comm 调用 <code>ncclMemManagerDestroy</code> 时，<code>refCount</code> 递减到 0，它会设置 <code>initialized = 0</code> <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="87" onclick="window.highlightFact('src/mem_manager.cc', '87')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:87</code></span> 并释放所有资源。如果此时另一个线程正在 <code>ncclMemTrack</code> 中已经通过了 <code>initialized</code> 检查但还没获取锁，它会访问已释放的 <code>manager-&gt;lock</code>，导致 use-after-free。源码通过 <code>memory_order_acquire</code>/<code>release</code> 配对来缓解这个问题，但严格来说仍存在竞态窗口。生产环境中应该确保所有通信线程在销毁内存管理器前已停止。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q3: 在 <code>ncclCommMemResume</code> 中，POSIX FD 类型的 peer 缓冲区在跨节点时被跳过 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="853-859" onclick="window.highlightFact('src/mem_manager.cc', '853-859')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:853-859</code></span>。如果所有 peer 缓冲区都被跳过，<code>restoredPeerCount</code> 为 0，但 <code>manager-&gt;released</code> 仍被设为 0 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="913" onclick="window.highlightFact('src/mem_manager.cc', '913')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:913</code></span>。这会导致什么后果？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q3: 在 <code>ncclCommMemResume</code> 中，POSIX FD 类型的 peer 缓冲区在跨节点时被跳过 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="853-859" onclick="window.highlightFact('src/mem_manager.cc', '853-859')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:853-859</code></span>。如果所有 peer 缓冲区都被跳过，<code>restoredPeerCount</code> 为 0，但 <code>manager-&gt;released</code> 仍被设为 0 <span class="fact-pill" data-file="src/mem_manager.cc" data-lines="913" onclick="window.highlightFact('src/mem_manager.cc', '913')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:913</code></span>。这会导致什么后果？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>manager-&gt;released = 0</code> 表示内存管理器认为恢复已完成。但如果有 peer 缓冲区被跳过，它们的 <code>state</code> 仍然是 <code>ncclDynMemStateReleased</code>，<code>handle</code> 仍然是 0。后续通信如果访问这些缓冲区，会触发 CUDA 错误（访问未映射的虚拟地址）。更严重的是，<code>ncclCommMemStats</code> 查询 <code>ncclStatGpuMemSuspended</code> 会返回 0（活跃）<span class="fact-pill" data-file="src/mem_manager.cc" data-lines="1130" onclick="window.highlightFact('src/mem_manager.cc', '1130')" title="在右侧代码面板查看真实源码切片">📎 <code>src/mem_manager.cc:1130</code></span>，但实际有部分内存未恢复。这个问题的根源是：跨节点 POSIX FD 本身就不应该被导入——在挂起前，这些缓冲区就不应该存在于 <code>entries</code> 中。正确的做法是在挂起时就把跨节点的 POSIX FD 条目标记为不可恢复，或者在恢复时返回错误而非静默跳过。生产环境中，如果使用 POSIX FD 且跨节点，应该改用 FABRIC handle 或确保挂起/恢复只在单节点内进行。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>内存管理是 NCCL 性能的隐形支柱：<code>ncclSpace</code> 用极简的切割点数组管理地址空间，<code>ncclShadowPool</code> 用 64 位位图和哈希表管理设备/主机对象配对，<code>ncclMemManager</code> 用引用计数和 CUDA VMM API 实现挂起恢复，<code>ncclRegister</code> 用有序数组缓存注册结果避免重复 pin。这四层机制共同支撑起「通信前不需要重新注册内存」这一关键性能保证。下一章我们将进入设备侧通信器与 ABI 兼容，看 <code>devcomm</code> 如何把这些 host 侧的内存布局映射到 GPU kernel 可访问的结构中。</p>
 <p>上图展示了注册的时序：缓存命中时只增加引用计数，不调用底层注册；缓存未命中时才创建新条目并触发底层注册。至此，host 侧的内存管理机制已经清晰。但通信最终发生在 GPU 上，kernel 需要直接访问对端 rank 的地址和连接状态。下一章将进入设备侧通信器与 ABI 兼容，看 devcomm 如何把 host 侧 ncclComm 的元数据映射到设备侧可访问的结构，以及版本化 ABI 如何保证新旧 kernel 与库的兼容。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=18" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-17" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-17">← 上一章：第 17 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -8510,8 +8831,8 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <p>5. <strong>生产陷阱</strong>：GIN 资源请求与旧版本 kernel 的冲突、跨节点通信时设备 API 被禁用、memset 清零的必要性、版本区间空隙导致的匹配失败。</p>
 <p>下一章我们将进入设备侧 API 与内核融合，看 <code>nccl_device</code> 头文件如何组织设备侧函数，以及 kernel fusion 如何把多个集合通信操作合并到一个 kernel 中执行。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details">
-<summary class="reader-summary">Q1: 如果将 <code>ncclDevCommCopyNewToOld_v23000</code> 中的 <code>memset(old, &#x27;\0&#x27;, sizeof(*old))</code> 去掉，在什么场景下会导致 kernel 读到错误数据？请结合 v22902 和 v23000 的字段差异分析。</summary>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q1: 如果将 <code>ncclDevCommCopyNewToOld_v23000</code> 中的 <code>memset(old, &#x27;\0&#x27;, sizeof(*old))</code> 去掉，在什么场景下会导致 kernel 读到错误数据？请结合 v22902 和 v23000 的字段差异分析。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>ncclDevComm_v22902</code> 的结构体大小为 200 字节 <span class="fact-pill" data-file="src/devcomm/devcomm_v22902.cc" data-lines="84" onclick="window.highlightFact('src/devcomm/devcomm_v22902.cc', '84')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v22902.cc:84</code></span>，而 <code>ncclDevComm_v23000</code> 为 240 字节 <span class="fact-pill" data-file="src/devcomm/devcomm_v23000.cc" data-lines="95-98" onclick="window.highlightFact('src/devcomm/devcomm_v23000.cc', '95-98')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v23000.cc:95-98</code></span>。v22902 中有 <code>ginSignalBase</code>（偏移 176）、<code>ginCounterBase</code>（偏移 184）、<code>ginContextBase</code>（偏移 204）等字段，这些字段在 v23000 中不存在或语义不同。</p>
 <p>如果去掉 <code>memset</code>，当从 v23000 转换到 v22902 时，<code>old</code> 结构体中 v23000 不存在的字段（如 <code>ginSignalBase</code>、<code>ginCounterBase</code>）会保留栈上的垃圾值。如果 kernel 恰好读取了这些字段（例如旧 kernel 的 GIN 代码路径），会得到随机值，导致：</p>
@@ -8521,9 +8842,9 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <li>在极端情况下，可能触发非法内存访问，导致 kernel 崩溃。</li>
 </ul>
 <p><code>memset</code> 清零确保所有未显式赋值的字段都是 0，这是一个安全的默认值。NCCL 的所有 <code>CopyNewToOld</code> 实现都包含这个步骤 <span class="fact-pill" data-file="src/devcomm/devcomm_v22902.cc" data-lines="132" onclick="window.highlightFact('src/devcomm/devcomm_v22902.cc', '132')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v22902.cc:132</code></span> <span class="fact-pill" data-file="src/devcomm/devcomm_v22907.cc" data-lines="104" onclick="window.highlightFact('src/devcomm/devcomm_v22907.cc', '104')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v22907.cc:104</code></span> <span class="fact-pill" data-file="src/devcomm/devcomm_v23000.cc" data-lines="118" onclick="window.highlightFact('src/devcomm/devcomm_v23000.cc', '118')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v23000.cc:118</code></span>。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q2: 假设应用程序用 NCCL 2.29.4 编译，运行时链接 2.31.0 的库。根据本章的版本区间表，2.29.4 没有对应的 <code>ncclDevCommCompat</code> 插件。请分析 NCCL 可能如何处理这种情况，以及应用程序应该如何规避。</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q2: 假设应用程序用 NCCL 2.29.4 编译，运行时链接 2.31.0 的库。根据本章的版本区间表，2.29.4 没有对应的 <code>ncclDevCommCompat</code> 插件。请分析 NCCL 可能如何处理这种情况，以及应用程序应该如何规避。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>版本区间表：</p>
 <ul class="reader-list">
@@ -8543,9 +8864,9 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <li>如果必须跨版本，测试目标版本区间是否有对应的兼容插件。</li>
 <li>在初始化后检查 <code>ncclCommProperties.deviceApiSupport</code>，如果为 <code>false</code>，回退到 host 侧 API。</li>
 </ul>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q3: <code>ncclDevCommRequirementsFilter_v22902</code> 中有一段逻辑：<code>if (reqs-&gt;barrierCount) { reqs-&gt;lsaBarrierCount = std::max(reqs-&gt;lsaBarrierCount, reqs-&gt;barrierCount); reqs-&gt;barrierCount = 0; }</code>。请解释为什么需要这个转换，以及如果不转换会发生什么。</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q3: <code>ncclDevCommRequirementsFilter_v22902</code> 中有一段逻辑：<code>if (reqs-&gt;barrierCount) { reqs-&gt;lsaBarrierCount = std::max(reqs-&gt;lsaBarrierCount, reqs-&gt;barrierCount); reqs-&gt;barrierCount = 0; }</code>。请解释为什么需要这个转换，以及如果不转换会发生什么。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><span class="fact-pill" data-file="src/devcomm/devcomm_v22902.cc" data-lines="117-121" onclick="window.highlightFact('src/devcomm/devcomm_v22902.cc', '117-121')" title="在右侧代码面板查看真实源码切片">📎 <code>src/devcomm/devcomm_v22902.cc:117-121</code></span> 的注释说明：「Prior to 2.29.4, a non-zero barrierCount did not imply GIN, but it does since.」</p>
 <p>在 2.29.4 之前，<code>barrierCount</code> 只表示 LSA barrier 的数量，不隐含 GIN 需求。从 2.29.4 开始，<code>barrierCount</code> 隐含 GIN 需求（即请求 barrier 就意味着需要 GIN 资源）。</p>
@@ -8557,9 +8878,24 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <li><code>railGinBarrierCount = 0</code> 同理，因为旧版本中它也不隐含 GIN 需求。</li>
 </ul>
 <p>如果不转换，应用程序用 2.29.2 编译且设置了 <code>barrierCount &gt; 0</code> 时，会被错误地拒绝，无法使用设备 API。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>至此，我们看清了 devcomm 如何通过版本化 ABI 把 host 侧通信域的关键元数据安全地映射到设备侧，让 kernel 无需 host 指针也能获取 rank、地址和连接状态。这套机制解决了 kernel 访问通信域的基本问题，但设备侧的能力远不止于此。当用户希望在自己的 kernel 中直接调用通信原语，甚至将通信与计算融合到同一个 kernel 时，就需要更上层的设备侧 API 和内核融合技术。下一章将深入 nccl_device 目录与相关示例，探索 ncclBarrier、ncclLsaBarrier、ncclGinBarrier 等设备侧 API 如何让用户 kernel 参与通信，以及内核融合如何减少启动开销，从而将 NCCL 从库推向编程模型。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=19" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-18" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-18">← 上一章：第 18 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -8802,22 +9138,37 @@ preferably with the same NCCL version that it will be running with.</code></pre>
 <p><strong>踩坑点</strong>：融合 kernel 的调试难度远高于分离 kernel。如果 barrier 逻辑有 bug，可能导致 kernel 挂起（死锁），而 GPU kernel 挂起不像 host 进程挂起那样容易诊断。建议在融合 kernel 中加超时机制，或者先用小规模团队验证 barrier 逻辑。</p>
 <p><strong>踩坑点</strong>：融合 kernel 的 occupancy 下降可能导致计算性能损失超过通信节省的收益。在决定融合之前，应当测量融合前后的端到端时间，而不是只看通信延迟的降低。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details">
-<summary class="reader-summary">Q1：如果把 <code>ncclTeamLsa</code> 中 L26 的 <code>ncclDevrInitOnce</code> 调用去掉，直接返回 <code>comm-&gt;devrState.lsaSize</code> 和 <code>lsaSelf</code>，在什么场景下会导致设备侧 kernel 读到错误的团队信息？</summary>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q1：如果把 <code>ncclTeamLsa</code> 中 L26 的 <code>ncclDevrInitOnce</code> 调用去掉，直接返回 <code>comm-&gt;devrState.lsaSize</code> 和 <code>lsaSelf</code>，在什么场景下会导致设备侧 kernel 读到错误的团队信息？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：<code>ncclDevrInitOnce</code> 是设备侧资源初始化的幂等入口。如果去掉它，<code>comm-&gt;devrState.lsaSize</code> 和 <code>lsaSelf</code> 可能还是初始值（通常是 0 或未定义）。在首次使用设备侧 API 的场景下，用户调用 <code>ncclTeamLsa</code> 会拿到 <code>nRanks = 0</code> 的空团队。后续如果用户不检查团队有效性，直接用这个团队调用 <code>ncclLsaBarrierCreateRequirement</code>，会算出 <code>bufferSize = (3*n + n*0) * 4 = 12n</code> 字节——比实际需要的小，因为 <code>n*team.nRanks</code> 项变成了 0。这会导致缓冲区溢出：barrier 运行时试图写入 <code>team.nRanks</code> 个到达槽位，但缓冲区只分配了 <code>3n</code> 个 <code>uint32_t</code> 的空间。更隐蔽的是，如果 <code>lsaSelf</code> 也是 0，<code>ncclTeamRankToLsa</code> 会返回错误的 rank 编号，导致 barrier 的到达槽位写错位置，可能永远等不到所有 rank 到达，造成 kernel 挂起。这正是 L23-25 注释所说的「返回垃圾值，下一个 API 报错」策略要防止的情况——但前提是下一个 API 确实会报错，而不是静默地使用错误的大小。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q2：<code>ncclLsaBarrierCreateRequirement</code> 的大小公式是 <code>(3*nBarriers + nBarriers*team.nRanks) * sizeof(uint32_t)</code>。如果团队有 8 个 rank，用户申请 1 个 barrier，缓冲区是 44 字节。假设 barrier 实现中「3 个控制字段」分别是「到达计数」「轮次」「重置标志」，请推演：当 8 个 rank 同时到达时，如果「到达计数」用非原子的 <code>++</code> 操作，会发生什么？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q2：<code>ncclLsaBarrierCreateRequirement</code> 的大小公式是 <code>(3*nBarriers + nBarriers*team.nRanks) * sizeof(uint32_t)</code>。如果团队有 8 个 rank，用户申请 1 个 barrier，缓冲区是 44 字节。假设 barrier 实现中「3 个控制字段」分别是「到达计数」「轮次」「重置标志」，请推演：当 8 个 rank 同时到达时，如果「到达计数」用非原子的 <code>++</code> 操作，会发生什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：非原子的 <code>++</code> 在 GPU 上是「读-改-写」三步，不是原子操作。8 个 rank 同时执行 <code>count++</code> 时，可能出现多个 rank 读到相同的旧值（如都读到 0），然后都写回 1。最终 <code>count</code> 只增加了 1 而不是 8，导致 barrier 永远认为「还没到齐」，所有 rank 在轮询阶段死循环。这就是为什么 LSA barrier 的到达槽位必须用原子操作（如 <code>atomicAdd</code>）或每个 rank 写自己的独立槽位（<code>nBarriers * team.nRanks</code> 项正是为每个 rank 预留独立槽位）。如果采用「每个 rank 写自己的槽位」方案，就不需要原子加，只需要原子写 + 内存屏障，因为每个槽位只有一个写入者。这也解释了为什么大小公式里有 <code>nBarriers * team.nRanks</code> 项——它是用空间换原子性，避免多写者竞争。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q3：<code>ncclGinBarrierCreateRequirement</code> 需要 <code>comm</code> 参数而 <code>ncclLsaBarrierCreateRequirement</code> 不需要。如果强行给 LSA barrier 也加上 <code>comm</code> 参数（假设为了统一接口），会引入什么设计问题？反过来，如果给 GIN barrier 去掉 <code>comm</code> 参数，在什么场景下会失败？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q3：<code>ncclGinBarrierCreateRequirement</code> 需要 <code>comm</code> 参数而 <code>ncclLsaBarrierCreateRequirement</code> 不需要。如果强行给 LSA barrier 也加上 <code>comm</code> 参数（假设为了统一接口），会引入什么设计问题？反过来，如果给 GIN barrier 去掉 <code>comm</code> 参数，在什么场景下会失败？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：给 LSA barrier 加 <code>comm</code> 参数的问题是引入了不必要的依赖。LSA barrier 的资源（共享内存）已经在 <code>ncclDevrInitOnce</code> 阶段绑定到团队上，<code>team</code> 本身就隐含了资源位置。加 <code>comm</code> 会让一个纯团队操作依赖通信域状态，增加失败点（如 <code>comm</code> 无效时 LSA barrier 也无法创建），且违反「最小权限」原则。反过来，给 GIN barrier 去掉 <code>comm</code> 参数会失败，因为 GIN 信号需要绑定到具体的网络连接。<code>ncclGinBarrierCreateRequirement</code> 的 <code>ginSignalCount</code> 需要知道往哪个网卡、哪个 QP（Queue Pair）发送信号，这些信息在 <code>comm</code> 的网络传输层状态里。没有 <code>comm</code>，NCCL 无法确定信号应该分配到哪个网卡的槽位，也无法保证信号能正确路由到目标 rank。这体现了设备侧 API 的一个设计原则：<strong>资源需求声明只依赖它真正需要的上下文</strong>——LSA 只需要团队拓扑，GIN 需要网络连接。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>---</p>
 <p>设备侧 API 和内核融合把 NCCL 从「一个你调用的库」变成了「一套你编程的模型」。<code>ncclTeam_t</code> 提供了坐标系，<code>CreateRequirement</code> 提供了资源预订机制，三种 barrier 覆盖了从共享内存到网络信号的全部同步范围。但声明了资源、写好了融合 kernel，并不等于性能就好——barrier 的数量、团队的大小、融合的粒度，每一个选择都会影响端到端性能。下一章我们将进入性能调优实战，看看 tuning 参数如何影响算法选择，以及如何用真实 benchmark 验证调优效果。</p>
 <p>至此，我们已经走完了从 devcomm 元数据映射到 nccl_device 设备侧原语的全过程，看到了 NCCL 如何通过「host 声明、device 消费」的模型，让用户 kernel 直接调用 barrier 类同步操作，把通信与计算融合进同一个 kernel。但掌握了这些机制之后，一个更实际的问题自然浮现：当真实训练任务性能不达标时，我们该如何判断是算法选择不当、协议不匹配，还是通道数配置不合理？下一章将把前 20 章的机制串成一套可操作的调优方法论，结合性能报告、代价模型与环境变量，给出从现象到根因的排查路径。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=20" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-19" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-19">← 上一章：第 19 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -9466,7 +9817,7 @@ not_valid:
 <p>3. <strong>环境变量</strong>：<code>NCCL_ALGO</code>、<code>NCCL_PROTO</code>、<code>NCCL_SYM_KERNEL</code> 通过 <code>parseList</code> 解析后修改 <code>enabled</code> 表，强制或排除特定组合。语法支持全局、按函数、排除三种模式。</p>
 <p>4. <strong>通道数</strong>：由 <code>ncclTuningGetChannels</code> 计算，受硬件资源和 CTAPolicy 影响。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclTuningCompute</code> 中单 rank 短路逻辑（<code>input-&gt;comm-&gt;nRanks &lt;= 1</code> 分支）去掉，会发生什么？在什么场景下会导致问题？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclTuningCompute</code> 中单 rank 短路逻辑（<code>input-&gt;comm-&gt;nRanks &lt;= 1</code> 分支）去掉，会发生什么？在什么场景下会导致问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>单 rank 短路在 <span class="fact-pill" data-file="src/tuning/tuning.cc" data-lines="191-200" onclick="window.highlightFact('src/tuning/tuning.cc', '191-200')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/tuning.cc:191-200</code></span>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>cpp</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-cpp">  // Set tuning to Ring/Simple for single rank case
@@ -9487,8 +9838,8 @@ not_valid:
 <p>2. <strong>可能选不出结果</strong>：某些算法在单 rank 下可能被模型判定为无效（比如 Ring 需要至少 2 个 rank 才能形成环），导致 <code>tunings</code> 列表为空，<code>ncclTuningSelectBestTuning</code> 返回 <code>FLT_MAX</code> 的初始值，最终 <code>bestTuning.algo</code> 仍是 <code>NCCL_ALGO_UNDEF</code>。</p>
 <p>3. <strong>触发错误路径</strong>：如果 <code>bestTuning.algo == NCCL_ALGO_UNDEF</code>，会进入 <span class="fact-pill" data-file="src/tuning/tuning.cc" data-lines="308-329" onclick="window.highlightFact('src/tuning/tuning.cc', '308-329')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/tuning.cc:308-329</code></span> 的错误处理，打印 &quot;No algorithm/protocol available&quot; 警告，并返回 <code>ncclInternalError</code>。</p>
 <p>所以这个短路不只是优化，更是正确性保证——单 rank 场景必须有一个确定的默认值。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>parseList</code> 中 <code>forced[p] = 1</code> 这行代码（<span class="fact-pill" data-file="src/tuning/cost_model.cc" data-lines="83" onclick="window.highlightFact('src/tuning/cost_model.cc', '83')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/cost_model.cc:83</code></span>）的作用是什么？如果去掉它，<code>NCCL_ALGO=ring</code> 的行为会有什么变化？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <code>parseList</code> 中 <code>forced[p] = 1</code> 这行代码（<span class="fact-pill" data-file="src/tuning/cost_model.cc" data-lines="83" onclick="window.highlightFact('src/tuning/cost_model.cc', '83')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/cost_model.cc:83</code></span>）的作用是什么？如果去掉它，<code>NCCL_ALGO=ring</code> 的行为会有什么变化？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>forced[p] = 1</code> 在 <span class="fact-pill" data-file="src/tuning/cost_model.cc" data-lines="80-85" onclick="window.highlightFact('src/tuning/cost_model.cc', '80-85')" title="在右侧代码面板查看真实源码切片">📎 <code>src/tuning/cost_model.cc:80-85</code></span>：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>cpp</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-cpp">        for (e = 0; e &lt; nelems; e++) {
@@ -9501,6 +9852,21 @@ not_valid:
 <p><code>forced</code> 数组在 <code>ncclTuningContext_t</code> 中定义（[</p>
 <p>关键旋钮只有三个：算法、协议、通道数。其他参数大多是辅助诊断或特定场景优化。掌握了这条调优路径，你已经能让 NCCL 在多数场景下跑出接近硬件的性能。但性能之外，生产环境还有另一类更棘手的问题：那些看似正常的代码，可能在特定条件下挂死或出错。下一章我们将汇总 NCCL 在生产中的典型踩坑案例——死锁、超时、版本不匹配与常见误用，并看看 NCCL 内部是如何检测和报告这些问题的。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=21" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-20" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-20">← 上一章：第 20 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -10018,7 +10384,7 @@ static inline ncclEpExpertIdKind_t layoutInfoRecvTopkIdxKind(const ncclEpLayoutI
 <p>4. <strong>ABI 版本</strong>：<code>nccl_ep</code> 用 size-based 设计，每个跨边界结构体以 <code>size</code> 开头，配合 <code>magic</code> 捕获未初始化；新字段只能加在末尾，读取时用 <code>size</code> 判断是否存在。</p>
 <p>5. <strong>超时与中止</strong>：核心用 <code>abortFlag</code> 传播中止；<code>nccl_ep</code> 用 GPU 时钟周期做超时，<code>async_error_flag</code> 用 host-pinned 内存实现 GPU→host 异步通知。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>ncclGroupEndInternal</code> 中 <code>if ((--ncclGroupDepth) &gt; 0) goto exit;</code>（<span class="fact-pill" data-file="src/group.cc" data-lines="1061" onclick="window.highlightFact('src/group.cc', '1061')" title="在右侧代码面板查看真实源码切片">📎 <code>src/group.cc:1061</code></span>）改成 <code>if (ncclGroupDepth &gt; 0) goto exit;</code>（不递减），会发生什么？在嵌套 group 场景下会有什么后果？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>ncclGroupEndInternal</code> 中 <code>if ((--ncclGroupDepth) &gt; 0) goto exit;</code>（<span class="fact-pill" data-file="src/group.cc" data-lines="1061" onclick="window.highlightFact('src/group.cc', '1061')" title="在右侧代码面板查看真实源码切片">📎 <code>src/group.cc:1061</code></span>）改成 <code>if (ncclGroupDepth &gt; 0) goto exit;</code>（不递减），会发生什么？在嵌套 group 场景下会有什么后果？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>原代码 <code>--ncclGroupDepth</code> 先递减再判断。如果改成不递减：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>cpp</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-cpp">if (ncclGroupDepth &gt; 0) goto exit;  // 错误版本</code></pre></div>
@@ -10031,8 +10397,8 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 <p>错误版本下，第二次 <code>ncclGroupEnd</code> 时 <code>ncclGroupDepth</code> 仍是 2，<code>&gt; 0</code> 成立，直接 <code>goto exit</code>，永远不触发下发。所有通信调用都停留在&quot;攒单&quot;状态，进程挂死。</p>
 <p>更隐蔽的是：<code>ncclGroupDepth</code> 是 thread_local，不会因为函数返回而重置。即使后续代码不再调用 group API，这个线程上的所有通信都会失效。</p>
 <p>这个改动还会破坏 <code>ncclGroupStart</code> 的配对语义——<code>ncclGroupStart</code> 递增、<code>ncclGroupEnd</code> 不递减，深度只增不减，最终溢出（虽然 int 溢出需要 20 亿次调用，实际更可能是逻辑挂死）。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: <code>CudaPtrCheck</code> 中 <code>attr.type == cudaMemoryTypeDevice &amp;&amp; attr.device != comm-&gt;cudaDev</code>（<span class="fact-pill" data-file="src/misc/argcheck.cc" data-lines="20" onclick="window.highlightFact('src/misc/argcheck.cc', '20')" title="在右侧代码面板查看真实源码切片">📎 <code>src/misc/argcheck.cc:20</code></span>）这个检查，如果去掉 <code>attr.type == cudaMemoryTypeDevice</code> 这个条件，会有什么问题？在什么场景下会误报？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: <code>CudaPtrCheck</code> 中 <code>attr.type == cudaMemoryTypeDevice &amp;&amp; attr.device != comm-&gt;cudaDev</code>（<span class="fact-pill" data-file="src/misc/argcheck.cc" data-lines="20" onclick="window.highlightFact('src/misc/argcheck.cc', '20')" title="在右侧代码面板查看真实源码切片">📎 <code>src/misc/argcheck.cc:20</code></span>）这个检查，如果去掉 <code>attr.type == cudaMemoryTypeDevice</code> 这个条件，会有什么问题？在什么场景下会误报？&lt;/summary&gt;</p>
 <p><strong>参考答案</strong>：</p>
 <p><code>cudaPointerAttributes.type</code> 有三个可能值：<code>cudaMemoryTypeDevice</code>（设备内存）、<code>cudaMemoryTypeHost</code>（主机内存）、<code>cudaMemoryTypeManaged</code>（统一内存）。</p>
 <p>如果去掉 <code>attr.type == cudaMemoryTypeDevice</code> 条件，变成：</p>
@@ -10040,8 +10406,8 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 <p>那么对于 host 内存或 managed 内存，<code>attr.device</code> 可能是 -1 或 0，与 <code>comm-&gt;cudaDev</code> 不匹配，会误报&quot;设备不匹配&quot;。</p>
 <p>具体场景：用户传入一个 <code>cudaMallocManaged</code> 分配的指针。managed 内存的 <code>attr.device</code> 通常是分配时的设备，但如果内存被迁移到其他设备，<code>attr.device</code> 可能变化。更常见的是 host 内存（比如 <code>cudaHostAlloc</code> 分配的 pinned 内存），<code>attr.device</code> 为 -1，与任何 <code>cudaDev</code> 都不等，会误报。</p>
 <p>NCCL 允许 host 内存作为通信缓冲区（通过 <code>cudaMemcpy</code> 中转），所以必须区分&quot;设备内存但设备不对&quot;和&quot;非设备内存&quot;。前者是错误，后者是合法的。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: <code>layoutInfoRecvTopkIdxKind</code>（<span class="fact-pill" data-file="contrib/nccl_ep/nccl_ep.cc" data-lines="139-144" onclick="window.highlightFact('contrib/nccl_ep/nccl_ep.cc', '139-144')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/nccl_ep.cc:139-144</code></span>）用 <code>lip-&gt;size &lt; field_end</code> 判断字段是否存在。如果新版本在结构体中间插入了一个字段（而非末尾），这个判断会怎样失效？为什么 ABI 设计规定新字段只能加在末尾？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: <code>layoutInfoRecvTopkIdxKind</code>（<span class="fact-pill" data-file="contrib/nccl_ep/nccl_ep.cc" data-lines="139-144" onclick="window.highlightFact('contrib/nccl_ep/nccl_ep.cc', '139-144')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/nccl_ep.cc:139-144</code></span>）用 <code>lip-&gt;size &lt; field_end</code> 判断字段是否存在。如果新版本在结构体中间插入了一个字段（而非末尾），这个判断会怎样失效？为什么 ABI 设计规定新字段只能加在末尾？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>假设原结构体是：</p>
 <div class="code-block-wrapper"><div class="code-block-header"><span>c</span><button class="code-copy-btn" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText)">复制</button></div><pre class="source-code-block"><code class="language-c">struct ncclEpLayoutInfo_t {
@@ -10060,9 +10426,24 @@ ncclGroupEnd();    // 原版: depth = 0, 触发下发; 错误版: depth = 2, 返
 <p>此时 <code>field_end = 12 + 4 = 16</code>。旧调用方的 <code>size</code> 是 12（旧结构体大小），<code>12 &lt; 16</code> 成立，函数返回 <code>AUTO</code>——但旧调用方其实是有 <code>recv_topk_idx_kind</code> 字段的，只是偏移不同。这会导致旧调用方设置的 <code>recv_topk_idx_kind</code> 被忽略。</p>
 <p>更糟的是，如果旧调用方按旧偏移（8）写入了 <code>recv_topk_idx_kind</code>，新库按新偏移（12）读取，会读到 <code>new_field</code> 的值，完全错乱。</p>
 <p>所以 ABI 设计的铁律是：<strong>新字段只能加在结构体末尾</strong>。这样旧调用方的 <code>size</code> 小于新字段的 <code>field_end</code>，函数正确返回默认值；新调用方的 <code>size</code> 覆盖新字段，正常读取。中间插入字段会破坏所有基于 <code>offsetof</code> 的版本判断。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>本章剖析了生产环境中四类典型踩坑及其内部防御机制，这些边界条件提醒我们，NCCL 的稳定运行不仅依赖核心实现，也离不开周边生态的适配与扩展。下一章我们将转向生态与扩展，看看 nccl4py、nccl4rust、nccl_ep、nccl_ubx 这些周边项目如何把 NCCL 的能力带给更广泛的用户。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=22" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-21" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-21">← 上一章：第 21 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -10320,14 +10701,14 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
 <li><strong>nccl_checkpoint</strong> 用 <code>LD_PRELOAD</code> 符号拦截 + Redis rendezvous，实现跨机器通信域检查点，但不支持设备 API 和 CUDA graph。</li>
 </ul>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: nccl_ep 的 <code>rdma_buffer_size = NCCL_EP_AUTO</code> 模式下，如果 rank 0 先调用了 <code>ncclEpInitHandle</code> 且触发了缓冲区重分配，而 rank 1 因为 layout 不同没有触发重分配，会发生什么？请结合 <span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span> 的约束分析。</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: nccl_ep 的 <code>rdma_buffer_size = NCCL_EP_AUTO</code> 模式下，如果 rank 0 先调用了 <code>ncclEpInitHandle</code> 且触发了缓冲区重分配，而 rank 1 因为 layout 不同没有触发重分配，会发生什么？请结合 <span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span> 的约束分析。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：README 明确说明 <span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span>：<code>All ranks must call ncclEpInitHandle in lockstep with the same (layout, num_topk)</code>。AUTO 模式下 <code>ncclEpInitHandle</code> 是条件集体调用——是否触发重分配取决于该 handle 的 <code>(layout, num_topk)</code> 是否需要比当前缓冲区更大的空间。</p>
 <p>如果 rank 0 的 layout 需要更大缓冲区触发重分配，而 rank 1 的 layout 不需要，那么 rank 0 会执行「deregister window → free → ncclMemAlloc → register」这套集体操作 <span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span>，而 rank 1 不会。这导致两个问题：</p>
 <p>1. <strong>集合操作不匹配</strong>：NCCL 的 window deregister/register 是集合操作，需要所有 rank 参与。rank 0 单方面执行会导致 rank 1 在后续通信中引用旧的窗口句柄，而 rank 0 已经换了新窗口，通信失败或数据错乱。</p>
 <p>2. <strong>基址不一致</strong>：重分配后 rank 0 的 RDMA 基址变了，rank 1 没变。虽然 README 说「recorded layout offsets on every live handle are pure offsets relative to the group&#x27;s rdma_buffer and resolve correctly against the new base」<span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span>，但这只在所有 rank 都重分配的前提下成立。rank 1 的基址没变，rank 0 的变了，跨 rank 的地址解析会错位。</p>
 <p>正确做法是：所有 rank 用相同的 <code>(layout, num_topk)</code> 同步调用 <code>ncclEpInitHandle</code>，确保重分配决策一致。如果无法保证，应该用显式 <code>rdma_buffer_size &gt; 0</code> 模式，在 <code>ncclEpCreateGroup</code> 时一次性分配足够大的缓冲区，避免运行期重分配 <span class="fact-pill" data-file="contrib/nccl_ep/README.md" data-lines="396-406" onclick="window.highlightFact('contrib/nccl_ep/README.md', '396-406')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl_ep/README.md:396-406</code></span>。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q2: nccl4rust 为什么用指针而非值传递 <code>ncclDevComm_t</code> 给设备内核？如果改成值传递，在 NCCL 升级结构体布局后会发生什么？请结合 <span class="fact-pill" data-file="contrib/nccl4rust/README.md" data-lines="211-219" onclick="window.highlightFact('contrib/nccl4rust/README.md', '211-219')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl4rust/README.md:211-219</code></span> 分析。</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q2: nccl4rust 为什么用指针而非值传递 <code>ncclDevComm_t</code> 给设备内核？如果改成值传递，在 NCCL 升级结构体布局后会发生什么？请结合 <span class="fact-pill" data-file="contrib/nccl4rust/README.md" data-lines="211-219" onclick="window.highlightFact('contrib/nccl4rust/README.md', '211-219')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl4rust/README.md:211-219</code></span> 分析。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：README 明确说明 <span class="fact-pill" data-file="contrib/nccl4rust/README.md" data-lines="217-219" onclick="window.highlightFact('contrib/nccl4rust/README.md', '217-219')" title="在右侧代码面板查看真实源码切片">📎 <code>contrib/nccl4rust/README.md:217-219</code></span>：<code>Kernels construct nccl_device::DevComm from a pointer to that device copy. Using a pointer rather than a by-value Rust mirror keeps the versioned C struct layout out of the kernel argument ABI.</code></p>
 <p><code>ncclDevComm_t</code> 是版本化的公共结构体，不同 NCCL 版本字段可能不同。如果用值传递：</p>
 <p>1. <strong>内核 ABI 绑定结构体布局</strong>：内核参数按值传递时，编译器会把整个结构体的字节布局烘焙进内核的调用约定。NCCL 升级结构体（加字段、改字段顺序、改对齐）后，已编译的内核仍然按旧布局解析参数，导致字段错位。</p>
@@ -10335,8 +10716,8 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
 <p>3. <strong>跨版本不兼容</strong>：如果 host 侧用新 NCCL 创建通信器，设备侧内核用旧 NCCL 编译，值传递会导致内核读到错误字段。</p>
 <p>用指针传递则只传一个 8 字节地址，内核通过指针访问结构体。NCCL 升级结构体布局时，只要 host 侧用新版本创建通信器、拷贝到设备，内核通过指针访问的就是新布局。内核本身不需要重编，因为它的参数只是一个地址。这把版本差异隔离在了指针背后——<strong>指针是稳定的，指针指向的内容可以变</strong>。</p>
 <p>这和 nccl_ep 的 size-based ABI 是同一个设计哲学：用一层间接把易变的版本细节隔离在稳定接口背后。</p>
-</details>
-<details class="reader-details"><summary class="reader-summary">Q3: nccl_checkpoint 用 <code>LD_PRELOAD</code> 拦截 NCCL 调用，但如果应用同时链接了 nccl4py 和 nccl_checkpoint，nccl4py 的 Cython 绑定直接调用 <code>libnccl.so</code> 的符号，<code>LD_PRELOAD</code> 能拦截到吗？请分析符号解析顺序。</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;&lt;summary&gt;Q3: nccl_checkpoint 用 <code>LD_PRELOAD</code> 拦截 NCCL 调用，但如果应用同时链接了 nccl4py 和 nccl_checkpoint，nccl4py 的 Cython 绑定直接调用 <code>libnccl.so</code> 的符号，<code>LD_PRELOAD</code> 能拦截到吗？请分析符号解析顺序。&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：这取决于符号解析顺序。<code>LD_PRELOAD</code> 的机制是：动态链接器在加载应用正常依赖的共享库之前，先加载 <code>LD_PRELOAD</code> 指定的 <code>.so</code>。当应用（或它依赖的库）引用一个符号时，动态链接器按「先加载先解析」的顺序查找——<code>LD_PRELOAD</code> 的 <code>.so</code> 优先于 <code>libnccl.so</code>。</p>
 <p>所以理论上，nccl4py 的 Cython 绑定调用 <code>ncclCommInitRank</code> 时，动态链接器会先找到 <code>libnccl-checkpoint-shim.so</code> 里的同名符号，拦截成功。</p>
 <p>但有几个边界情况：</p>
@@ -10345,10 +10726,25 @@ nccl_checkpoint.checkpoint_restore()</code></pre></div>
 <p>3. <strong><code>RTLD_DEEPBIND</code></strong>：如果 nccl4py 用 <code>dlopen</code> 时指定 <code>RTLD_DEEPBIND</code>，符号查找会优先在 <code>libnccl.so</code> 内部解析，绕过 <code>LD_PRELOAD</code>。这是常见的坑。</p>
 <p>4. <strong>静态链接</strong>：如果 nccl4py 静态链接了 NCCL，<code>LD_PRELOAD</code> 完全无效，因为符号已经在编译期解析。</p>
 <p>所以结论是：<strong>正常动态链接场景下 <code>LD_PRELOAD</code> 能拦截 nccl4py 的调用</strong>，但如果 nccl4py 用了 <code>dlopen</code> + <code>RTLD_DEEPBIND</code> 或静态链接，拦截会失效。生产使用时应该用 <code>LD_DEBUG=bindings</code> 验证符号绑定，确认 NCCL 调用被 shim 拦截。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>下一章我们将转向架构演进与未来方向，看看 NCCL 如何从集合通信库演进为可编程通信引擎。</p>
 <p>这些周边项目通过语言绑定、设备 API 扩展和符号拦截，展示了 NCCL 核心能力在不同场景下的复用方式。而贯穿所有项目的核心约束是 NCCL ABI 版本兼容性——size-based ABI、指针传递、命名空间包都是把版本差异隔离在稳定接口背后的技术手段。理解这些手段，是安全使用这些周边项目的前提。当这些扩展项目不断试探核心的边界，NCCL 自身也在悄然演进：从固定集合操作走向可编程通信引擎，从 host proxy 走向 GPU 直发，从注册缓冲区走向对称内存。下一章我们将基于源码中的演进痕迹，探讨这些变化将如何重塑上层框架的通信方式。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=23" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-22" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-22">← 上一章：第 22 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -10877,31 +11273,31 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
 <p>4. <strong>Team 抽象与版本化 DevComm</strong>（<code>src/nccl_device/core.cc</code>、<code>src/devcomm/devcomm_v23100.cc</code>）：为演进提供基础设施。Team 提供分组视角，版本化 DevComm 提供 ABI 兼容。</p>
 <p>这些变化对上层框架的影响是深远的：PyTorch 的 ProcessGroup 可以直接调用 RMA 原语实现自定义通信模式；Megatron 的专家并行可以利用 GIN 降低 all-to-all 延迟；对称内存让 kernel 代码更简洁。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details">
-<summary class="reader-summary">Q1：如果把 <code>scheduleRmaTasksToPlan</code> 中 WaitSignal 分支的 LSA 可达性判断去掉，所有 peer 都走 Proxy 路径，会有什么后果？在什么场景下会触发性能灾难？</summary>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q1：如果把 <code>scheduleRmaTasksToPlan</code> 中 WaitSignal 分支的 LSA 可达性判断去掉，所有 peer 都走 Proxy 路径，会有什么后果？在什么场景下会触发性能灾难？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p>LSA 可达性判断在 <span class="fact-pill" data-file="src/rma/rma.cc" data-lines="187-204" onclick="window.highlightFact('src/rma/rma.cc', '187-204')" title="在右侧代码面板查看真实源码切片">📎 <code>src/rma/rma.cc:187-204</code></span>，它把 peer 分成 CE 和 Proxy 两组。如果去掉这个判断，所有 peer 都走 Proxy 路径，<code>nRmaTasksCe</code> 始终为 0。</p>
 <p>后果是：CE 路径完全不被使用，所有 WaitSignal 都通过 host proxy 线程轮询网络。对于 LSA 范围内的 peer（同机 NVLink 互联），本来可以用 GPU 拷贝引擎异步等待，现在变成 host 线程轮询，延迟从微秒级升到毫秒级。</p>
 <p>性能灾难场景：MoE 训练中，每个 token 要等待多个专家的信号。如果所有信号都走 Proxy，host 线程成为瓶颈，GPU 大量时间在等 host 轮询。在 8 卡全 NVLink 的机器上，这个退化尤其明显——本来所有通信都可以走 CE，现在全部挤到 host。</p>
 <p>排查方法：看 <code>scheduleRmaTasksToPlan</code> 的 INFO 日志，如果 <code>nRmaTasksCe</code> 始终为 0 而 <code>nRmaTasksProxy</code> 很大，说明 LSA 判断有问题。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q2：<code>ncclGinProgress</code> 中 <code>writePending</code> 标志和 <code>devCommRwMutex</code> 读写锁的配合，如果去掉 <code>writePending</code> 检查，只保留读写锁，会有什么问题？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q2：<code>ncclGinProgress</code> 中 <code>writePending</code> 标志和 <code>devCommRwMutex</code> 读写锁的配合，如果去掉 <code>writePending</code> 检查，只保留读写锁，会有什么问题？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>writePending</code> 检查在 <span class="fact-pill" data-file="src/gin/gin_host.cc" data-lines="63-66" onclick="window.highlightFact('src/gin/gin_host.cc', '63-66')" title="在右侧代码面板查看真实源码切片">📎 <code>src/gin/gin_host.cc:63-66</code></span>，它让进度线程在主线程要写时主动 yield。如果去掉这个检查，进度线程会直接尝试拿读锁。</p>
 <p>问题在于：<code>std::shared_timed_mutex</code> 的读锁是共享的，多个进度线程可以同时持有。如果主线程要拿写锁，必须等所有读锁释放。在高负载下，进度线程频繁拿读锁，主线程可能长时间拿不到写锁，导致 <code>ncclGinDevCommSetup</code> 或 <code>ncclGinDevCommFree</code> 阻塞。</p>
 <p>更严重的是：如果主线程在 <code>ginProgressWriteLock</code> 中先置位 <code>writePending</code> 再拿锁，而进度线程不检查 <code>writePending</code>，那么进度线程可能在主线程置位后仍然拿读锁，导致主线程等待时间不可预测。</p>
 <p><code>writePending</code> 的作用是「软性通知」：告诉进度线程「我要写了，你们先让让」。这比单纯依赖锁的公平性更高效，因为进度线程可以主动 yield 而不是阻塞在锁上。</p>
-</details>
-<details class="reader-details">
-<summary class="reader-summary">Q3：<code>ncclSymkMask</code> 中，如果 <code>nBusBytes &gt;= 32 * (size_t(2) &lt;&lt; 30)</code> 时把所有 kernel 都禁用（<code>kmask = 0</code>），此时 <code>ncclSymkAvailable</code> 返回 false，NCCL 会回退到什么路径？这个回退路径有什么性能影响？</summary>
+<p>&lt;/details&gt;</p>
+<p>&lt;details&gt;</p>
+<p>&lt;summary&gt;Q3：<code>ncclSymkMask</code> 中，如果 <code>nBusBytes &gt;= 32 * (size_t(2) &lt;&lt; 30)</code> 时把所有 kernel 都禁用（<code>kmask = 0</code>），此时 <code>ncclSymkAvailable</code> 返回 false，NCCL 会回退到什么路径？这个回退路径有什么性能影响？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：</p>
 <p><code>kmask = 0</code> 在 <span class="fact-pill" data-file="src/sym_kernels.cc" data-lines="342" onclick="window.highlightFact('src/sym_kernels.cc', '342')" title="在右侧代码面板查看真实源码切片">📎 <code>src/sym_kernels.cc:342</code></span>，此时 <code>ncclSymkAvailable</code> 返回 false（<span class="fact-pill" data-file="src/sym_kernels.cc" data-lines="354-361" onclick="window.highlightFact('src/sym_kernels.cc', '354-361')" title="在右侧代码面板查看真实源码切片">📎 <code>src/sym_kernels.cc:354-361</code></span>）。</p>
 <p>回退路径是：NCCL 会使用传统的集合通信 kernel（非对称内存 kernel）。这些 kernel 通过注册缓冲区的方式访问对端内存，需要先解析地址，指令开销更大。</p>
 <p>性能影响：对于超大消息（超过 64GB 总线字节），传统 kernel 的地址解析开销占比很小，因为数据传输本身占主导。但在边界情况下（刚好超过 64GB），传统 kernel 可能比对称内存 kernel 慢 10-20%。</p>
 <p>这个限制的根本原因是：对称内存 kernel 用 32 位整数跟踪 unrolled loop chunk，每个 chunk 至少 32 字节，所以最大可寻址范围是 32 * 2^31 = 64GB。超过这个范围会整数溢出。</p>
 <p>实际生产中，单次集合通信超过 64GB 的场景很少（通常是梯度累积后的 all-reduce），但并非不可能。如果遇到这种场景，可以考虑分片通信或使用传统 kernel。</p>
-</details>
+<p>&lt;/details&gt;</p>
 <p>---</p>
 <h2>章末过渡</h2>
 <p>本章我们看到 NCCL 正在从「固定集合操作」走向「可编程通信引擎」：RMA 提供原语组合，GIN 提供 GPU 直发，对称内存提供统一地址空间，Team 和版本化 DevComm 提供基础设施。</p>
@@ -10909,6 +11305,21 @@ return ncclTeamOuterFactor(flatTeam, innerSize);</code></pre></div>
 <p>下一章是全书最后一章。我们将把一次 AllReduce 的完整链路重新走一遍——从 <code>ncclAllReduce</code> 调用开始，经过任务入队、算法选择、kernel 启动、proxy 推进、网络传输，直到结果返回。这次回顾会把前面 24 章的知识点串联起来，形成一个完整的认知地图。</p>
 <p>至此，我们看清了 NCCL 从固定集合操作向可编程通信引擎演进的三条主线：RMA 原语组合、GPU 直发网络、对称内存模型，以及支撑它们的 team 抽象与版本化 DevComm。这些机制共同指向一个更灵活、更贴近硬件能力的通信未来。然而，无论架构如何演进，一次 AllReduce 的完整链路始终是理解 NCCL 的基石。下一章我们将不引入新代码，而是把第 3 章到第 10 章的端到端流程重新串讲一遍——从 ncclAllReduce 调用，到通信域建立、拓扑搜索、算法选型、任务入队、kernel 启动、设备侧原语执行、结果回写。你将把分散在各章的机制重新组装成一个完整心智模型，并得到一份「遇到问题该查哪一章」的索引。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=24" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-23" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-23">← 上一章：第 23 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -11596,10 +12007,25 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
 <p>5. <strong>Kernel 启动</strong>：<code>ncclLaunchKernel</code> → <code>cuLaunchKernelEx</code>，把 plan 翻译成 CUDA 启动参数。</p>
 <p>6. <strong>设备侧执行</strong>：<code>runRing</code> / <code>runTreeUpDown</code> / <code>runNvls</code>，按算法执行数据搬运。</p>
 <h2>本章思考与自测</h2>
-<details class="reader-details"><summary class="reader-summary">Q1: 如果把 <code>initTransportsRank</code> 里 AllGather3 之后的 min/max 对齐逻辑（L1690-L1698）去掉，在什么场景下会导致通信死锁？为什么？</summary>
+<p>&lt;details&gt;&lt;summary&gt;Q1: 如果把 <code>initTransportsRank</code> 里 AllGather3 之后的 min/max 对齐逻辑（L1690-L1698）去掉，在什么场景下会导致通信死锁？为什么？&lt;/summary&gt;</p>
 <p><strong>参考解析</strong>：这段逻辑保证所有 rank 对每个算法的 <code>nChannels</code>、<code>bwIntra</code>、<code>bwInter</code> 等参数达成一致。如果去掉，每个 rank 会用自己的本地拓扑计算结果。考虑一个异构集群：rank 0 在 8 卡 NVLink 机器上，rank 8 在 4 卡 PCIe 机器上。rank 0 算出 ring 有 8 条通道，rank 8 算出 4 条。当它们执行 Ring AllReduce 时，rank 0 会等 rank 8 在 8 条通道上发数据，但 rank</p>
 <p>至此，我们完成了对一次 AllReduce 完整链路的回顾。从初始化、拓扑搜索、算法选择、任务入队、kernel 启动，到设备侧执行与网络传输，每个环节都对应着前面章节的深入剖析。这份链路图不仅是理解 NCCL 的骨架，也是排查问题的索引：初始化失败查第 3、4 章，算法选错查第 5 章，任务入队报错查第 6、7 章，kernel 启动失败查第 8 章，设备侧 hang 查第 9、10 章，网络问题查第 12、13 章。随着 NCCL 向可编程通信、GPU 直发和对称内存演进，这条链路还将继续延伸——而你已经掌握了追踪它的方法。</p>
         </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 赋能代码库精读 · 本地优先架构</span>
+            <h3 class="cta-title">读完了本章？为你自己的私有项目生成专属架构全景书</h3>
+            <p class="cta-desc">基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_nccl_zh&ch=25" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免费分析你的代码库 (免费试读第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-24" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-24">← 上一章：第 24 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -11609,13 +12035,13 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
         
 
       <div style="margin-top: 60px; padding: 28px; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 12px; text-align: center;">
-        <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任意复杂项目，其实只需要一本好书</h3>
+        <h3 style="font-size: 18px; margin-bottom: 8px;">读懂任何复杂项目，你真正需要的是一本专著</h3>
         <p style="font-size: 14px; color: var(--text-secondary); max-width: 560px; margin: 0 auto 20px;">
-          本书由 AiReadCode 扫描官方开源仓库全自动编撰而成，真实 Commit 行号永久锚定。
+          本书由 AiReadCode 扫描官方开源仓库全自动编撰，结合真实不可变 Commit 节点与 FACT 药丸行号溯源，提供纯静态、零服务依赖的极致双栏交互式在线阅读体验。
         </p>
         <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-          <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">Star GitHub 仓库 ★</a>
-          <a href="../../index.html" class="btn btn-secondary btn-sm">浏览更多开源好书 →</a>
+          <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">在 GitHub 上 Star 本项目 ★</a>
+          <a href="../../index.html" class="btn btn-secondary btn-sm">浏览更多架构专著 →</a>
         </div>
       </div>
     </main>
@@ -11631,27 +12057,30 @@ NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm-&gt;bootstrap, comm-&gt;localRankTo
           <span id="code-pane-lines" class="badge-lines">全览</span>
         </div>
         <div class="code-pane-actions">
-          <button class="btn-code-action" id="btn-copy-code" onclick="window.copyCurrentCode(this)" title="复制当前高亮切片（若无高亮则复制全文）">
+          <button class="btn-code-action" id="btn-copy-code" onclick="window.copyCurrentCode(this)" title="复制当前高亮代码切片（如无则复制全文件）">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span class="btn-text">复制选段</span>
+            <span class="btn-text">复制代码切片</span>
           </button>
-          <button class="btn-code-action" id="btn-copy-all" onclick="window.copyFullFile(this)" title="复制整个源文件全文">
+          <button class="btn-code-action" id="btn-copy-all" onclick="window.copyFullFile(this)" title="复制当前完整源码文件">
             <span class="btn-text">复制全文</span>
           </button>
-          <button class="btn-code-action" id="btn-locate-target" onclick="window.locateTargetLines()" title="回到高亮行所在位置">
+          <button class="btn-code-action" id="btn-locate-target" onclick="window.locateTargetLines()" title="平滑滚动至高亮行">
             <span>定位</span>
           </button>
         </div>
       </div>
       <div class="code-pane-body" id="code-pane-content">
-        <div class="code-loading-msg">⚡ 正在载入源文件...</div>
+        <div class="code-loading-msg">⚡ 正在加载源码文件...</div>
       </div>
       <div class="code-pane-footer">
         <div class="code-pane-status">
           <span class="status-dot"></span>
-          <span id="code-pane-file-stats">Commit 永久不可变锚定</span>
+          <span id="code-pane-file-stats">Commit 不可变永久锚定</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_nccl_zh" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ 分析私有代码库 →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="src/nccl.h">src/nccl.h</span>
+        </div>
       </div>
     </aside>
   </div>

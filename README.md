@@ -1,17 +1,31 @@
-# 📚 AiReadCodeBooks — The Multilingual Open-Source Architecture Library
+# 📚 AiReadCodeBooks — Turn Any Codebase into a Book You Can Actually Understand
 
 <p align="center">
-  <a href="https://aireadcode.com"><img src="https://img.shields.io/badge/Official%20Website-aireadcode.com-00e5ff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Official Website"></a>
-  <a href="#-flagship-available-monographs"><img src="https://img.shields.io/badge/Flagship%20Monographs-4%20Released-10b981?style=for-the-badge" alt="Flagship Monographs"></a>
-  <a href="#-100-open-source-books-roadmap-matrix"><img src="https://img.shields.io/badge/Architecture%20Matrix-100%20Books-8b5cf6?style=for-the-badge" alt="100 Books Matrix"></a>
-  <a href="#-multilingual-directory-standard"><img src="https://img.shields.io/badge/Multilingual-EN%20%7C%20ZH-f59e0b?style=for-the-badge" alt="Multilingual"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-CC%20BY--NC%204.0-ec4899?style=for-the-badge" alt="License"></a>
+  <a href="https://aireadcode.com"><img src="https://img.shields.io/badge/Official%20Product-aireadcode.com-00e5ff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Official Website"></a>
+  <a href="#-flagship-available-monographs"><img src="https://img.shields.io/badge/Flagship%20Monographs-4%20Published-10b981?style=for-the-badge" alt="Flagship Monographs"></a>
+  <a href="#-1000-codebases-challenge--nominate-next-books"><img src="https://img.shields.io/badge/1000%20Codebases-Challenge-ff007f?style=for-the-badge" alt="1000 Codebases Challenge"></a>
+  <a href="#-10-languages-supported"><img src="https://img.shields.io/badge/Languages-10%20Editions-f59e0b?style=for-the-badge" alt="10 Languages"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-CC%20BY--NC%204.0-8b5cf6?style=for-the-badge" alt="License"></a>
 </p>
 
 <p align="center">
-  <b>Transform complex, multi-million-line open-source codebases into clean, structured, and fact-verified technical textbooks.</b><br>
-  Every monograph features end-to-end architecture diagrams, code walkthroughs, design inferences, and verbatim <code>[FACT:file:lines]</code> source verification.
+  <b>Turn complex, multi-million-line codebases into structured, deep-dive technical architecture books.</b><br>
+  Every book features end-to-end architecture diagrams, design inferences, dual-pane interactive reading, and verbatim <code>[FACT:file:lines]</code> immutable commit anchors.
 </p>
+
+---
+
+> ### 🚀 The 1000 Codebases Challenge
+> We are compiling comprehensive architecture books for **1,000 iconic open-source projects**.
+> Want an architecture book for your favorite library (e.g. `redis`, `react`, `kubernetes`, `sqlite`, `linux`)?
+> **[👉 Nominate a Codebase / Vote on Next Books](https://github.com/maleRjc/AiReadCodeBooks/issues/new?template=book_request.yml)**!
+
+> ### ⚡ Turn Your Private Codebase into a Book (Local-First Desktop App)
+> Need to understand a private enterprise codebase, onboard new engineers in hours, or audit a legacy monolith?
+> Download the **AiReadCode Desktop Client** (Tauri 2 + Rust native core).
+> - **100% Offline & Private**: Zero lines of code uploaded to any third-party server.
+> - **Chapter 1 Free**: Generate and read your project's first architecture chapter completely free.
+> **[👉 Download AiReadCode for Mac / Windows / Linux (Free Chapter 1)](https://aireadcode.com/?ref=github_books_readme)**
 
 ---
 
@@ -19,20 +33,20 @@
 - **English Edition (Current)**: Master documentation, 100-book matrix & English monographs.
 - **[中文版入口 (Chinese Edition)](README_zh.md)**: 查看中文主目录、100本开源专著大纲矩阵与精读指引。
 - **[Interactive Live Web Readers](https://malerjc.github.io/AiReadCodeBooks/)**: Experience real-time dual-pane reading with live source code synchronization.
-- **[AiReadCode Desktop Client](https://aireadcode.com/#downloads)**: Turn your own repositories into structured architectural books with one click.
+- **[AiReadCode Desktop Engine](https://aireadcode.com/?ref=github_books_readme)**: Turn your own repositories into structured architectural books with one click.
 
 ---
 
 ## 🌟 Flagship Available Monographs
 
-The following 4 monographs are fully generated, audited, and ready to read online in both **English (`en/`)** and **Chinese (`zh/`)**:
+The following 4 monographs are fully generated, audited, and ready to read online across **10 languages** (English, 简体中文, 日本語, 한국어, 繁體中文, Español, Français, Deutsch, Русский, Português):
 
-| Flagship Book | Domain Track | Tech Stack | Stars | Chapters | Online Web Reader | GitHub Markdown |
+| Flagship Book | Domain Track | Tech Stack | Stars | Chapters | Interactive Reader | 10 Languages Available |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **[Vue 3 Core Architecture](books/vue3/)** | Frontend & Web Runtimes | `TypeScript` | ★ 45.8k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [Read (EN)](books/vue3/en/01-monorepo-philosophy.md) · [阅读 (ZH)](books/vue3/zh/01-monorepo-philosophy.md) |
-| **[Tokio Internals & Runtime](books/tokio/)** | Systems & High-Performance | `Rust` | ★ 28.5k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [Read (EN)](books/tokio/en/01-async-philosophy-future-waker.md) · [阅读 (ZH)](books/tokio/zh/01-async-philosophy-future-waker.md) |
-| **[Inside vLLM Serving Engine](books/vllm/)** | AI Infra & Deep Learning | `Python/C++/CUDA` | ★ 35.2k | 14 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [Read (EN)](books/vllm/en/01-design-philosophy-and-architecture.md) · [阅读 (ZH)](books/vllm/zh/01-design-philosophy-and-architecture.md) |
-| **[NCCL Deep Dive: AllReduce](books/nccl/)** | AI Infra & Deep Learning | `C++/CUDA` | ★ 6.2k | 25 Chapters | [Interactive Reader](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [Read (EN)](books/nccl/en/01-allreduce-external-behavior.md) · [阅读 (ZH)](books/nccl/zh/01-allreduce-external-behavior.md) |
+| **[NCCL Deep Dive: AllReduce](books/nccl/)** | AI Infra & Deep Learning | `C++/CUDA` | ★ 6.2k | 25 Chapters | [**Read Online →**](https://malerjc.github.io/AiReadCodeBooks/books/nccl/#ch-01) | [🇨🇳 中文](books/nccl/index.html) · [🇺🇸 EN](books/nccl/en/) · [🇯🇵 日本語](books/nccl/ja/) · [🇰🇷 한국어](books/nccl/ko/) · [🇭🇰 繁體](books/nccl/zh-tw/) · [🇪🇸 ES](books/nccl/es/) · [🇫🇷 FR](books/nccl/fr/) · [🇩🇪 DE](books/nccl/de/) · [🇷🇺 RU](books/nccl/ru/) · [🇵🇹 PT](books/nccl/pt/) |
+| **[Tokio Internals & Runtime](books/tokio/)** | Systems & High-Performance | `Rust` | ★ 28.5k | 14 Chapters | [**Read Online →**](https://malerjc.github.io/AiReadCodeBooks/books/tokio/#ch-01) | [🇨🇳 中文](books/tokio/index.html) · [🇺🇸 EN](books/tokio/en/) · [🇯🇵 日本語](books/tokio/ja/) · [🇰🇷 한국어](books/tokio/ko/) · [🇭🇰 繁體](books/tokio/zh-tw/) · [🇪🇸 ES](books/tokio/es/) · [🇫🇷 FR](books/tokio/fr/) · [🇩🇪 DE](books/tokio/de/) · [🇷🇺 RU](books/tokio/ru/) · [🇵🇹 PT](books/tokio/pt/) |
+| **[Inside vLLM Serving Engine](books/vllm/)** | AI Infra & Deep Learning | `Python/C++/CUDA` | ★ 35.2k | 14 Chapters | [**Read Online →**](https://malerjc.github.io/AiReadCodeBooks/books/vllm/#ch-01) | [🇨🇳 中文](books/vllm/index.html) · [🇺🇸 EN](books/vllm/en/) · [🇯🇵 日本語](books/vllm/ja/) · [🇰🇷 한국어](books/vllm/ko/) · [🇭🇰 繁體](books/vllm/zh-tw/) · [🇪🇸 ES](books/vllm/es/) · [🇫🇷 FR](books/vllm/fr/) · [🇩🇪 DE](books/vllm/de/) · [🇷🇺 RU](books/vllm/ru/) · [🇵🇹 PT](books/vllm/pt/) |
+| **[Vue 3 Core Architecture](books/vue3/)** | Frontend & Web Runtimes | `TypeScript` | ★ 45.8k | 14 Chapters | [**Read Online →**](https://malerjc.github.io/AiReadCodeBooks/books/vue3/#ch-01) | [🇨🇳 中文](books/vue3/index.html) · [🇺🇸 EN](books/vue3/en/) · [🇯🇵 日本語](books/vue3/ja/) · [🇰🇷 한국어](books/vue3/ko/) · [🇭🇰 繁體](books/vue3/zh-tw/) · [🇪🇸 ES](books/vue3/es/) · [🇫🇷 FR](books/vue3/fr/) · [🇩🇪 DE](books/vue3/de/) · [🇷🇺 RU](books/vue3/ru/) · [🇵🇹 PT](books/vue3/pt/) |
 
 ---
 

@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 AiReadCodeBooks - Standalone Multi-book Bilingual Reader Compiler
-Compiles Markdown chapters (zh) and genuine translated chapters (en) into self-contained HTML readers with live code inspector,
-extracts offline FACT snippets, and provides chapter-synchronized language switching.
+Compiles Markdown chapters (zh) and genuine translated chapters into self-contained HTML readers with live code inspector,
+extracts offline FACT snippets, provides chapter-synchronized language switching,
+and generates complete SEO (hreflang, JSON-LD, canonical, sitemap.xml, robots.txt, llms.txt) and conversion CTAs.
 Zero External Server Dependencies · Commit Pinned CDN + Snippets Dual-Engine
 """
 
@@ -90,6 +91,13 @@ I18N = {
         "next_ch": "下一章：第 {idx} 章 →",
         "back_to_top": "回到顶部 ↑",
         "progress": "阅读进度：第 {idx} 章 / 共 {total} 章",
+        "nav_cta": "⚡ 深度解析你的代码库 →",
+        "ch_cta_badge": "AI 赋能代码库精读 · 本地优先架构",
+        "ch_cta_title": "读完了本章？为你自己的私有项目生成专属架构全景书",
+        "ch_cta_desc": "基于 Tauri 2 + Rust 本地原生引擎，100% 源码离线隐私安全，零代码上传云端。像阅读一本传世专著一样拆解你的复杂系统。",
+        "ch_cta_btn": "⚡ 立即免费分析你的代码库 (免费试读第 1 章) →",
+        "ch_cta_note": "Tauri 2 · Rust 原生引擎 · 100% 离线私密安全 · 适配超百万行代码库",
+        "code_pane_cta": "⚡ 分析私有代码库 →",
     },
     "en": {
         "name": "English",
@@ -122,6 +130,13 @@ I18N = {
         "next_ch": "Next: Chapter {idx} →",
         "back_to_top": "Back to top ↑",
         "progress": "Progress: Chapter {idx} of {total}",
+        "nav_cta": "⚡ Analyze Your Codebase Free →",
+        "ch_cta_badge": "Turn Any Codebase into a Book You Can Actually Understand",
+        "ch_cta_title": "Enjoyed this chapter? Turn your private codebase into an architecture book",
+        "ch_cta_desc": "Local-first Tauri 2 + Rust architecture. 100% offline security, zero code uploaded. Dual-pane reading with immutable commit line anchors.",
+        "ch_cta_btn": "⚡ Analyze Your Codebase Free (Chapter 1 Free) →",
+        "ch_cta_note": "Tauri 2 · Rust Native Core · 100% Offline & Private · Tested on 1M+ LOC",
+        "code_pane_cta": "⚡ Read Your Repo with AiReadCode →",
     },
     "ja": {
         "name": "日本語",
@@ -154,6 +169,13 @@ I18N = {
         "next_ch": "次の章: 第 {idx} 章 →",
         "back_to_top": "トップへ戻る ↑",
         "progress": "進捗: 第 {idx} 章 / 全 {total} 章",
+        "nav_cta": "⚡ コードベースを無料分析 →",
+        "ch_cta_badge": "あらゆるコードベースを理解できる技術書に",
+        "ch_cta_title": "この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ",
+        "ch_cta_desc": "Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。",
+        "ch_cta_btn": "⚡ コードベースを無料分析 (第1章無料) →",
+        "ch_cta_note": "Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済",
+        "code_pane_cta": "⚡ AiReadCode でリポジトリを読む →",
     },
     "ko": {
         "name": "한국어",
@@ -186,6 +208,13 @@ I18N = {
         "next_ch": "다음: 제 {idx} 장 →",
         "back_to_top": "맨 위로 ↑",
         "progress": "진행률: 제 {idx} 장 / 총 {total} 장",
+        "nav_cta": "⚡ 코드베이스 무료 분석 →",
+        "ch_cta_badge": "모든 코드베이스를 진정으로 이해할 수 있는 책으로",
+        "ch_cta_title": "이 장을 다 읽으셨나요? 내 프라이빗 저장소를 위한 아키텍처 책 만들기",
+        "ch_cta_desc": "Tauri 2 + Rust 로컬 퍼스트 아키텍처. 100% 오프라인 보안, 클라우드 코드 업로드 없음. 불변 커밋 라인 앵커로 정독.",
+        "ch_cta_btn": "⚡ 무료로 코드베이스 분석 시작 (제1장 무료) →",
+        "ch_cta_note": "Tauri 2 · Rust 네이티브 코어 · 100% 오프라인 보안 · 100만 행 이상 검증",
+        "code_pane_cta": "⚡ AiReadCode로 내 저장소 읽기 →",
     },
     "zh-tw": {
         "name": "繁體中文",
@@ -218,6 +247,13 @@ I18N = {
         "next_ch": "下一章：第 {idx} 章 →",
         "back_to_top": "回到頂部 ↑",
         "progress": "閱讀進度：第 {idx} 章 / 共 {total} 章",
+        "nav_cta": "⚡ 深度解析你的程式碼庫 →",
+        "ch_cta_badge": "AI 賦能程式碼庫精讀 · 本地優先架構",
+        "ch_cta_title": "讀完了本章？為你自己的私有專案生成專屬架構全景書",
+        "ch_cta_desc": "基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。",
+        "ch_cta_btn": "⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →",
+        "ch_cta_note": "Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫",
+        "code_pane_cta": "⚡ 分析私有程式碼庫 →",
     },
     "es": {
         "name": "Español",
@@ -250,6 +286,13 @@ I18N = {
         "next_ch": "Sig: Capítulo {idx} →",
         "back_to_top": "Volver arriba ↑",
         "progress": "Progreso: Capítulo {idx} de {total}",
+        "nav_cta": "⚡ Analiza tu código gratis →",
+        "ch_cta_badge": "Convierte cualquier código en un libro comprensible",
+        "ch_cta_title": "¿Disfrutaste este capítulo? Convierte tu código privado en un libro",
+        "ch_cta_desc": "Arquitectura local-first con Tauri 2 + Rust. 100% offline y seguro, sin subir código. Lectura en panel dual con anclajes de commit inmutables.",
+        "ch_cta_btn": "⚡ Analiza tu código gratis (Capítulo 1 gratis) →",
+        "ch_cta_note": "Tauri 2 · Rust Core · 100% Privado y Offline · Probado en +1M líneas",
+        "code_pane_cta": "⚡ Lee tu repositorio con AiReadCode →",
     },
     "fr": {
         "name": "Français",
@@ -282,6 +325,13 @@ I18N = {
         "next_ch": "Suiv: Chapitre {idx} →",
         "back_to_top": "Haut de page ↑",
         "progress": "Progression: Chapitre {idx} sur {total}",
+        "nav_cta": "⚡ Analysez votre code gratuitement →",
+        "ch_cta_badge": "Transformez n'importe quel code en un livre compréhensible",
+        "ch_cta_title": "Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé",
+        "ch_cta_desc": "Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.",
+        "ch_cta_btn": "⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →",
+        "ch_cta_note": "Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes",
+        "code_pane_cta": "⚡ Lisez votre repo avec AiReadCode →",
     },
     "de": {
         "name": "Deutsch",
@@ -314,6 +364,13 @@ I18N = {
         "next_ch": "Weiter: Kapitel {idx} →",
         "back_to_top": "Nach oben ↑",
         "progress": "Fortschritt: Kapitel {idx} von {total}",
+        "nav_cta": "⚡ Codebase kostenlos analysieren →",
+        "ch_cta_badge": "Verwandeln Sie jeden Codebase in ein verständliches Buch",
+        "ch_cta_title": "Kapitel beendet? Erstellen Sie ein Architekturbuch für Ihr Projekt",
+        "ch_cta_desc": "Local-First-Architektur mit Tauri 2 + Rust. 100% offline und sicher, kein Code-Upload. Dual-Pane-Lesemodus mit unveränderlichen Commit-Ankern.",
+        "ch_cta_btn": "⚡ Codebase kostenlos analysieren (Kapitel 1 gratis) →",
+        "ch_cta_note": "Tauri 2 · Rust Core · 100% Offline & Privat · Getestet mit 1M+ Zeilen",
+        "code_pane_cta": "⚡ Lesen Sie Ihr Repo mit AiReadCode →",
     },
     "ru": {
         "name": "Русский",
@@ -346,6 +403,13 @@ I18N = {
         "next_ch": "След: Глава {idx} →",
         "back_to_top": "Наверх ↑",
         "progress": "Прогресс: Глава {idx} из {total}",
+        "nav_cta": "⚡ Анализ вашего кода бесплатно →",
+        "ch_cta_badge": "Превратите любой код в понятную архитектурную книгу",
+        "ch_cta_title": "Понравилась глава? Создайте книгу по своему приватному проекту",
+        "ch_cta_desc": "Локальная архитектура на Tauri 2 + Rust. 100% приватность офлайн, нулевая отправка кода в облако. Двухоконное чтение с неизменяемыми анкорами коммитов.",
+        "ch_cta_btn": "⚡ Анализировать свой код бесплатно (Глава 1 бесплатно) →",
+        "ch_cta_note": "Tauri 2 · Ядро Rust · 100% Офлайн и Приватно · Проверено на 1M+ строк",
+        "code_pane_cta": "⚡ Читайте свой репозиторий с AiReadCode →",
     },
     "pt": {
         "name": "Português",
@@ -378,6 +442,13 @@ I18N = {
         "next_ch": "Próx: Capítulo {idx} →",
         "back_to_top": "Voltar ao topo ↑",
         "progress": "Progresso: Capítulo {idx} de {total}",
+        "nav_cta": "⚡ Analise sua base de código grátis →",
+        "ch_cta_badge": "Transforme qualquer código em um livro compreensível",
+        "ch_cta_title": "Gostou deste capítulo? Crie um livro para seu repositório privado",
+        "ch_cta_desc": "Arquitetura local-first em Tauri 2 + Rust. 100% offline e seguro, zero upload de código. Leitura em painel duplo com âncoras imutáveis de commit.",
+        "ch_cta_btn": "⚡ Analise seu código grátis (Capítulo 1 grátis) →",
+        "ch_cta_note": "Tauri 2 · Rust Core · 100% Offline e Privado · Testado em 1M+ linhas",
+        "code_pane_cta": "⚡ Leia seu repositório com AiReadCode →",
     },
 }
 
@@ -447,6 +518,71 @@ def build_lang_dropdown_html(current_lang="zh"):
 {items_html}
           </div>
         </div>"""
+
+def build_seo_tags(slug, current_lang="zh", title="", description=""):
+    """Generate canonical URL, all 10 hreflang alternates, OpenGraph, Twitter Cards, and Schema.org TechArticle JSON-LD."""
+    base_url = "https://malerjc.github.io/AiReadCodeBooks"
+    
+    if current_lang == "zh":
+        canonical_url = f"{base_url}/books/{slug}/"
+    else:
+        canonical_url = f"{base_url}/books/{slug}/{current_lang}/"
+        
+    hreflangs = []
+    for lang in SUPPORTED_LANGUAGES:
+        lcode = lang["code"]
+        if lcode == "zh":
+            href = f"{base_url}/books/{slug}/"
+        else:
+            href = f"{base_url}/books/{slug}/{lcode}/"
+        hreflangs.append(f'  <link rel="alternate" hreflang="{lcode}" href="{href}">')
+    hreflangs.append(f'  <link rel="alternate" hreflang="x-default" href="{base_url}/books/{slug}/en/">')
+    hreflangs_str = "\n".join(hreflangs)
+    
+    clean_desc = (description or "").replace('"', '&quot;').replace('\n', ' ').strip()
+    clean_title = (title or "").replace('"', '&quot;').replace('\n', ' ').strip()
+    
+    schema_ld = {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": clean_title,
+        "description": clean_desc,
+        "inLanguage": current_lang,
+        "url": canonical_url,
+        "author": {
+            "@type": "Organization",
+            "name": "AiReadCode",
+            "url": "https://aireadcode.com"
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": "AiReadCode Books",
+            "url": base_url,
+            "logo": {
+                "@type": "ImageObject",
+                "url": f"{base_url}/assets/favicon.svg"
+            }
+        },
+        "about": {
+            "@type": "SoftwareSourceCode",
+            "name": slug
+        }
+    }
+    schema_json = json.dumps(schema_ld, ensure_ascii=False, indent=2)
+
+    return f'''  <link rel="canonical" href="{canonical_url}">
+{hreflangs_str}
+  <meta property="og:title" content="{clean_title}">
+  <meta property="og:description" content="{clean_desc}">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="{canonical_url}">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{clean_title}">
+  <meta name="twitter:description" content="{clean_desc}">
+  <script type="application/ld+json">
+{schema_json}
+  </script>'''
 
 def format_inline(text, repo="", commit="", lang="zh"):
     """Format inline elements: FACT pills, code spans, bold, and escape raw HTML."""
@@ -550,42 +686,18 @@ def parse_markdown(md_text, repo="", commit="", lang="zh"):
                 )
                 in_code = False
                 code_lines = []
+                code_lang = ""
             else:
                 in_code = True
                 code_lang = s[3:].strip()
+                code_lines = []
             continue
 
         if in_code:
             code_lines.append(line)
             continue
 
-        # Details & Summary support
-        if s.startswith("<details><summary>"):
-            flush_list()
-            flush_table()
-            inner = s[len("<details><summary>"):].strip()
-            if inner.endswith("</summary>"):
-                inner = inner[:-len("</summary>")].strip()
-            html_out.append(f'<details class="reader-details"><summary class="reader-summary">{_fmt(inner)}</summary>')
-            continue
-        elif s == "<details>":
-            flush_list()
-            flush_table()
-            html_out.append('<details class="reader-details">')
-            continue
-        elif s.startswith("<summary>") and s.endswith("</summary>"):
-            flush_list()
-            flush_table()
-            inner = s[len("<summary>"):-len("</summary>")].strip()
-            html_out.append(f'<summary class="reader-summary">{_fmt(inner)}</summary>')
-            continue
-        elif s == "</details>":
-            flush_list()
-            flush_table()
-            html_out.append('</details>')
-            continue
-
-        # Tables
+        # Table rows
         if s.startswith("|") and s.endswith("|"):
             flush_list()
             in_table = True
@@ -594,7 +706,7 @@ def parse_markdown(md_text, repo="", commit="", lang="zh"):
         elif in_table:
             flush_table()
 
-        # Lists
+        # Bullet list
         if s.startswith("- ") or s.startswith("* "):
             flush_table()
             if not in_list:
@@ -813,6 +925,94 @@ def extract_book_snippets(chapters_dir, code_dir):
 
     return snippets
 
+def generate_sitemap_and_robots(books_meta, root_dir):
+    """Generate sitemap.xml, robots.txt, and llms.txt in root_dir."""
+    base_url = "https://malerjc.github.io/AiReadCodeBooks"
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 1. sitemap.xml
+    urls = []
+    # Root lobby
+    urls.append(f"""  <url>
+    <loc>{base_url}/</loc>
+    <lastmod>{today_str}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>""")
+
+    for slug, meta in sorted(books_meta.items()):
+        # Chinese root for book
+        urls.append(f"""  <url>
+    <loc>{base_url}/books/{slug}/</loc>
+    <lastmod>{today_str}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>""")
+        # 9 other languages
+        for lang in SUPPORTED_LANGUAGES:
+            lcode = lang["code"]
+            if lcode == "zh":
+                continue
+            urls.append(f"""  <url>
+    <loc>{base_url}/books/{slug}/{lcode}/</loc>
+    <lastmod>{today_str}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>""")
+
+    sitemap_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{chr(10).join(urls)}
+</urlset>
+"""
+    sitemap_path = os.path.join(root_dir, "sitemap.xml")
+    with open(sitemap_path, "w", encoding="utf-8") as f:
+        f.write(sitemap_xml)
+    print(f"[+] Successfully generated sitemap.xml: {sitemap_path} ({len(urls)} URLs)")
+
+    # 2. robots.txt
+    robots_txt = f"""User-agent: *
+Allow: /
+
+Sitemap: {base_url}/sitemap.xml
+"""
+    robots_path = os.path.join(root_dir, "robots.txt")
+    with open(robots_path, "w", encoding="utf-8") as f:
+        f.write(robots_txt)
+    print(f"[+] Successfully generated robots.txt: {robots_path}")
+
+    # 3. llms.txt (GEO optimization for Perplexity, ChatGPT Search, Claude)
+    books_lines = []
+    for slug, meta in sorted(books_meta.items()):
+        title = meta.get("titleZh", slug)
+        repo = meta.get("repo", "")
+        summary = meta.get("summaryZh", meta.get("summary", ""))
+        books_lines.append(f"- [{title}]({base_url}/books/{slug}/): Architecture deep-dive for {repo}. {summary[:100]}...")
+
+    llms_txt = f"""# AiReadCodeBooks
+
+> Turn Any Codebase into a Book You Can Actually Understand.
+> Open-source architecture books compiled by AiReadCode with immutable commit line anchors.
+
+## Published Books
+
+{chr(10).join(books_lines)}
+
+## Key Features
+- **Local-first Architecture**: Tauri 2 + Rust native engine, zero code uploaded to servers.
+- **Dual-Pane Interactive Reader**: Synchronized explanation text alongside real code with FACT line anchors.
+- **Multilingual Support**: Available in 10 languages (English, Chinese, Japanese, Korean, Spanish, French, German, Russian, Portuguese, Traditional Chinese).
+- **Immutable Commit Pinning**: Every line reference points to a permanent Git commit.
+
+## Official Links
+- AiReadCode Main Product: https://aireadcode.com
+- GitHub Library: https://github.com/maleRjc/AiReadCodeBooks
+"""
+    llms_path = os.path.join(root_dir, "llms.txt")
+    with open(llms_path, "w", encoding="utf-8") as f:
+        f.write(llms_txt)
+    print(f"[+] Successfully generated llms.txt: {llms_path}")
+
 READER_TEMPLATE = """<!DOCTYPE html>
 <html lang="@@HTML_LANG@@" data-theme="dark">
 <head>
@@ -821,6 +1021,7 @@ READER_TEMPLATE = """<!DOCTYPE html>
   <title>@@PAGE_TITLE@@</title>
   <meta name="description" content="@@DESCRIPTION@@">
   <meta name="keywords" content="@@KEYWORDS@@">
+@@SEO_TAGS@@
   <link rel="icon" type="image/svg+xml" href="@@ASSETS_PATH@@favicon.svg">
   <link rel="stylesheet" href="@@ASSETS_PATH@@reader.css">
 </head>
@@ -847,6 +1048,9 @@ READER_TEMPLATE = """<!DOCTYPE html>
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_@@SLUG@@_@@LANG_CODE@@" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>@@NAV_CTA_TEXT@@</span>
+        </a>
 @@LANG_DROPDOWN_HTML@@
         <a href="@@SOURCE_URL@@" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
           <span>@@NAV_SOURCE_TEXT@@</span>
@@ -931,7 +1135,10 @@ READER_TEMPLATE = """<!DOCTYPE html>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">@@COMMIT_ANCHOR_TEXT@@</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="@@DEFAULT_FILE@@">@@DEFAULT_FILE@@</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_@@SLUG@@_@@LANG_CODE@@" target="_blank" rel="noopener" class="code-pane-cta-link">@@CODE_PANE_CTA_TEXT@@</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="@@DEFAULT_FILE@@">@@DEFAULT_FILE@@</span>
+        </div>
       </div>
     </aside>
   </div>
@@ -962,16 +1169,36 @@ BOOKSHELF_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AiReadCodeBooks · 开源专著书库大厅</title>
-  <meta name="description" content="AiReadCode 自动编撰的旗舰开源项目深度技术专著，真实代码行号永久锚定，双栏沉浸式交互阅读。">
+  <title>AiReadCodeBooks · 开源专著书库大厅 | Turn Any Codebase into a Book</title>
+  <meta name="description" content="AiReadCode 自动编撰的旗舰开源项目深度技术专著，真实代码行号永久锚定，双栏沉浸式交互阅读。Turn Any Codebase into a Book You Can Actually Understand.">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/">
+  <meta property="og:title" content="AiReadCodeBooks · 开源专著书库大厅">
+  <meta property="og:description" content="Turn Any Codebase into a Book You Can Actually Understand. 真实 Commit 行号永久锚定，10国多语言双栏交互阅读。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
   <link rel="stylesheet" href="assets/reader.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "AiReadCodeBooks",
+    "url": "https://malerjc.github.io/AiReadCodeBooks/",
+    "description": "Turn Any Codebase into a Book You Can Actually Understand.",
+    "publisher": {
+      "@type": "Organization",
+      "name": "AiReadCode",
+      "url": "https://aireadcode.com"
+    }
+  }
+  </script>
 </head>
 <body>
   <header class="site-header">
     <div class="header-container">
       <a href="index.html" class="logo-group">
-        <div class="logo-icon">
+        <div class="logo-icon" title="AiReadCodeBooks">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
             <path d="M12 3.5C8.4 3.5 6 6 6 9.5C6 12 7.8 13.8 8.8 15H15.2C16.2 13.8 18 12 18 9.5C18 6 15.6 3.5 12 3.5Z" stroke="#00e5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             <line x1="9.5" y1="17.2" x2="14.5" y2="17.2" stroke="#00e5ff" stroke-width="1.6" stroke-linecap="round"/>
@@ -990,7 +1217,10 @@ BOOKSHELF_TEMPLATE = """<!DOCTYPE html>
       </ul>
 
       <div class="header-actions">
-        <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-primary btn-sm">
+        <a href="https://aireadcode.com/?ref=bookshelf_nav" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 深度解析你的代码库 →</span>
+        </a>
+        <a href="https://github.com/maleRjc/AiReadCodeBooks" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">
           <span>GitHub Star ★</span>
         </a>
         <button class="theme-toggle-btn" type="button" aria-label="切换深色/浅色模式">
@@ -1003,16 +1233,31 @@ BOOKSHELF_TEMPLATE = """<!DOCTYPE html>
 
   <main>
     <section class="bookshelf-hero">
-      <h1 class="bookshelf-title">开源技术专著书库大厅</h1>
+      <div style="display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 999px; margin-bottom: 16px; font-size: 12px; color: var(--accent-cyan); font-weight: 600;">
+        <span>🚀 1000 Codebases Challenge · 旗舰公开技术专著</span>
+      </div>
+      <h1 class="bookshelf-title">Turn Any Codebase into a Book You Can Actually Understand</h1>
       <p class="bookshelf-desc">
-        由 AiReadCode 扫描官方开源仓库全自动编撰，结合真实不可变 Commit 节点与 FACT 药丸行号溯源，提供纯静态、零服务依赖的极致双栏交互式在线阅读体验。
+        读懂复杂工程的真正秘密，不是散碎的代码补全，而是一本条理清晰的架构专著。由 AiReadCode 扫描官方开源仓库编撰，真实 Commit 行号永久锚定，100% 离线隐私安全。
       </p>
+      <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+        <a href="https://aireadcode.com/?ref=bookshelf_hero" target="_blank" rel="noopener" class="btn btn-primary" style="padding: 10px 24px; font-size: 15px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;">
+          <span>⚡ 免费下载客户端 · 解析你自己的代码库 →</span>
+        </a>
+        <a href="https://github.com/maleRjc/AiReadCodeBooks/issues/new?template=book_request.yml" target="_blank" rel="noopener" class="btn btn-secondary" style="padding: 10px 20px; font-size: 14px; text-decoration: none;">
+          <span>💡 提名下一本开源专著 (Vote)</span>
+        </a>
+      </div>
     </section>
 
     <div class="bookshelf-grid">
 @@CARDS_HTML@@
     </div>
   </main>
+
+  <footer style="margin-top: 80px; padding: 40px 20px; border-top: 1px solid var(--border-subtle); text-align: center; color: var(--text-muted); font-size: 13px;">
+    <p>© 2026 AiReadCode. Powered by Tauri 2 + Rust Local-first Engine. All books anchored to immutable git commits.</p>
+  </footer>
 
   <script src="assets/reader.js"></script>
 </body>
@@ -1036,6 +1281,7 @@ def render_chinese_edition(slug, book_dir, meta):
     title = meta.get("titleZh", meta.get("title", slug))
     summary = meta.get("summaryZh", meta.get("summary", ""))
 
+    lang_info = I18N["zh"]
     page_title = f"《{title}》· 源码全景架构精读 | AiReadCodeBooks"
     html_lang = "zh-CN"
     assets_path = "../../assets/"
@@ -1043,30 +1289,33 @@ def render_chinese_edition(slug, book_dir, meta):
     snippets_url = "./snippets.json"
     source_url = f"https://github.com/maleRjc/AiReadCodeBooks/tree/main/books/{slug}"
     badge_version = "在线专著"
-    nav_home_text = "返回书库大厅"
-    nav_repo_text = "GitHub 仓库"
-    nav_upstream_text = f"目标开源: {repo}"
-    nav_source_text = "查看 Markdown 源码"
-    theme_tip = "切换深色/浅色模式"
+    nav_home_text = lang_info.get("nav_home", "返回书库大厅")
+    nav_repo_text = lang_info.get("nav_repo", "GitHub 仓库")
+    nav_upstream_text = lang_info.get("nav_upstream", f"目标开源: {repo}").format(repo=repo)
+    nav_source_text = lang_info.get("nav_source", "查看 Markdown 源码")
+    theme_tip = lang_info.get("theme_tip", "切换深色/浅色模式")
     chapter_badge = f"{len(ch_files)} 章全集 · 深度专著"
-    toc_label = "书籍目录导航"
-    breadcrumb_root = "开源书库"
-    breadcrumb_ch1 = "第 01 章"
-    footer_cta_title = "读懂任意复杂项目，其实只需要一本好书"
-    footer_cta_desc = "本书由 AiReadCode 扫描官方开源仓库全自动编撰而成，真实 Commit 行号永久锚定。"
-    footer_cta_star = "Star GitHub 仓库 ★"
-    footer_cta_browse = "浏览更多开源好书 →"
-    code_pane_lines = "全览"
-    copy_snippet_title = "复制当前高亮切片（若无高亮则复制全文）"
-    copy_snippet_text = "复制选段"
-    copy_all_title = "复制整个源文件全文"
-    copy_all_text = "复制全文"
-    locate_title = "回到高亮行所在位置"
-    locate_text = "定位"
-    loading_msg = "⚡ 正在载入源文件..."
-    commit_anchor_text = "Commit 永久不可变锚定"
+    toc_label = lang_info.get("toc_label", "全书章节目录")
+    breadcrumb_root = lang_info.get("breadcrumb_root", "开源书库")
+    breadcrumb_ch1 = lang_info.get("breadcrumb_ch", "第 01 章")
+    footer_cta_title = lang_info.get("footer_cta_title", "")
+    footer_cta_desc = lang_info.get("footer_cta_desc", "")
+    footer_cta_star = lang_info.get("footer_cta_star", "")
+    footer_cta_browse = lang_info.get("footer_cta_browse", "")
+    code_pane_lines = lang_info.get("code_pane_lines", "全览")
+    copy_snippet_title = lang_info.get("copy_snippet_title", "")
+    copy_snippet_text = lang_info.get("copy_snippet_text", "复制代码切片")
+    copy_all_title = lang_info.get("copy_all_title", "")
+    copy_all_text = lang_info.get("copy_all_text", "复制全文")
+    locate_title = lang_info.get("locate_title", "定位")
+    locate_text = lang_info.get("locate_text", "定位")
+    loading_msg = lang_info.get("loading_msg", "⚡ 正在加载源码文件...")
+    commit_anchor_text = lang_info.get("commit_anchor_text", "Commit 不可变永久锚定")
     keywords = f"{repo}, {title}, 源码解析, 架构设计, AiReadCode, GitHub Pages"
     lang_dropdown_html = build_lang_dropdown_html("zh")
+
+    # SEO tags
+    seo_tags = build_seo_tags(slug, "zh", title, summary)
 
     toc_items = []
     rendered_chapters = []
@@ -1101,6 +1350,24 @@ def render_chinese_edition(slug, book_dir, meta):
         next_btn = f'<a href="#ch-{idx+2:02d}" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-{idx+2:02d}">下一章：第 {idx+2} 章 →</a>' if idx < len(ch_files) - 1 else '<span></span>'
 
         commit_short = commit[:8] if commit else ""
+        
+        # Chapter conversion CTA card
+        cta_block = f'''
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">{lang_info["ch_cta_badge"]}</span>
+            <h3 class="cta-title">{lang_info["ch_cta_title"]}</h3>
+            <p class="cta-desc">{lang_info["ch_cta_desc"]}</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_{slug}_zh&ch={order_str}" target="_blank" rel="noopener" class="cta-btn">
+                <span>{lang_info["ch_cta_btn"]}</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ {lang_info["ch_cta_note"]}</p>
+          </div>
+        </div>
+        '''
+
         sec_html = f'''
       <section class="reader-chapter-section{active_sec_cls}" id="ch-{order_str}" data-title="{clean_title}">
         <div class="chapter-header">
@@ -1117,6 +1384,7 @@ def render_chinese_edition(slug, book_dir, meta):
         <div class="chapter-body">
           {ch_html}
         </div>
+        {cta_block}
         <div class="chapter-nav-bar">
           {prev_btn}
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">返回顶部 ↑</a>
@@ -1136,8 +1404,12 @@ def render_chinese_edition(slug, book_dir, meta):
         "@@PAGE_TITLE@@": page_title,
         "@@BOOK_TITLE@@": title,
         "@@SLUG@@": slug,
+        "@@LANG_CODE@@": "zh",
         "@@DESCRIPTION@@": description,
         "@@KEYWORDS@@": keywords,
+        "@@SEO_TAGS@@": seo_tags,
+        "@@NAV_CTA_TEXT@@": lang_info["nav_cta"],
+        "@@CODE_PANE_CTA_TEXT@@": lang_info["code_pane_cta"],
         "@@ASSETS_PATH@@": assets_path,
         "@@HOME_PATH@@": home_path,
         "@@SNIPPETS_URL@@": snippets_url,
@@ -1254,6 +1526,9 @@ def render_translated_edition(slug, book_dir, meta, lang_code):
 
     lang_dropdown_html = build_lang_dropdown_html(lang_code)
 
+    # SEO tags
+    seo_tags = build_seo_tags(slug, lang_code, title, summary)
+
     toc_items = []
     rendered_chapters = []
     out_dir = os.path.join(book_dir, lang_code)
@@ -1293,6 +1568,24 @@ def render_translated_edition(slug, book_dir, meta, lang_code):
         next_btn = f'<a href="#ch-{idx+2:02d}" class="btn btn-primary btn-sm btn-ch-nav" data-target="ch-{idx+2:02d}">{next_label}</a>' if idx < len(sections) - 1 else '<span></span>'
 
         commit_short = commit[:8] if commit else ""
+
+        # Chapter conversion CTA card
+        cta_block = f'''
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">{lang_info["ch_cta_badge"]}</span>
+            <h3 class="cta-title">{lang_info["ch_cta_title"]}</h3>
+            <p class="cta-desc">{lang_info["ch_cta_desc"]}</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_{slug}_{lang_code}&ch={order_str}" target="_blank" rel="noopener" class="cta-btn">
+                <span>{lang_info["ch_cta_btn"]}</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ {lang_info["ch_cta_note"]}</p>
+          </div>
+        </div>
+        '''
+
         sec_html = f'''
       <section class="reader-chapter-section{active_sec_cls}" id="ch-{order_str}" data-title="{clean_title}">
         <div class="chapter-header">
@@ -1307,6 +1600,7 @@ def render_translated_edition(slug, book_dir, meta, lang_code):
           </div>
         </div>
         {body_html}
+        {cta_block}
         <div class="chapter-nav-bar">
           {prev_btn}
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">{top_label}</a>
@@ -1337,8 +1631,12 @@ def render_translated_edition(slug, book_dir, meta, lang_code):
         "@@PAGE_TITLE@@": page_title,
         "@@BOOK_TITLE@@": title,
         "@@SLUG@@": slug,
+        "@@LANG_CODE@@": lang_code,
         "@@DESCRIPTION@@": description,
         "@@KEYWORDS@@": keywords,
+        "@@SEO_TAGS@@": seo_tags,
+        "@@NAV_CTA_TEXT@@": lang_info["nav_cta"],
+        "@@CODE_PANE_CTA_TEXT@@": lang_info["code_pane_cta"],
         "@@ASSETS_PATH@@": assets_path,
         "@@HOME_PATH@@": home_path,
         "@@SNIPPETS_URL@@": snippets_url,
@@ -1393,6 +1691,7 @@ def compile_all():
 
     book_slugs = sorted([d for d in os.listdir(BOOKS_DIR) if os.path.isdir(os.path.join(BOOKS_DIR, d)) and not d.startswith(".")])
     cards_html = []
+    books_meta = {}
 
     for slug in book_slugs:
         book_dir = os.path.join(BOOKS_DIR, slug)
@@ -1402,6 +1701,8 @@ def compile_all():
 
         with open(meta_file, "r", encoding="utf-8") as f:
             meta = json.load(f)
+
+        books_meta[slug] = meta
 
         print(f"\n=======================================================")
         print(f"[*] Compiling book: {slug} ({meta.get('titleZh', slug)})")
@@ -1493,7 +1794,11 @@ def compile_all():
     with open(root_index_path, "w", encoding="utf-8") as f:
         f.write(root_index_html)
     print(f"\n[+] Successfully generated root bookshelf portal: {root_index_path}")
-    print("[+] All books and editions compiled successfully!")
+
+    # Generate sitemap.xml, robots.txt, and llms.txt
+    generate_sitemap_and_robots(books_meta, ROOT_DIR)
+
+    print("[+] All books, editions, SEO artifacts and CTAs compiled successfully!")
 
 if __name__ == "__main__":
     compile_all()

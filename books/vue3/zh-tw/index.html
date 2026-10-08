@@ -6,6 +6,54 @@
   <title>《Vue 3 原始碼與工程化全景》| AiReadCodeBooks</title>
   <meta name="description" content="在開始追蹤任何一行響應式或虛擬 DOM 的實作之前，我們首先需要理解這些程式碼賴以生存的工程化母體。打開 Vue core 倉庫，最先映入眼簾的並非框架核心邏輯，而是package.json與pnpm-workspace.yaml這類工程設定檔——它們不包含任何執行時功能，卻決定了整個框架能否被正確建置、測試與發布。本">
   <meta name="keywords" content="vuejs/core, Vue 3 原始碼與工程化全景, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vue3/en/">
+  <meta property="og:title" content="Vue 3 原始碼與工程化全景">
+  <meta property="og:description" content="在開始追蹤任何一行響應式或虛擬 DOM 的實作之前，我們首先需要理解這些程式碼賴以生存的工程化母體。打開 Vue core 倉庫，最先映入眼簾的並非框架核心邏輯，而是package.json與pnpm-workspace.yaml這類工程設定檔——它們不包含任何執行時功能，卻決定了整個框架能否被正確建置、測試與發布。本章要回答的正是這個前置問題：core 倉庫到底是什麼。它並非@vue/runtime-core那個 npm 套件，而是承載runtime-core、reactivity、compiler-sfc等十餘個公開發布套件，外加sfc-playground、template-explorer等私有實驗套件的工程化母體。理解這個母體的組織方式，是後續所有章節（建置、型別、發布、體積預算）的前提。本章將沿三條主線展開：workspace 的雙目錄結構、根級 TypeScript 與 Rollup 的統一約束，以及「原始碼倉庫」與「發布產物」的解耦哲學。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Vue 3 原始碼與工程化全景">
+  <meta name="twitter:description" content="在開始追蹤任何一行響應式或虛擬 DOM 的實作之前，我們首先需要理解這些程式碼賴以生存的工程化母體。打開 Vue core 倉庫，最先映入眼簾的並非框架核心邏輯，而是package.json與pnpm-workspace.yaml這類工程設定檔——它們不包含任何執行時功能，卻決定了整個框架能否被正確建置、測試與發布。本章要回答的正是這個前置問題：core 倉庫到底是什麼。它並非@vue/runtime-core那個 npm 套件，而是承載runtime-core、reactivity、compiler-sfc等十餘個公開發布套件，外加sfc-playground、template-explorer等私有實驗套件的工程化母體。理解這個母體的組織方式，是後續所有章節（建置、型別、發布、體積預算）的前提。本章將沿三條主線展開：workspace 的雙目錄結構、根級 TypeScript 與 Rollup 的統一約束，以及「原始碼倉庫」與「發布產物」的解耦哲學。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Vue 3 原始碼與工程化全景",
+  "description": "在開始追蹤任何一行響應式或虛擬 DOM 的實作之前，我們首先需要理解這些程式碼賴以生存的工程化母體。打開 Vue core 倉庫，最先映入眼簾的並非框架核心邏輯，而是package.json與pnpm-workspace.yaml這類工程設定檔——它們不包含任何執行時功能，卻決定了整個框架能否被正確建置、測試與發布。本章要回答的正是這個前置問題：core 倉庫到底是什麼。它並非@vue/runtime-core那個 npm 套件，而是承載runtime-core、reactivity、compiler-sfc等十餘個公開發布套件，外加sfc-playground、template-explorer等私有實驗套件的工程化母體。理解這個母體的組織方式，是後續所有章節（建置、型別、發布、體積預算）的前提。本章將沿三條主線展開：workspace 的雙目錄結構、根級 TypeScript 與 Rollup 的統一約束，以及「原始碼倉庫」與「發布產物」的解耦哲學。",
+  "inLanguage": "zh-tw",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vue3/zh-tw/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vue3"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vue3_zh-tw" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ 深度解析你的程式碼庫 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -489,6 +540,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>瀏覽器建置（<code>isGlobalBuild || isBrowserESMBuild</code>）在<code>!packageOptions.enableNonBrowserBranches</code>時只回傳<code>treeShakenDeps</code>（<code>source-map-js</code>、<code>@babel/parser</code>、<code>estree-walker</code>、<code>entities/decode</code>）。這意味著<code>foo-lib</code>不在 external 列表中，</p>
 <p>至此，我們已經從宏觀層面看清了 core 倉庫作為工程化母體的整體設計哲學：雙目錄 workspace 結構劃定了公開包與私有實驗包的邊界，根級 TypeScript 與 Rollup 配置提供了統一約束，而原始碼倉庫與發布產物的解耦則讓多格式輸出成為可能。這些認知為後續深入具體工程鏈路鋪平了道路。下一章，我們將把視線從靜態結構轉向動態流程，以<code>node scripts/build.js vue</code>為起點，追蹤一次完整建置請求從命令列參數解析、目標包定位、Rollup 配置生成到產物落盤的端到端旅程，看看 build.js 如何透過 parseArgs 解析 formats/devOnly/release 等標誌位，如何動態 require 目標包的 package.json 並讀取 buildOptions，最終驅動 rollup.config.js 產出 esm-bundler、cjs、global 等多格式產物。</p>
 </details></div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -669,6 +735,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>至此，我們完整走過了從命令解析到 Rollup 呼叫的建置旅程，揭示了並行排程、私有套件過濾等核心機制。然而，生產建置只是故事的一半。下一章，我們將轉向開發態鏈路，看<code>scripts/dev.js</code>如何與 SFC 預編譯協作，實現毫秒級的開發回饋循環。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 上一章：第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -843,6 +924,21 @@ Object.keys(replacements).forEach(key =&gt; {
 </details>
 <p>三者協作的邊界很清晰：<code>pre-dev-sfc</code>管「產物是否就緒」，<code>dev.js</code>管「產物如何快速更新」，<code>aliases</code>管「測試如何解析原始碼」。開發態鏈路解決了速度問題，但建置期還有另一類更隱蔽的最佳化——那些在程式碼被瀏覽器執行之前就完成的轉換。下一章將進入編譯期魔法，看列舉內聯與 Tree-shaking 驗證機制如何在建置期把 TypeScript enum 替換為字面量，並確保按需引入的承諾不被破壞。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 上一章：第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -978,6 +1074,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>列舉內聯解決了「構建期如何消除執行時開銷」，驗證腳本解決了「如何確認優化沒被破壞」。但構建產物除了 JS，還有一類同樣需要流水線加工的產物——型別宣告檔案。下一章將進入型別產物流水線，看 Vue 如何從原始碼<code>.d.ts</code>生成發布級型別包，以及<code>dts-test</code>如何用型別契約測試守住公開 API 的型別形狀。</p>
 <p>本章拆解了編譯期的兩個關鍵腳本。inline-enums.js 用 git grep 定位列舉、Babel 解析 AST、new Function 求值成員、MagicString 精確重寫宣告，最終通過 defines 全域替換表把列舉引用變成字面量，讓列舉物件可被 Tree-shaking 搖掉。verify-treeshaking.js 則在構建後用字串哨兵檢查產物，確保三類已知的 Tree-shaking 洩漏不會回歸。兩者一個負責「優化」，一個負責「驗證優化沒被破壞」，共同守護 Vue 的體積承諾。接下來，我們將從編譯期轉向型別產物的生成鏈路，看 Vue 如何保證原始碼型別與發布型別嚴格一致。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 上一章：第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1231,6 +1342,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>型別流水線解決了「如何從原始碼生成發布級型別」，<code>dts-built-test</code>解決了「如何驗證產物型別形狀」。但型別契約不止於「形狀對不對」，還包括「API 表面是否符合預期」——哪些型別該匯出、哪些不該、泛型約束是否精確。下一章將進入<code>dts-test</code>，看 Vue 如何用型別契約測試守護公開 API 表面。</p>
 <p>三者構成「生成 → 整形 → 驗證」的閉環，保證原始碼型別與發佈型別嚴格一致。然而，型別套件本身正確，並不等于公開 API 的型別形狀被鎖定。下一章我們將深入<code>packages-private/dts-test</code>，看 20 餘個<code>.test-d.ts</code>檔案如何用<code>expectType</code>等工具，把「型別即 API 契約」變成可回歸的自動化測試。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 上一章：第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1406,6 +1532,21 @@ Object.keys(replacements).forEach(key =&gt; {
 <p>型別契約測試解決了「API 表面是否符合預期」。但型別只是 Vue 工程化的一半——另一半是「使用者如何在瀏覽器裡即時驗證這些 API 的行為」。下一章將進入 SFC Playground，看 Vue 如何把編譯器、執行時、型別系統打包進一個瀏覽器內的即時除錯環境，讓使用者在改程式的瞬間看到編譯產物與執行結果。</p>
 <p>契約測試守護的不只是「型別對不對」，還包括「型別精不精確」（<code>IsAny</code>/<code>IsUnion</code>）、「泛型參數順序穩不穩定」（<code>DefineComponent</code>13 參數）、「渲染器無關性」（<code>__typeEl</code>不約束為<code>Element</code>）。這些約束一旦被打破，使用者側的 IDE 提示、<code>vue-tsc</code>生成的型別都會漂移。而型別契約的穩定性，最終要服務於開發者日常的除錯體驗——下一章我們將走進<code>packages-private/sfc-playground</code>，看一個純前端 Playground 如何在瀏覽器內完成 SFC 編譯與即時預覽的閉環。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 上一章：第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1671,6 +1812,21 @@ function resetVueVersion() {
 <p>下一章將進入<code>packages-private/template-explorer</code>，看 Vue 如何把編譯器的中間產物（AST、轉換結果、程式碼生成）視覺化，讓開發者能逐步觀察模板到渲染函式的每一步變換。與 Playground 的「端到端黑盒」不同，Template Explorer 是「白盒探針」。</p>
 <p>至此，我們看清了 SFC Playground 如何把編譯管線搬進瀏覽器：進入點初始化、Header 狀態切換與建置期常數注入共同構成了一個可即時除錯的沙箱。但 Playground 的視角始終是「整段 SFC 的編譯與執行」，它並不直接回答「編譯器對某個模板表達式究竟做了什麼變換」。下一章將走進 Template Explorer，看它如何把<code>@vue/compiler-dom</code>與<code>@vue/compiler-ssr</code>的編譯結果逐行攤開，用 SourceMapConsumer 建立原始碼與產物的映射，從而把編譯器的內部行為變成可觀察、可反推的探針。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 上一章：第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -1850,6 +2006,21 @@ function resetVueVersion() {
 <p>下一章將進入<code>scripts/release.js</code>，看 Vue 如何用一個互動式狀態機編排版本號更新、建置、測試、Git 提交、打 tag 與 npm publish 的全流程。與 Template Explorer 的「觀察」不同，release.js 是「執行」——它需要在多個步驟間維護狀態，處理失敗回滾，並在互動式確認與自動化之間取得平衡。</p>
 <p>透過 Template Explorer，我們掌握了如何將編譯器內部狀態——AST、編譯產物、SourceMap——轉化為可互動的視覺化探針，從而把「編譯器為什麼這麼生成」從猜測變成觀察。這種對內部狀態的精確控制與編排，同樣體現在 Vue 的發布流程中：下一章將深入 scripts/release.js，看一個 500 餘行的狀態機如何用 parseArgs 解析十餘個旗標、透過 enquirer 互動確認版本號，並按順序觸發建置、測試、Git 提交、打 tag 與 npm publish，揭示一次正式發版背後完整的狀態流轉與失敗回滾策略。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 上一章：第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2088,6 +2259,21 @@ if (process.env.CI &amp;&amp; !args.registry)
 <p>下一章將進入<code>.github/workflows/</code>，看 release.js 推送 tag 之後，GitHub Actions 如何接管後續的建置與發布，以及 CI 門禁的完整實作。</p>
 <p>至此，我們看清了 release.js 如何用狀態機與互動式編排把不可逆的發布風險降到最低。但發布腳本本身只是執行者，真正決定何時觸發、以何種條件放行的，是更上層的自動化守門人。下一章將剖析 .github/workflows 目錄下的 CI/CD 體系：ci.yml 如何在 PR 階段執行 lint/typecheck/test 三重門禁、release.yml 如何在 tag 推送時觸發發布、size-report.yml 與 size-data.yml 如何追蹤包體積回歸、autofix.yml 如何自動修復格式問題。你將理解 Vue 如何用 GitHub Actions 把工程規範固化為不可繞過的流水線。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 上一章：第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2396,6 +2582,21 @@ concurrency:
 <p>下一章將深入體積預算機制的核心：<code>scripts/size-report.js</code>如何解析體積資料、如何計算增量、如何格式化輸出，以及<code>usage-size</code>的度量哲學——為什麼 Vue 選擇測量「實際使用體積」而非「完整包體積」。</p>
 <p>從 PR 門禁到 tag 發布，四個 workflow 檔案共同構成了一條不可繞過的自動化守門鏈。但流水線能阻斷合併，前提是它掌握可量化的判斷依據。下一章將聚焦 Vue 對包體積這一核心指標的工程化治理：<code>scripts/size-report.js</code>如何計算各產物 gzip 後大小並與基線對比，<code>scripts/usage-size.js</code>如何模擬真實使用者引入場景估算實際開銷，以及 CI 如何在體積超標時阻斷合併。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 上一章：第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2574,6 +2775,21 @@ concurrency:
 <p>體積預算機制解決了「度量什麼」和「如何對比」的問題，但它依賴一個前提：構建產物本身是可復現的。下一章將進入最小調試沙盒：<code>vite-debug</code>如何用最少的配置啟動一個可交互的 Vue 開發環境，以及它如何與本地構建產物聯動，形成從源碼修改到運行時驗證的閉環。</p>
 <p>至此，體積預算的度量閉環已經清晰：size-report.js 用目錄對比回答「大了多少」，usage-size.js 用虛擬模組模擬真實引入場景回答「大在哪裡」，而門禁判定則留給工作流層。這套機制讓體積回歸從模糊的抱怨變成可追溯的數據。但數據只能告訴你問題存在，要真正定位和修復，還需要一個能快速復現問題的最小環境。下一章將進入 packages-private/vite-debug，看 Vue 如何用 Vite + SFC 搭建一個極簡調試沙盒，把「在真實源碼上做最小復現」變成可操作的日常實踐。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 上一章：第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2779,6 +2995,21 @@ export default defineConfig({
 <p>體積預算告訴你「問題存在」，<code>vite-debug</code>讓你「親手重現問題」。但當你試圖把這個沙盒模式推廣到整個 monorepo 時，會遇到一系列邊界條件：workspace 協議在 CI 環境下的解析差異、<code>catalog:</code>版本鎖定的升級困境、<code>packages-private</code>與<code>packages</code>之間的依賴方向約束……下一章將進入架構權衡與避坑指南，系統梳理 monorepo 工程化在真實專案中暴露的邊界條件。</p>
 <p>至此，我們完成了從體積度量到最小重現的工程閉環：vite-debug 用極簡的四個檔案，把「在真實原始碼上快速驗證」變成了日常可用的實踐。但當你真正開始複刻這套體系時，會發現更多隱藏的權衡——為什麼 packages-private 必須與 packages 物理隔離？為什麼列舉內聯必須在 Rollup 之前完成？下一章將彙總前十二章暴露的關鍵決策點與生產踩坑記錄，為你提供一份完整的避坑清單與決策依據。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 上一章：第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -2899,6 +3130,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>雙目錄契約、建置腳本的歸屬判定、發布腳本的二次過濾——這些機制共同劃定了 monorepo 工程化的安全邊界。但邊界並非一成不變：隨著建置工具從 Rollup 向 Rolldown 遷移、型別測試與執行時測試走向融合，現有的權衡策略也將面臨新的挑戰。下一章，我們將基於 3.0 至 3.4 的變更軌跡，展望下一代工程化體系的演進方向。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 上一章：第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -3136,6 +3382,21 @@ const skipGit = args.skipGit</code></pre></div>
 </details>
 <p>通過變更日誌的觀測窗口，我們識別出了當前工程化體系的應力點，並據此推斷了下一代體系可能的演進方向。這些方向並非空中樓閣，而是從真實的生產踩坑與權衡中生長出來的。至此，全書對 Vue 工程化體系的剖析告一段落，但工程化的探索永無止境——下一章將作為末章，把視角從 Vue 本身拉遠，探討這些經驗如何遷移到更廣泛的工程化場景中。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">AI 賦能程式碼庫精讀 · 本地優先架構</span>
+            <h3 class="cta-title">讀完了本章？為你自己的私有專案生成專屬架構全景書</h3>
+            <p class="cta-desc">基於 Tauri 2 + Rust 本地原生引擎，100% 源碼離線隱私安全，零程式碼上傳雲端。像閱讀一本傳世專著一樣拆解你的複雜系統。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vue3_zh-tw&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ 立即免費分析你的程式碼庫 (免費試讀第 1 章) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust 原生引擎 · 100% 離線私密安全 · 適配超百萬行程式碼庫</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 上一章：第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">回到頂部 ↑</a>
@@ -3187,7 +3448,10 @@ const skipGit = args.skipGit</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不可變永久錨定</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vue3_zh-tw" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ 分析私有程式碼庫 →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="packages/core/src/index.ts">packages/core/src/index.ts</span>
+        </div>
       </div>
     </aside>
   </div>

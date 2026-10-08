@@ -1,0 +1,21 @@
+# AiReadCodeBooks
+
+> Turn Any Codebase into a Book You Can Actually Understand.
+> Open-source architecture books compiled by AiReadCode with immutable commit line anchors.
+
+## Published Books
+
+- [NCCL 源码解读：一个 AllReduce 的 GPU 旅程](https://malerjc.github.io/AiReadCodeBooks/books/nccl/): Architecture deep-dive for NVIDIA/nccl. 全书 25 章系统拆解 NVIDIA NCCL 通信库内核：从初始化拓扑图搜索、算法协议选型，到多 channel 任务调度、CUDA Kernel 启动、LL/LL128/Simple 数据搬运与 ...
+- [Tokio 异步底层机制与运行时剖析](https://malerjc.github.io/AiReadCodeBooks/books/tokio/): Architecture deep-dive for tokio-rs/tokio. 本书以「一个异步任务从诞生到消亡」为主线，逐层拆解 Tokio 作为 Rust 异步运行时的核心设计：Future/Waker 协作式调度、工作窃取调度器、I/O Reactor 驱动与分级时间轮。...
+- [vLLM 高性能推理引擎核心实现](https://malerjc.github.io/AiReadCodeBooks/books/vllm/): Architecture deep-dive for vllm-project/vllm. 本书系统剖析 vLLM 高吞吐 LLM 推理引擎的内部实现：端到端请求调度、PagedAttention 内存虚拟化、连续批处理、CUDA Graph 静态图加速与投机解码。...
+- [Vue 3 源码与工程化全景架构](https://malerjc.github.io/AiReadCodeBooks/books/vue3/): Architecture deep-dive for vuejs/core. 本书以 Vue 官方 core 仓库为蓝本，围绕「一次代码提交如何变成可发布的 npm 包」这一主线，逐层剖析 monorepo 工程化架构、构建流水线、类型测试体系、Playground 调试工具链...
+
+## Key Features
+- **Local-first Architecture**: Tauri 2 + Rust native engine, zero code uploaded to servers.
+- **Dual-Pane Interactive Reader**: Synchronized explanation text alongside real code with FACT line anchors.
+- **Multilingual Support**: Available in 10 languages (English, Chinese, Japanese, Korean, Spanish, French, German, Russian, Portuguese, Traditional Chinese).
+- **Immutable Commit Pinning**: Every line reference points to a permanent Git commit.
+
+## Official Links
+- AiReadCode Main Product: https://aireadcode.com
+- GitHub Library: https://github.com/maleRjc/AiReadCodeBooks

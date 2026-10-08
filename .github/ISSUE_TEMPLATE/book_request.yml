@@ -1,0 +1,46 @@
+﻿name: 📚 Request a Codebase Book / 提名开源专著
+description: Nominate an open-source repository for the 1000 Codebases Challenge / 为 1000 Codebases 挑战赛提名开源项目
+title: [Book Request]: <Repository Name>
+labels: [book-request, needs-votes]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 🚀 1000 Codebases Challenge · Nominate Next Architecture Book
+        AiReadCode automatically compiles deep technical books for complex codebases with immutable commit line anchors.
+        Vote with a 👍 reaction to help prioritize which open-source project we compile next into the Library!
+
+  - type: input
+    id: repo_url
+    attributes:
+      label: Repository GitHub URL / 目标开源仓库地址
+      description: e.g. https://github.com/facebook/react or https://github.com/redis/redis
+      placeholder: https://github.com/org/repo
+    validations:
+      required: true
+
+  - type: input
+    id: repo_version
+    attributes:
+      label: Target Git Tag / Release or Branch (Optional)
+      description: Specific commit, tag, or branch to anchor. Leave blank for latest stable release.
+      placeholder: v1.0.0 or main
+    validations:
+      required: false
+
+  - type: textarea
+    id: why_book
+    attributes:
+      label: Why does the community need an architecture book for this project? / 为什么需要为该项目编撰专著？
+      description: What makes this codebase difficult to grok? Which subsystem is most complex (e.g. concurrency scheduler, memory allocator, distributed protocol, custom JIT)?
+      placeholder: This codebase is hard to understand because...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Verification
+      options:
+        - label: I searched existing issues and confirmed this book request hasn't been submitted yet.
+          required: true

@@ -6,6 +6,54 @@
   <title>《Implémentation du cœur du moteur d'inférence haute performance vLLM》| AiReadCodeBooks</title>
   <meta name="description" content="Supposons que vous disposiez d'une A100 et que vous souhaitiez fournir un service d'inférence en ligne avec LLaMA-7B. L'approche la plus naïve consiste à : rece">
   <meta name="keywords" content="vllm-project/vllm, Implémentation du cœur du moteur d'inférence haute performance vLLM, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <meta property="og:title" content="Implémentation du cœur du moteur d'inférence haute performance vLLM">
+  <meta property="og:description" content="Supposons que vous disposiez d'une A100 et que vous souhaitiez fournir un service d'inférence en ligne avec LLaMA-7B. L'approche la plus naïve consiste à : recevoir une requête, exécuter un model.generate(), puis renvoyer le résultat. Cette solution s'effondre immédiatement dès que la concurrence augmente — non pas parce que la puissance de calcul du GPU est insuffisante, mais à cause de deux problèmes : premièrement, la mémoire GPU est fragmentée. La génération autorégressive nécessite de mettre en cache les tenseurs Key/Value de chaque couche (KV Cache). Si chaque requête préalloue un bloc contigu de mémoire GPU selon max_model_len, une requête de 4096 tokens occuperait plusieurs dizaines de Mo, alors que la séquence réellement générée pourrait ne faire que 200 tokens. Pire encore, des requêtes de longueurs différentes entrent et sortent alternativement, découpant les blocs de mémoire contigus en morceaux épars, si bien qu'au final, alors que la quantité totale est suffisante, on ne trouve plus d'espace contigu suffisamment grand — c'est le problème classique de la fragmentation de la mémoire GPU. Deuxièmement, l'efficacité du traitement par lots est faible. Le traitement par lots statique traditionnel exige que toutes les requêtes d'un batch commencent et se terminent en même temps. Or la longueur de sortie d'une tâche de génération est par nature imprévisible : une requête peut s'arrêter après 10 tokens, une autre peut en générer 2000. Une fois qu'une requête courte est terminée, l'emplacement de batch qu'elle occupait ne peut qu'attendre passivement qu'une requête longue se termine, et le taux d'utilisation du GPU chute en chute libre. Les deux pierres angulaires de la conception de vLLM répondent précisément à ces deux points douloureux : PagedAttention élimine la fragmentation de la mémoire GPU grâce à un mécanisme de pagination, et Continuous Batching élimine le temps mort du traitement par lots grâce à un ordonnancement au niveau de l'itération. Ce chapitre n'approfondit pas les détails d'implémentation de ces deux mécanismes (ce sont les thèmes des chapitres 2 et 4), mais établit d'abord une carte globale : à quoi ressemble l'architecture de processus de vLLM v1, comment les responsabilités de chaque couche sont réparties, et par quels composants passe une requête depuis son entrée dans le système jusqu'à la production d'un token. Une fois cette carte comprise, l'analyse du code source de chaque chapitre suivant aura un point d'ancrage.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Implémentation du cœur du moteur d'inférence haute performance vLLM">
+  <meta name="twitter:description" content="Supposons que vous disposiez d'une A100 et que vous souhaitiez fournir un service d'inférence en ligne avec LLaMA-7B. L'approche la plus naïve consiste à : recevoir une requête, exécuter un model.generate(), puis renvoyer le résultat. Cette solution s'effondre immédiatement dès que la concurrence augmente — non pas parce que la puissance de calcul du GPU est insuffisante, mais à cause de deux problèmes : premièrement, la mémoire GPU est fragmentée. La génération autorégressive nécessite de mettre en cache les tenseurs Key/Value de chaque couche (KV Cache). Si chaque requête préalloue un bloc contigu de mémoire GPU selon max_model_len, une requête de 4096 tokens occuperait plusieurs dizaines de Mo, alors que la séquence réellement générée pourrait ne faire que 200 tokens. Pire encore, des requêtes de longueurs différentes entrent et sortent alternativement, découpant les blocs de mémoire contigus en morceaux épars, si bien qu'au final, alors que la quantité totale est suffisante, on ne trouve plus d'espace contigu suffisamment grand — c'est le problème classique de la fragmentation de la mémoire GPU. Deuxièmement, l'efficacité du traitement par lots est faible. Le traitement par lots statique traditionnel exige que toutes les requêtes d'un batch commencent et se terminent en même temps. Or la longueur de sortie d'une tâche de génération est par nature imprévisible : une requête peut s'arrêter après 10 tokens, une autre peut en générer 2000. Une fois qu'une requête courte est terminée, l'emplacement de batch qu'elle occupait ne peut qu'attendre passivement qu'une requête longue se termine, et le taux d'utilisation du GPU chute en chute libre. Les deux pierres angulaires de la conception de vLLM répondent précisément à ces deux points douloureux : PagedAttention élimine la fragmentation de la mémoire GPU grâce à un mécanisme de pagination, et Continuous Batching élimine le temps mort du traitement par lots grâce à un ordonnancement au niveau de l'itération. Ce chapitre n'approfondit pas les détails d'implémentation de ces deux mécanismes (ce sont les thèmes des chapitres 2 et 4), mais établit d'abord une carte globale : à quoi ressemble l'architecture de processus de vLLM v1, comment les responsabilités de chaque couche sont réparties, et par quels composants passe une requête depuis son entrée dans le système jusqu'à la production d'un token. Une fois cette carte comprise, l'analyse du code source de chaque chapitre suivant aura un point d'ancrage.">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Implémentation du cœur du moteur d'inférence haute performance vLLM",
+  "description": "Supposons que vous disposiez d'une A100 et que vous souhaitiez fournir un service d'inférence en ligne avec LLaMA-7B. L'approche la plus naïve consiste à : recevoir une requête, exécuter un model.generate(), puis renvoyer le résultat. Cette solution s'effondre immédiatement dès que la concurrence augmente — non pas parce que la puissance de calcul du GPU est insuffisante, mais à cause de deux problèmes : premièrement, la mémoire GPU est fragmentée. La génération autorégressive nécessite de mettre en cache les tenseurs Key/Value de chaque couche (KV Cache). Si chaque requête préalloue un bloc contigu de mémoire GPU selon max_model_len, une requête de 4096 tokens occuperait plusieurs dizaines de Mo, alors que la séquence réellement générée pourrait ne faire que 200 tokens. Pire encore, des requêtes de longueurs différentes entrent et sortent alternativement, découpant les blocs de mémoire contigus en morceaux épars, si bien qu'au final, alors que la quantité totale est suffisante, on ne trouve plus d'espace contigu suffisamment grand — c'est le problème classique de la fragmentation de la mémoire GPU. Deuxièmement, l'efficacité du traitement par lots est faible. Le traitement par lots statique traditionnel exige que toutes les requêtes d'un batch commencent et se terminent en même temps. Or la longueur de sortie d'une tâche de génération est par nature imprévisible : une requête peut s'arrêter après 10 tokens, une autre peut en générer 2000. Une fois qu'une requête courte est terminée, l'emplacement de batch qu'elle occupait ne peut qu'attendre passivement qu'une requête longue se termine, et le taux d'utilisation du GPU chute en chute libre. Les deux pierres angulaires de la conception de vLLM répondent précisément à ces deux points douloureux : PagedAttention élimine la fragmentation de la mémoire GPU grâce à un mécanisme de pagination, et Continuous Batching élimine le temps mort du traitement par lots grâce à un ordonnancement au niveau de l'itération. Ce chapitre n'approfondit pas les détails d'implémentation de ces deux mécanismes (ce sont les thèmes des chapitres 2 et 4), mais établit d'abord une carte globale : à quoi ressemble l'architecture de processus de vLLM v1, comment les responsabilités de chaque couche sont réparties, et par quels composants passe une requête depuis son entrée dans le système jusqu'à la production d'un token. Une fois cette carte comprise, l'analyse du code source de chaque chapitre suivant aura un point d'ancrage.",
+  "inLanguage": "fr",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vllm"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vllm_fr" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ Analysez votre code gratuitement →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -302,6 +353,21 @@ class VllmConfig:
 </details>
 <p>Ce chapitre part d'une scène de plantage lors d'une requête d'inférence naïve, révélant deux contradictions fondamentales que vLLM doit résoudre : la fragmentation de la mémoire vidéo et la rotation à vide du traitement par lots, et présente les deux clés que sont PagedAttention et Continuous Batching. Nous avons ensuite survolé l'architecture globale de vLLM v1, clarifié le modèle de processus, la stratification des composants et le cycle de vie complet d'une requête. Avec cette carte globale en main, le chapitre suivant approfondira la structure de données la plus centrale de vLLM — Request, Sequence et le mécanisme de gestion des blocs du KV Cache — révélant comment PagedAttention implémente au niveau du code une cartographie de mémoire vidéo « logiquement contiguë, physiquement discrète ».</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -366,6 +432,21 @@ class VllmConfig:
 <p>Ce chapitre a analysé les deux structures de données centrales de vLLM v1.<code>Request</code>est le porteur du cycle de vie d'une requête à l'intérieur du moteur ; grâce à la double liste de tokens, au compteur de planification asynchrone et au mécanisme de block hash, il prend en charge les deux fonctionnalités clés que sont le traitement par lots continu et le cache de préfixes.<code>KVCacheSpec</code>et sa hiérarchie d'héritage définissent les spécifications de disposition de la mémoire GPU du KV cache, depuis le standard<code>FullAttentionSpec</code>jusqu'à<code>MLAAttentionSpec</code>、<code>MambaSpec</code>, couvrant les besoins variés des architectures de modèles. Le modèle de registre permet d'ajouter de nouveaux types de spec sans modifier le code principal, garantissant ainsi l'extensibilité du système.</p>
 <p>À ce stade, nous avons vu clairement comment Request est converti depuis EngineCoreRequest, et comment il prend en charge les décisions de planification via les compteurs d'état, le block hash, etc. Mais comment une requête externe traverse-t-elle réellement l'API Server, le chat template et le traitement multimodal pour finalement devenir un EngineCoreRequest ? Le chapitre suivant abordera la couche d'entrée des requêtes, en traçant complètement ce chemin depuis HTTP/CLI jusqu'à EngineCore.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← Préc: Chapitre 1</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -508,6 +589,21 @@ class VllmConfig:
 <p>Le chapitre suivant abordera le planificateur, pour voir comment EngineCore orchestre ces requêtes avec le traitement par lots continu et une stratégie sensible à la mémoire vidéo.</p>
 <p>À ce stade, la requête a achevé sa transformation normalisée depuis l'entrée externe vers EngineCoreRequest, et a atteint l'entrée du cœur du moteur. Mais une fois la requête entrée, elle n'est pas exécutée immédiatement — le moteur doit décider quelles requêtes traiter à chaque étape et comment allouer les ressources limitées de mémoire vidéo. Le chapitre suivant plongera dans la boucle de planification d'EngineCore, analysera comment le Scheduler équilibre débit et latence dans le traitement par lots continu, et comment le chunked prefill, le prefix caching et l'allocation de blocs KV coopèrent.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← Préc: Chapitre 2</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -650,6 +746,21 @@ class VllmConfig:
 </details>
 <p>La sortie du planificateur,<code>SchedulerOutput</code>, précise le contenu de l'exécution de cette étape : les ID de blocs des nouvelles requêtes, le nombre de tokens des requêtes en cache, les tokens spéculatifs, les entrées d'encodeur, etc. Le chapitre suivant tracera comment cette sortie est consommée par le ModelRunner, depuis<code>SchedulerOutput</code>jusqu'à la propagation avant sur GPU.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← Préc: Chapitre 3</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -844,6 +955,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>Retour en haut ↑</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← Préc: Chapitre 4</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -987,6 +1113,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>À ce stade, la chaîne complète du backend d'attention, de l'interface abstraite à l'implémentation du kernel, est établie : la couche modèle appelle uniformément via AttentionImpl, le backend se charge de traduire les métadonnées telles que block_table, slot_mapping en paramètres concrets de kernel, et l'implémentation PagedAttention de FlashAttentionBackend illustre la sémantique de gather sous KV Cache paginé ainsi que la stratégie de compatibilité avec CUDA Graph. Mais le calcul d'attention ne produit que des états cachés ; ce que le modèle doit finalement produire, c'est le prochain token. Comment ces états cachés deviennent-ils des logits, comment les logits passent-ils par l'échantillonnage et le post-traitement, et sont-ils finalement renvoyés au client sous forme de texte en streaming ? Le chapitre suivant retracera ce dernier kilomètre.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← Préc: Chapitre 5</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -1124,6 +1265,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>À ce stade, la chaîne complète d'inférence sur une seule machine est opérationnelle : du calcul d'attention à la sortie d'échantillonnage, chaque maillon influence directement la qualité du texte final livré. Mais lorsque la taille du modèle dépasse la capacité d'une seule carte, cette chaîne doit être exécutée en coordination sur plusieurs dispositifs. Dans le chapitre suivant, nous quitterons la machine unique pour entrer dans le parallélisme distribué : comment TP, PP et EP découpent le modèle, et comment les primitives de communication synchronisent ces résultats d'échantillonnage entre les ranks.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← Préc: Chapitre 6</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -1290,6 +1446,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>Nous avons ainsi clarifié les mécanismes de création de groupes, de découpage et de rééquilibrage de charge pour la communication entre cartes. Mais les défis de communication de l'inférence distribuée ne se limitent pas à l'intérieur d'une seule instance — lorsque le prefill et le decode sont répartis sur des instances différentes, le KV Cache doit être transféré entre nœuds. Dans le chapitre suivant, nous quitterons la « communication entre cartes » pour entrer dans la « communication entre instances » : comment le KV Cache est transféré entre les instances prefill et decode dans un déploiement désagrégé, et comment l'abstraction KV Connector unifie les backends de transfert tels que NIXL, Mooncake, etc.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← Préc: Chapitre 7</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -1652,6 +1823,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 </details>
 <p>À ce stade, nous avons vu comment le KV Connector établit un canal de données fiable entre les instances de prefill et de decode, et comment il préserve la cohérence d'état grâce à des mécanismes de bail, de heartbeat et de reprise après échec. Mais le transfert inter-instances ne représente que la moitié de l'histoire de la séparation PD — une fois le KV Cache arrivé sur l'instance de decode, le moteur d'inférence doit encore exécuter efficacement chaque étape de calcul forward au sein d'une instance unique. Or, la surcharge de planification Python et de lancement des kernels constitue le prochain goulot d'étranglement limitant la latence par étape. Le chapitre suivant se tournera vers l'accélération par compilation et CUDA Graph, pour voir comment vLLM élimine ces surcoûts avec torch.compile et le backend piecewise, et fait coexister harmonieusement CUDA Graph avec les formes de batch dynamiques.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← Préc: Chapitre 8</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -1777,6 +1963,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 <p>Le chapitre suivant abordera la quantification et les noyaux personnalisés, pour voir comment vLLM intervient dès la phase de chargement des poids pour contrôler la précision, et comment des opérateurs hautement spécialisés transforment réellement les gains de quantification en amélioration du débit.</p>
 <p>Ce chapitre a analysé les deux niveaux de mécanisme de l'accélération de compilation de vLLM. Le premier niveau est CompilerInterface et PiecewiseBackend : le premier définit le contrat d'adaptation du compilateur et la stratégie de hachage du cache, en utilisant AlwaysHitShapeEnv pour contourner le problème d'absence de contexte Dynamo ; le second compile un seul sous-graphe FX en plusieurs paliers de forme, et dispatche à l'exécution selon le nombre de tokens. Le second niveau est CUDAGraphWrapper : il capture les CUDA Graph par paliers selon BatchDescriptor, et réalise un dispatch imbriqué via la correspondance du runtime mode, permettant aux modes FULL et PIECEWISE de coexister sur le même graphe compilé. Le découplage des deux est le cœur de cette refonte — les artefacts de compilation peuvent être réutilisés par les deux modes CUDA Graph, et CUDA Graph peut également fonctionner indépendamment de la compilation. Cependant, la compilation et la capture de graphe résolvent les surcoûts d'ordonnancement ; la précision des poids du modèle lui-même et l'efficacité des opérateurs restent une autre ligne d'optimisation. Le chapitre suivant abordera la quantification et les noyaux personnalisés, pour voir comment vLLM analyse les configurations de quantification, effectue la conversion de formats tels que FP8/INT4/AWQ/GPTQ lors du chargement des poids, et exploite davantage les performances matérielles grâce à _custom_ops et aux noyaux Triton.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← Préc: Chapitre 9</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -1979,6 +2180,21 @@ class QuantSpec:
 <p>下一章将转向高级推理特性，看前缀缓存如何复用 KV block、投机解码如何用小模型加速大模型、以及 LoRA 如何在不改基座权重的前提下动态切换适配器。</p>
 <p>Ce chapitre analyse les deux couches d'infrastructure de la quantification et des kernels personnalisés de vLLM. La première couche est l'analyse de la configuration de quantification : QuantSpec et QuantizationConfigArgs normalisent uniformément les chaînes CLI, les métadonnées de checkpoint et les surcharges par couche en QuantKey ; resolve_quantization_config gère l'expansion des abréviations et la fusion des champs ; _DEFERRED_ONLINE_SHORTHANDS résout les scénarios de conflit de noms. La seconde couche est l'adaptation des opérateurs : _custom_ops réalise l'enregistrement d'opérateurs multiplateformes via des gardes hasattr et register_fake ; l'implémentation fake reproduit précisément les formes de sortie des opérateurs réels pour prendre en charge torch.compile ; le dispatcher réalise le remplacement multiplateforme des kernels Triton via KernelOverride et un balayage complet des modules. Ensemble, elles soutiennent la concrétisation des gains de quantification, du chargement des poids au calcul forward. Nous nous tournerons ensuite vers les fonctionnalités avancées d'inférence qui améliorent le débit et réduisent la latence : comment le cache de préfixe automatique réutilise les KV entre requêtes, comment le décodage spéculatif accélère la génération avec un modèle draft, et comment LoRA commute dynamiquement les adaptateurs.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← Préc: Chapitre 10</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -2111,6 +2327,21 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
 <p>Le chapitre suivant se tournera vers le système de plugins et l'extensibilité, pour voir comment vLLM prend en charge des formes de déploiement diversifiées via l'abstraction de plateforme, les processeurs IO et l'extension d'endpoints.</p>
 <p>Ce chapitre analyse les mécanismes sous-jacents des trois principales fonctionnalités avancées d'inférence de vLLM. Le cœur du cache de préfixe est le hachage de block chaîné : hash_block_tokens hache ensemble le hachage parent, le tuple de tokens et les clés supplémentaires, et la stratégie de graine NONE_HASH arbitre entre partage inter-processus et sécurité contre les collisions. Le décodage spéculatif distingue les groupes KV de brouillon via l'annotation is_eagle_group. LoRA gère le cycle de vie des adaptateurs via un double cache LRU et un tableau de slots, et intègre le nom de l'adaptateur dans le block hash pour isoler le cache. Ces fonctionnalités illustrent ensemble la profondeur et la flexibilité de vLLM en matière d'optimisation d'inférence. Ensuite, nous nous tournerons vers le système de plugins et l'extensibilité de vLLM, pour voir comment les plugins de plateforme s'adaptent aux nouveaux matériels, comment les plugins IO processor interviennent dans le traitement des entrées multimodales, et comment les plugins d'endpoints injectent des routes API personnalisées. Comprendre l'ordre de chargement de l'enregistrement et de la découverte des plugins révélera comment étendre les capacités de vLLM sans modifier le code cœur.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← Préc: Chapitre 11</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -2306,6 +2537,21 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
 <p>Le chapitre suivant se tournera vers les compromis architecturaux, les pièges en production et l'évolution future ; nous rassemblerons les mécanismes décomposés dans les treize chapitres précédents pour examiner les arbitrages de vLLM entre performance, maintenabilité et extensibilité, et nous envisagerons les directions d'évolution des moteurs d'inférence.</p>
 <p>À ce stade, nous avons clairement vu comment vLLM, grâce au mécanisme de regroupement des entry_points, au moment de chargement sensible aux frontières de processus, ainsi qu'aux stratégies différenciées des trois types de plugins — plateforme, IO processor et endpoint —, ouvre des surfaces d'extension tout en maintenant la stabilité du code cœur. Ce système de plugins permet à de nouveaux matériels, de nouveaux formats d'entrée et de nouvelles routes API de s'intégrer de manière non intrusive, mais l'extensibilité elle-même implique davantage de dimensions à arbitrer. Le chapitre suivant clôturera l'ouvrage en organisant systématiquement les tensions dans les décisions de conception clés de vLLM — continuous batching et fragmentation de la mémoire GPU, CUDA Graph et formes dynamiques, déploiement disaggregated et surcoût réseau — et fournira une liste de pièges en production ainsi qu'un parcours de diagnostic, tout en esquissant les tendances d'évolution vers un frontend Rust, une couche IR et le matériel hétérogène.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← Préc: Chapitre 12</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -2453,6 +2699,21 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
 <p>pour partager le texte, le second utilise</p>
 <p>pour partager la séquence de tokens.</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">Transformez n'importe quel code en un livre compréhensible</span>
+            <h3 class="cta-title">Vous avez aimé ce chapitre ? Créez un livre pour votre projet privé</h3>
+            <p class="cta-desc">Architecture local-first en Tauri 2 + Rust. Sécurité 100% hors ligne, zéro code téléversé. Lecture double panneau avec ancres de commits immuables.</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_fr&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ Analysez votre code gratuitement (Chapitre 1 gratuit) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust Core · 100% Hors ligne & Privé · Testé sur 1M+ lignes</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← Préc: Chapitre 13</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">Haut de page ↑</a>
@@ -2504,7 +2765,10 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit ancré de manière immuable</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vllm_fr" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ Lisez votre repo avec AiReadCode →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        </div>
       </div>
     </aside>
   </div>

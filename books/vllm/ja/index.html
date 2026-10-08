@@ -6,6 +6,54 @@
   <title>《vLLM 高性能推論エンジン核心実装》| AiReadCodeBooks</title>
   <meta name="description" content="手元に A100 が 1 枚あり、LLaMA-7B でオンライン推論サービスを提供したいと仮定しよう。最も素朴な方法は：リクエストが来たら model.generate() を 1 回実行し、結果を返す。この方案は並行数が上がると即座に破綻する——GPU の演算能力が足りないからではなく、2 つの理由による：第一に、V">
   <meta name="keywords" content="vllm-project/vllm, vLLM 高性能推論エンジン核心実装, Architecture Analysis, AiReadCode, GitHub Pages">
+  <link rel="canonical" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/">
+  <link rel="alternate" hreflang="zh" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/">
+  <link rel="alternate" hreflang="en" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <link rel="alternate" hreflang="ja" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/">
+  <link rel="alternate" hreflang="ko" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ko/">
+  <link rel="alternate" hreflang="zh-tw" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/zh-tw/">
+  <link rel="alternate" hreflang="es" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/es/">
+  <link rel="alternate" hreflang="fr" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/fr/">
+  <link rel="alternate" hreflang="de" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/de/">
+  <link rel="alternate" hreflang="ru" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ru/">
+  <link rel="alternate" hreflang="pt" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/pt/">
+  <link rel="alternate" hreflang="x-default" href="https://malerjc.github.io/AiReadCodeBooks/books/vllm/en/">
+  <meta property="og:title" content="vLLM 高性能推論エンジン核心実装">
+  <meta property="og:description" content="手元に A100 が 1 枚あり、LLaMA-7B でオンライン推論サービスを提供したいと仮定しよう。最も素朴な方法は：リクエストが来たら model.generate() を 1 回実行し、結果を返す。この方案は並行数が上がると即座に破綻する——GPU の演算能力が足りないからではなく、2 つの理由による：第一に、VRAM が断片化に食われる。自己回帰生成では各層の Key/Value テンソル（KV Cache）をキャッシュする必要がある。もし各リクエストが max_model_len に従って連続した VRAM ブロックを事前確保すると、4096 token のリクエストは数十 MB を占有するが、実際に生成されるシーケンスは 200 token しかないかもしれない。さらに悪いことに、異なる長さのリクエストが交互に出入りすると、連続 VRAM ブロックが細切れに分割され、最終的に総量は足りているのに十分な大きさの連続空間が見つからない——これが古典的な VRAM 断片化問題である。第二に、バッチ処理効率が低い。従来の静的バッチ処理では、1 つのバッチ内の全リクエストが同時に開始し同時に終了することを要求する。しかし生成タスクの出力長は本質的に予測不可能である：あるリクエストは 10 token で停止するかもしれず、別のリクエストは 2000 生成する必要がある。短いリクエストが終了すると、その占有していたバッチスロットは長いリクエストが完了するまで空待ちするしかなく、GPU 利用率が崖のように急落する。vLLM の 2 つの設計基盤はまさにこの 2 つの痛点に対処している：PagedAttention はページング機構で VRAM 断片化を解消し、Continuous Batching はイテレーションレベルスケジューリングでバッチ処理の空転を解消する。本章ではこの 2 つの機構の実装詳細には深入りせず（それは第 2、4 章のテーマである）、まず全体地図を構築する：vLLM v1 のプロセスアーキテクチャはどのようなものか、各層の責務はどう分担されるか、1 回のリクエストがシステムに入ってから token を吐き出すまでにどのコンポーネントを通過するか。この地図を理解すれば、以降の各章のソースコード解説に足がかりができる。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/">
+  <meta property="og:site_name" content="AiReadCodeBooks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="vLLM 高性能推論エンジン核心実装">
+  <meta name="twitter:description" content="手元に A100 が 1 枚あり、LLaMA-7B でオンライン推論サービスを提供したいと仮定しよう。最も素朴な方法は：リクエストが来たら model.generate() を 1 回実行し、結果を返す。この方案は並行数が上がると即座に破綻する——GPU の演算能力が足りないからではなく、2 つの理由による：第一に、VRAM が断片化に食われる。自己回帰生成では各層の Key/Value テンソル（KV Cache）をキャッシュする必要がある。もし各リクエストが max_model_len に従って連続した VRAM ブロックを事前確保すると、4096 token のリクエストは数十 MB を占有するが、実際に生成されるシーケンスは 200 token しかないかもしれない。さらに悪いことに、異なる長さのリクエストが交互に出入りすると、連続 VRAM ブロックが細切れに分割され、最終的に総量は足りているのに十分な大きさの連続空間が見つからない——これが古典的な VRAM 断片化問題である。第二に、バッチ処理効率が低い。従来の静的バッチ処理では、1 つのバッチ内の全リクエストが同時に開始し同時に終了することを要求する。しかし生成タスクの出力長は本質的に予測不可能である：あるリクエストは 10 token で停止するかもしれず、別のリクエストは 2000 生成する必要がある。短いリクエストが終了すると、その占有していたバッチスロットは長いリクエストが完了するまで空待ちするしかなく、GPU 利用率が崖のように急落する。vLLM の 2 つの設計基盤はまさにこの 2 つの痛点に対処している：PagedAttention はページング機構で VRAM 断片化を解消し、Continuous Batching はイテレーションレベルスケジューリングでバッチ処理の空転を解消する。本章ではこの 2 つの機構の実装詳細には深入りせず（それは第 2、4 章のテーマである）、まず全体地図を構築する：vLLM v1 のプロセスアーキテクチャはどのようなものか、各層の責務はどう分担されるか、1 回のリクエストがシステムに入ってから token を吐き出すまでにどのコンポーネントを通過するか。この地図を理解すれば、以降の各章のソースコード解説に足がかりができる。">
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "vLLM 高性能推論エンジン核心実装",
+  "description": "手元に A100 が 1 枚あり、LLaMA-7B でオンライン推論サービスを提供したいと仮定しよう。最も素朴な方法は：リクエストが来たら model.generate() を 1 回実行し、結果を返す。この方案は並行数が上がると即座に破綻する——GPU の演算能力が足りないからではなく、2 つの理由による：第一に、VRAM が断片化に食われる。自己回帰生成では各層の Key/Value テンソル（KV Cache）をキャッシュする必要がある。もし各リクエストが max_model_len に従って連続した VRAM ブロックを事前確保すると、4096 token のリクエストは数十 MB を占有するが、実際に生成されるシーケンスは 200 token しかないかもしれない。さらに悪いことに、異なる長さのリクエストが交互に出入りすると、連続 VRAM ブロックが細切れに分割され、最終的に総量は足りているのに十分な大きさの連続空間が見つからない——これが古典的な VRAM 断片化問題である。第二に、バッチ処理効率が低い。従来の静的バッチ処理では、1 つのバッチ内の全リクエストが同時に開始し同時に終了することを要求する。しかし生成タスクの出力長は本質的に予測不可能である：あるリクエストは 10 token で停止するかもしれず、別のリクエストは 2000 生成する必要がある。短いリクエストが終了すると、その占有していたバッチスロットは長いリクエストが完了するまで空待ちするしかなく、GPU 利用率が崖のように急落する。vLLM の 2 つの設計基盤はまさにこの 2 つの痛点に対処している：PagedAttention はページング機構で VRAM 断片化を解消し、Continuous Batching はイテレーションレベルスケジューリングでバッチ処理の空転を解消する。本章ではこの 2 つの機構の実装詳細には深入りせず（それは第 2、4 章のテーマである）、まず全体地図を構築する：vLLM v1 のプロセスアーキテクチャはどのようなものか、各層の責務はどう分担されるか、1 回のリクエストがシステムに入ってから token を吐き出すまでにどのコンポーネントを通過するか。この地図を理解すれば、以降の各章のソースコード解説に足がかりができる。",
+  "inLanguage": "ja",
+  "url": "https://malerjc.github.io/AiReadCodeBooks/books/vllm/ja/",
+  "author": {
+    "@type": "Organization",
+    "name": "AiReadCode",
+    "url": "https://aireadcode.com"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "AiReadCode Books",
+    "url": "https://malerjc.github.io/AiReadCodeBooks",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://malerjc.github.io/AiReadCodeBooks/assets/favicon.svg"
+    }
+  },
+  "about": {
+    "@type": "SoftwareSourceCode",
+    "name": "vllm"
+  }
+}
+  </script>
   <link rel="icon" type="image/svg+xml" href="../../../assets/favicon.svg">
   <link rel="stylesheet" href="../../../assets/reader.css">
 </head>
@@ -32,6 +80,9 @@
       </ul>
 
       <div class="header-actions">
+        <a href="https://aireadcode.com/?ref=reader_nav_vllm_ja" target="_blank" rel="noopener" class="btn-nav-cta">
+          <span>⚡ コードベースを無料分析 →</span>
+        </a>
         <div class="lang-dropdown" id="lang-dropdown">
           <button class="lang-dropdown-btn" type="button" aria-haspopup="true" onclick="window.toggleLangMenu(event)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -302,6 +353,21 @@ class VllmConfig:
 </details>
 <p>本章は素朴な推論リクエストのクラッシュ現場から出発し、vLLMが解決しなければならない2つの根本的矛盾——VRAM断片化とバッチ処理の空転——を明らかにし、PagedAttentionとContinuous Batchingという2つの鍵を示した。その後vLLM v1の全体アーキテクチャを俯瞰し、プロセスモデル、コンポーネントの階層化、リクエストの完全なライフサイクルを整理した。この全体マップを得たことで、次章ではvLLMの最も核心的なデータ構造——Request、Sequence、KV Cacheのblock管理メカニズム——に深く入り、PagedAttentionがコードレベルで「論理的に連続、物理的に離散」なVRAMマッピングをいかに実現するかを明らかにする。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=01" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <span></span>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -366,6 +432,21 @@ class VllmConfig:
 <p>本章では vLLM v1 の二つの中核データ構造を分析した。<code>Request</code>はエンジン内部におけるリクエストのライフサイクルキャリアであり、二重トークンリスト、非同期スケジューリングカウンタ、block hash メカニズムを通じて、連続バッチ処理とプレフィックスキャッシュという二大中核機能を支えている。<code>KVCacheSpec</code>およびその継承体系は KV cache の VRAM レイアウト仕様を定義し、標準的な<code>FullAttentionSpec</code>から<code>MLAAttentionSpec</code>、<code>MambaSpec</code>まで、多様なモデルアーキテクチャの要件をカバーしている。レジストリパターンにより、新しい spec タイプの追加時にコアコードを変更する必要がなくなり、システムの拡張性が保証されている。</p>
 <p>ここまでで、Request が EngineCoreRequest からどのように変換されるか、そして状態カウンタや block hash などのメカニズムを通じてどのようにスケジューリング決定を支えるかを明らかにした。しかし、外部リクエストは一体どのように API Server、chat template、マルチモーダル処理を経て、最終的に EngineCoreRequest になるのか？次章ではリクエストエントリ層に入り、この HTTP/CLI から EngineCore への経路を完全に追跡する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=02" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-01" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-01">← 前の章: 第 1 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -508,6 +589,21 @@ class VllmConfig:
 <p>次の章ではスケジューラに入り、EngineCore が連続バッチ処理と VRAM 認識戦略でこれらのリクエストをどのように編成するかを見る。</p>
 <p>ここまでで、リクエストは外部入力から EngineCoreRequest への正規化変換を完了し、エンジンコアの入口に到達した。しかしリクエストは入った後すぐに実行されるわけではない——エンジンは各ステップでどのリクエストを処理するか、限られた VRAM リソースをどのように配分するかを決定する必要がある。次の章では EngineCore のスケジューリングループを深く掘り下げ、Scheduler が連続バッチ処理においてスループットとレイテンシをどのようにトレードオフするか、また chunked prefill、prefix caching、KV block 割り当てがどのように協調して動作するかを分析する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=03" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-02" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-02">← 前の章: 第 2 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -650,6 +746,21 @@ class VllmConfig:
 </details>
 <p>スケジューラが出力する<code>SchedulerOutput</code>はこのステップの実行内容を明確にする：新規リクエストのブロックID、キャッシュされたリクエストのトークン数、投機トークン、エンコーダ入力など。次章ではこの出力がModelRunnerにどのように消費されるかを追跡し、<code>SchedulerOutput</code>からGPUフォワードパスまでを辿る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=04" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-03" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-03">← 前の章: 第 3 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -844,6 +955,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>ここまでで、SchedulerOutput から GPU フォワード伝播までの完全なパスを歩み終えた：Executor のディスパッチ、Worker の実行、GPUModelRunner が論理マニフェストを物理テンソルに変換し、forward_context を通じてバッチ記述を各層に注入する。しかし、モデルフォワード伝播で最も時間のかかる部分——アテンション計算——はまだ展開されていない。次章ではアテンションバックエンドに深く入り、attn_metadata 内の block table と slot mapping が PagedAttention カーネルによってどのように消費されるか、そして FlashAttention、FlashInfer、Triton などの異なるバックエンドが統一インターフェースを通じてどのように選択・スケジューリングされるかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=05" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-04" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-04">← 前の章: 第 4 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -987,6 +1113,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>ここまでで、アテンションバックエンドの抽象インターフェースからカーネル実装までの完全な経路が打通された：モデル層は AttentionImpl を通じて統一的に呼び出し、バックエンドは block_table、slot_mapping などのメタデータを具体的なカーネルパラメータに変換する責務を負い、FlashAttentionBackend の PagedAttention 実装はページング KV Cache 下での gather セマンティクスと CUDA Graph 互換戦略を示している。しかしアテンション計算が産出するのは隠れ状態にすぎず、モデルが最終的に出力するのは次の token である。これらの隠れ状態がどのように logits になり、logits がどのようにサンプリングと後処理を経て、最終的にストリーミングテキストとしてクライアントに返されるのか？次章ではこの最後の一マイルを追跡する。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=06" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-05" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-05">← 前の章: 第 5 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1124,6 +1265,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>ここまでで、単機上の推論全経路が打通された：アテンション計算からサンプリング出力まで、各环节が最終的に納品されるテキスト品質に直接影響する。しかしモデル規模が単卡の容量を超えると、この経路は複数デバイスの協調によって完成させなければならない。次章では単機を離れ、分散並列に入る：TP、PP、EPがどのようにモデルを分割し、通信プリミティブがrank間でこれらのサンプリング結果をどのように同期するか。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=07" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-06" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-06">← 前の章: 第 6 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1290,6 +1446,21 @@ unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)</co
 </details>
 <p>ここまでで、カード間通信のグループ構築、分割、負荷再分散の仕組みを整理した。しかし分散推論の通信課題は単一インスタンス内部にとどまらない——prefill と decode が異なるインスタンスに分離されると、KV Cache はノードを跨いで転送される必要がある。次章では「カード間通信」を離れ、「インスタンス間通信」へと進む：KV Cache が分離デプロイされた prefill と decode インスタンス間でどのように転送されるのか、KV Connector 抽象が NIXL、Mooncake などの転送バックエンドをどのように統一するのかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=08" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-07" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-07">← 前の章: 第 7 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1652,6 +1823,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 </details>
 <p>ここまでで、KV Connectorがprefillインスタンスとdecodeインスタンスの間に信頼性の高いデータチャネルをどのように確立するか、そしてリース、ハートビート、障害復旧メカニズムを用いてどのように状態の一貫性を守るかを明らかにしてきた。しかし、インスタンス間転送はPD分離の半分の物語にすぎない——KV Cacheがdecodeインスタンスに到達した後も、推論エンジンは単一インスタンス内部で各ステップの順伝播計算を効率的に実行する必要がある。そしてPythonのスケジューリングとカーネル起動のオーバーヘッドこそが、単一ステップのレイテンシを制約する次のボトルネックである。次章ではコンパイル高速化とCUDA Graphに目を向け、vLLMがtorch.compileとpiecewise backendを用いてこれらのオーバーヘッドをどのように解消し、CUDA Graphと動的バッチ処理の形状をいかに調和させ共存させるかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=09" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-08" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-08">← 前の章: 第 8 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1777,6 +1963,21 @@ idle. A peer that has lost its NIC holds one indefinitely.
 <p>次章では量子化とカスタムカーネルに移り、vLLMが重みロード段階から精度制御に介入し、高度に特化した演算子で量子化の利益を真にスループット向上として実現する方法を見る。</p>
 <p>本章ではvLLMのコンパイル高速化の二層メカニズムを分析した。第一層はCompilerInterfaceとPiecewiseBackendである。前者はコンパイラ適配契約とキャッシュハッシュ戦略を定義し、AlwaysHitShapeEnvでDynamoコンテキスト欠如の問題を回避する。後者は単一のFXサブグラフを複数の形状档位にコンパイルし、実行時にtoken数に応じてディスパッチする。第二層はCUDAGraphWrapperである。これはBatchDescriptorごとにCUDA Graphをキャプチャし、runtime modeマッチングによるネストディスパッチを実現し、FULLとPIECEWISEの両モードを同一コンパイルグラフ上で共存させる。両者の分離が今回のリファクタリングの核心である——コンパイル成果物は2つのCUDA Graphモードで再利用でき、CUDA Graphもコンパイルから独立して動作できる。ただし、コンパイルとグラフキャプチャが解決するのはスケジューリングオーバーヘッドであり、モデル自体の重み精度と演算子効率は依然として別の最適化主線である。次章では量子化とカスタムカーネルに移り、vLLMが量子化設定を解析し、重みロード時にFP8/INT4/AWQ/GPTQなどのフォーマット変換を完了し、_custom_opsとTritonカーネルによってハードウェア性能をさらに引き出す方法を見る。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=10" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-09" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-09">← 前の章: 第 9 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -1979,6 +2180,21 @@ class QuantSpec:
 <p>次章では高度な推論機能に移り、プレフィックスキャッシュがどのように KV block を再利用するか、投機的デコーディングがどのように小モデルで大モデルを加速するか、そして LoRA がどのようにベースモデルの重みを変更せずにアダプタを動的に切り替えるかを見る。</p>
 <p>本章では、vLLMの量子化とカスタムカーネルの2層インフラストラクチャを分析した。第1層は量子化設定の解析である。QuantSpecとQuantizationConfigArgsは、CLI文字列、チェックポイントメタデータ、層ごとのオーバーライドをQuantKeyへ統一的に正規化し、resolve_quantization_configは省略形の展開とフィールドのマージを処理し、_DEFERRED_ONLINE_SHORTHANDSは名前衝突のシナリオを解決する。第2層は演算子の適配である。_custom_opsはhasattrガードとregister_fakeによりクロスプラットフォームな演算子登録を実現し、fake実装はtorch.compileをサポートするために実演算子の出力形状を正確にミラーリングする。dispatcherはKernelOverrideと全モジュールスキャンによりTritonカーネルのプラットフォーム置換を実現する。両者は共に、重みのロードからフォワード計算までの量子化收益の実現を支えている。次に、スループットを向上させレイテンシを低減する高度な推論機能へと移る。自動プレフィックスキャッシュがリクエストをまたいでKVをどのように再利用するか、投機的デコーディングがドラフトモデルで生成をどのように加速するか、そしてLoRAがアダプタをどのように動的に切り替えるかを見ていく。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=11" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-10" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-10">← 前の章: 第 10 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2111,6 +2327,21 @@ self._active_adapters: AdapterLRUCache[None] = AdapterLRUCache(
 <p>次章ではプラグインシステムと拡張性に移り、vLLM がプラットフォーム抽象化、IO プロセッサ、エンドポイント拡張を通じて多様なデプロイ形態をどのようにサポートするかを見る。</p>
 <p>本章では vLLM の三大高度推論機能の基盤メカニズムを分析した。プレフィックスキャッシュの中核はチェーン式 block hash である。hash_block_tokens は親ハッシュ、トークンタプル、追加キーをまとめてハッシュ化し、NONE_HASH のシード戦略はプロセス間共有と衝突安全性の間でトレードオフを行う。投機的デコーディングは is_eagle_group アノテーションでドラフト KV グループを区別する。LoRA は二重 LRU キャッシュと slot 配列でアダプタのライフサイクルを管理し、block hash にアダプタ名を混ぜ込むことでキャッシュ分離を実現する。これらの機能は vLLM の推論最適化における深さと柔軟性を共に示している。次に、vLLM のプラグインシステムと拡張性に移り、プラットフォームプラグインが新しいハードウェアにどのように適応するか、IO processor プラグインがマルチモーダル入力処理にどのように介入するか、エンドポイントプラグインがカスタム API ルートをどのように注入するかを見る。プラグインの登録と検出のロード順序を理解することで、コアコードを変更せずに vLLM の能力を拡張する方法が明らかになる。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=12" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-11" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-11">← 前の章: 第 11 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2306,6 +2537,21 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
 <p>次章ではアーキテクチャのトレードオフ、本番環境での落とし穴、そして将来の進化へと移ります。これまでの13章で分解してきたメカニズムを一堂に集め、vLLM が性能、保守性、拡張性の間でどのような取捨選択を行っているかを検証し、推論エンジンの進化の方向性を展望します。</p>
 <p>ここまでで、vLLM が entry_points のグループ化メカニズム、プロセス境界を意識したロードタイミング、そしてプラットフォーム、IO processor、エンドポイントという3種類のプラグインの差別化戦略を通じて、コアコードを安定に保ちながら拡張面を開いていることを見てきました。このプラグイン体系により、新しいハードウェア、新しい入力フォーマット、新しい API ルーティングがすべて非侵襲的に接続できますが、拡張性そのものがより多くの权衡すべき次元を意味します。次章では本書を締めくくり、vLLM の主要な設計判断における緊張関係——連続バッチ処理と VRAM 断片化、CUDA Graph と動的シェイプ、分離デプロイとネットワークオーバーヘッド——を体系的に整理し、本番環境での落とし穴リストと診断パスを提示するとともに、Rust フロントエンド、IR 層、異種ハードウェア方向への進化トレンドを展望します。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=13" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-12" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-12">← 前の章: 第 12 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2453,6 +2699,21 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
 <p>ここに至り、全書十四章のソースコード解説は一区切りとなる。我々は一度のAPI呼び出しから出発し、スケジューラ、KV cacheマネージャ、アテンションバックエンド、分散通信層を経て、最終的にGPU kernelの発射点に到達し、そして本番運用の診断台に戻ってきた。vLLMのあらゆる設計決定の背後には明確なトレードオフがあり、これらのトレードオフを理解してこそ、新しいハードウェア、新しいモデル、新しい負荷に直面したときに正しいエンジニアリング判断ができる。推論エンジンの進化は止まらない——Rustフロントエンド、IR層、異種ハードウェアサポートが急速に進んでいる——しかし、底層のトレードオフの論理は安定しており、これこそが本書が伝えたい核心的な能力である。</p>
 <p>ここに至り、我々はリクエストの入口からGPU Kernelまでの完全な旅を歩み終え、また本番環境においてシステムを「動く」から「安定して動く」に変えるトレードオフと落とし穴も明らかにした。vLLMの進化は現在のアーキテクチャで止まることはなく、より効率的なアテンション実装、よりスマートなスケジューリング戦略、よりシームレスな異種サポートが進行中である。しかし未来がどう変わろうとも、これらのメカニズム間の緊張関係と取捨選択を理解することが、常に推論エンジンを操る鍵である。</p>
 </div>
+        
+        <div class="reader-chapter-cta">
+          <div class="cta-inner">
+            <span class="cta-badge">あらゆるコードベースを理解できる技術書に</span>
+            <h3 class="cta-title">この章を読み終えましたか？ご自身のプライベートリポジトリを技術書へ</h3>
+            <p class="cta-desc">Tauri 2 + Rust によるローカルファースト設計。100% オフラインの安全性、コードのクラウド送信は一切ありません。不変コミットアンカーで精読。</p>
+            <div class="cta-actions">
+              <a href="https://aireadcode.com/?ref=reader_ch_vllm_ja&ch=14" target="_blank" rel="noopener" class="cta-btn">
+                <span>⚡ コードベースを無料分析 (第1章無料) →</span>
+              </a>
+            </div>
+            <p class="cta-subtext">⚡ Tauri 2 · Rust コア · 100% 完全オフライン · 100万行超のコードベース検証済</p>
+          </div>
+        </div>
+        
         <div class="chapter-nav-bar">
           <a href="#ch-13" class="btn btn-secondary btn-sm btn-ch-nav" data-target="ch-13">← 前の章: 第 13 章</a>
           <a href="#reader-toc" class="btn btn-secondary btn-sm" onclick="window.scrollTo(0, 0); return false;">トップへ戻る ↑</a>
@@ -2504,7 +2765,10 @@ ENDPOINT_PLUGINS_GROUP = "vllm.endpoint_plugins"</code></pre></div>
           <span class="status-dot"></span>
           <span id="code-pane-file-stats">Commit 不変永久アンカー</span>
         </div>
-        <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <a href="https://aireadcode.com/?ref=reader_pane_vllm_ja" target="_blank" rel="noopener" class="code-pane-cta-link">⚡ AiReadCode でリポジトリを読む →</a>
+          <span id="code-pane-filepath" class="code-pane-filepath" title="vllm/engine/llm_engine.py">vllm/engine/llm_engine.py</span>
+        </div>
       </div>
     </aside>
   </div>
