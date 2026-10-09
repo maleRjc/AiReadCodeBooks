@@ -27,6 +27,9 @@
       btn.setAttribute('title', tip);
       btn.setAttribute('aria-label', tip);
     });
+    if (typeof reRenderAllMermaidThemes === 'function') {
+      reRenderAllMermaidThemes(theme);
+    }
   }
 
   const initialTheme = getSavedTheme();
@@ -426,6 +429,10 @@
     if (scroll) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+
+    if (typeof renderActiveChapterMermaids === 'function') {
+      renderActiveChapterMermaids(chId);
+    }
   };
 
   // 5. Multi-Language Synchronization & Switching Engine
@@ -557,6 +564,358 @@
     }
   });
 
+  // ==========================================================================
+  // 7. Mermaid Architecture & Flowchart Diagrams Engine
+  // ==========================================================================
+  let mermaidLoaded = false;
+  let mermaidLoadingPromise = null;
+  const renderedMermaidCharts = new Map(); // widgetEl -> { id, rawCode, chartContainer, sourceContainer, renderedTheme }
+  let mermaidLightboxBackdrop = null;
+
+  function loadMermaidLibrary() {
+    if (window.mermaid) {
+      mermaidLoaded = true;
+      return Promise.resolve(window.mermaid);
+    }
+    if (mermaidLoadingPromise) return mermaidLoadingPromise;
+
+    mermaidLoadingPromise = new Promise((resolve, reject) => {
+      let localSrc = 'assets/mermaid.min.js';
+      const readerScript = document.querySelector('script[src*="reader.js"]');
+      if (readerScript) {
+        const src = readerScript.getAttribute('src');
+        localSrc = src.replace('reader.js', 'mermaid.min.js');
+      }
+
+      function tryCdnFallback() {
+        console.warn('[AiReadCode] Local mermaid.min.js missing or failed, using CDN fallback...');
+        const cdnScript = document.createElement('script');
+        cdnScript.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js';
+        cdnScript.onload = () => {
+          mermaidLoaded = true;
+          resolve(window.mermaid);
+        };
+        cdnScript.onerror = (err) => {
+          console.error('[AiReadCode] Failed to load Mermaid library:', err);
+          reject(err);
+        };
+        document.head.appendChild(cdnScript);
+      }
+
+      const script = document.createElement('script');
+      script.src = localSrc;
+      script.onload = () => {
+        if (window.mermaid) {
+          mermaidLoaded = true;
+          resolve(window.mermaid);
+        } else {
+          tryCdnFallback();
+        }
+      };
+      script.onerror = tryCdnFallback;
+      document.head.appendChild(script);
+    });
+
+    return mermaidLoadingPromise;
+  }
+
+  function getMermaidConfig(theme) {
+    const isDark = theme === 'dark';
+    return {
+      startOnLoad: false,
+      securityLevel: 'loose',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif',
+      theme: isDark ? 'dark' : 'default',
+      themeVariables: isDark ? {
+        darkMode: true,
+        background: '#0e121c',
+        mainBkg: '#161e2e',
+        textColor: '#f1f5f9',
+        lineColor: '#38bdf8',
+        primaryColor: '#1e293b',
+        primaryTextColor: '#f8fafc',
+        primaryBorderColor: '#38bdf8',
+        secondaryColor: '#334155',
+        secondaryTextColor: '#f8fafc',
+        secondaryBorderColor: '#64748b',
+        tertiaryColor: '#0f172a',
+        tertiaryTextColor: '#f8fafc',
+        tertiaryBorderColor: '#475569',
+        nodeTextColor: '#f8fafc',
+        titleColor: '#38bdf8',
+        edgeLabelBackground: '#161b22',
+        clusterBkg: '#0b0f19',
+        clusterBorder: '#0ea5e9',
+        defaultLinkColor: '#94a3b8'
+      } : {
+        darkMode: false,
+        background: '#ffffff',
+        mainBkg: '#f0f9ff',
+        textColor: '#0f172a',
+        lineColor: '#0284c7',
+        primaryColor: '#e0f2fe',
+        primaryTextColor: '#0369a1',
+        primaryBorderColor: '#0284c7',
+        secondaryColor: '#f1f5f9',
+        secondaryTextColor: '#334155',
+        secondaryBorderColor: '#94a3b8',
+        tertiaryColor: '#ffffff',
+        tertiaryTextColor: '#0f172a',
+        tertiaryBorderColor: '#cbd5e1',
+        nodeTextColor: '#0f172a',
+        titleColor: '#0369a1',
+        edgeLabelBackground: '#ffffff',
+        clusterBkg: '#f8fafc',
+        clusterBorder: '#0284c7',
+        defaultLinkColor: '#64748b'
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis'
+      },
+      sequence: {
+        useMaxWidth: true,
+        showSequenceNumbers: true
+      }
+    };
+  }
+
+  function createMermaidLightboxModal() {
+    if (mermaidLightboxBackdrop) return mermaidLightboxBackdrop;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'mermaid-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="mermaid-modal-content" role="dialog" aria-modal="true" aria-label="Mermaid 架构图高清视图">
+        <div class="mermaid-modal-header">
+          <div class="mermaid-modal-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+            <span>高清架构图检视</span>
+          </div>
+          <div class="mermaid-modal-actions">
+            <button class="mermaid-modal-close-btn" type="button" aria-label="关闭">&times;</button>
+          </div>
+        </div>
+        <div class="mermaid-modal-body"></div>
+      </div>
+    `;
+
+    backdrop.querySelector('.mermaid-modal-close-btn').addEventListener('click', () => {
+      backdrop.classList.remove('open');
+    });
+
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) backdrop.classList.remove('open');
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && backdrop.classList.contains('open')) {
+        backdrop.classList.remove('open');
+      }
+    });
+
+    document.body.appendChild(backdrop);
+    mermaidLightboxBackdrop = backdrop;
+    return backdrop;
+  }
+
+  function openMermaidLightbox(svgHtml) {
+    const backdrop = createMermaidLightboxModal();
+    const body = backdrop.querySelector('.mermaid-modal-body');
+    if (body) {
+      body.innerHTML = svgHtml;
+      const svg = body.querySelector('svg');
+      if (svg) {
+        svg.style.maxWidth = '100%';
+        svg.style.maxHeight = '75vh';
+        svg.style.height = 'auto';
+      }
+    }
+    backdrop.classList.add('open');
+  }
+
+  let mermaidChartCounter = 0;
+
+  function setupMermaidBlock(blockWrapper) {
+    if (blockWrapper.getAttribute('data-mermaid-processed')) return;
+    blockWrapper.setAttribute('data-mermaid-processed', 'true');
+
+    const codeEl = blockWrapper.querySelector('code');
+    if (!codeEl) return;
+
+    let rawCode = (codeEl.textContent || '').trim();
+    if (!rawCode) return;
+
+    // Clean any leading/trailing backticks or markdown fences if present
+    rawCode = rawCode.replace(/^```(?:mermaid)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+    mermaidChartCounter++;
+    const chartId = 'arc-mermaid-' + mermaidChartCounter;
+
+    const mermaidWidget = document.createElement('div');
+    mermaidWidget.className = 'mermaid-block-wrapper';
+    mermaidWidget.setAttribute('data-chart-id', chartId);
+
+    mermaidWidget.innerHTML = `
+      <div class="mermaid-block-header">
+        <div class="mermaid-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+          <span>架构数据流图 (Mermaid)</span>
+        </div>
+        <div class="mermaid-actions">
+          <button class="mermaid-action-btn btn-view-source" type="button" title="查看 Mermaid 源码">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            <span class="btn-text">源码</span>
+          </button>
+          <button class="mermaid-action-btn btn-copy-source" type="button" title="复制 Mermaid 代码">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span class="btn-text">复制</span>
+          </button>
+          <button class="mermaid-action-btn btn-zoom" type="button" title="高清全屏查看">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+            <span class="btn-text">放大</span>
+          </button>
+        </div>
+      </div>
+      <div class="mermaid-chart-container" title="双击或点击放大全屏查看">
+        <div class="mermaid-loading">
+          <span style="display:inline-block;animation:spin 1s linear infinite;">⚡</span>
+          <span>正在渲染架构图...</span>
+        </div>
+      </div>
+      <div class="mermaid-source-container">
+        <pre class="source-code-block"><code class="language-mermaid">${escapeHtml(rawCode)}</code></pre>
+      </div>
+    `;
+
+    const chartContainer = mermaidWidget.querySelector('.mermaid-chart-container');
+    const sourceContainer = mermaidWidget.querySelector('.mermaid-source-container');
+    const viewSrcBtn = mermaidWidget.querySelector('.btn-view-source');
+    const copyBtn = mermaidWidget.querySelector('.btn-copy-source');
+    const zoomBtn = mermaidWidget.querySelector('.btn-zoom');
+
+    // Toggle source view
+    viewSrcBtn.addEventListener('click', () => {
+      const isHidden = sourceContainer.style.display === 'none' || !sourceContainer.style.display;
+      sourceContainer.style.display = isHidden ? 'block' : 'none';
+      viewSrcBtn.classList.toggle('active', isHidden);
+    });
+
+    // Copy source
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(rawCode).then(() => {
+        const textSpan = copyBtn.querySelector('.btn-text');
+        const orig = textSpan.innerText;
+        textSpan.innerText = '已复制!';
+        copyBtn.classList.add('active');
+        setTimeout(() => {
+          textSpan.innerText = orig;
+          copyBtn.classList.remove('active');
+        }, 1800);
+      });
+    });
+
+    // Zoom diagram
+    function handleZoom() {
+      const svg = chartContainer.querySelector('svg');
+      if (svg) openMermaidLightbox(svg.outerHTML);
+    }
+    zoomBtn.addEventListener('click', handleZoom);
+    chartContainer.addEventListener('dblclick', handleZoom);
+
+    // Replace old code block wrapper with new widget
+    blockWrapper.parentNode.replaceChild(mermaidWidget, blockWrapper);
+
+    renderedMermaidCharts.set(mermaidWidget, {
+      id: chartId,
+      rawCode: rawCode,
+      chartContainer: chartContainer,
+      renderedTheme: ''
+    });
+  }
+
+  function renderMermaidWidget(widgetEl, theme) {
+    const info = renderedMermaidCharts.get(widgetEl);
+    if (!info) return;
+    if (info.renderedTheme === theme && info.chartContainer.querySelector('svg')) return;
+
+    const renderId = info.id + '-' + theme + '-' + Math.random().toString(36).slice(2, 6);
+
+    window.mermaid.render(renderId, info.rawCode)
+      .then(({ svg }) => {
+        info.chartContainer.innerHTML = svg;
+        info.renderedTheme = theme;
+      })
+      .catch((err) => {
+        console.warn('[AiReadCode] Mermaid diagram render failed for', info.id, err);
+        info.chartContainer.innerHTML = `
+          <div class="mermaid-fallback">
+            <div style="font-weight: 600; margin-bottom: 4px;">⚠️ 架构图表解析提示</div>
+            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;">${escapeHtml(err.message || '语法未能被 Mermaid 成功解析')}</div>
+            <button class="btn btn-secondary btn-sm" onclick="this.closest('.mermaid-block-wrapper').querySelector('.btn-view-source').click()">查看源码</button>
+          </div>
+        `;
+        info.renderedTheme = theme;
+      });
+  }
+
+  function renderActiveChapterMermaids(targetCh) {
+    const curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+
+    // Find all mermaid code blocks across the page
+    const allWrappers = document.querySelectorAll('.code-block-wrapper');
+    allWrappers.forEach(wrap => {
+      const code = wrap.querySelector('code');
+      const headerSpan = wrap.querySelector('.code-block-header span');
+      const isMermaid = (code && (code.classList.contains('language-mermaid') || code.className.includes('mermaid'))) ||
+                        (headerSpan && headerSpan.textContent.trim().toLowerCase() === 'mermaid');
+      if (isMermaid) {
+        setupMermaidBlock(wrap);
+      }
+    });
+
+    if (renderedMermaidCharts.size === 0) return;
+
+    loadMermaidLibrary().then(() => {
+      window.mermaid.initialize(getMermaidConfig(curTheme));
+
+      const sec = document.getElementById(targetCh);
+      renderedMermaidCharts.forEach((info, widgetEl) => {
+        // Prioritize widgets in active section or visible elements
+        if (!sec || sec.contains(widgetEl) || widgetEl.offsetParent !== null) {
+          renderMermaidWidget(widgetEl, curTheme);
+        }
+      });
+    }).catch(err => {
+      console.error('[AiReadCode] Mermaid initialization error:', err);
+    });
+  }
+
+  function reRenderAllMermaidThemes(newTheme) {
+    if (!mermaidLoaded || !window.mermaid) return;
+    try {
+      window.mermaid.initialize(getMermaidConfig(newTheme));
+      renderedMermaidCharts.forEach((info, widgetEl) => {
+        info.renderedTheme = '';
+        if (widgetEl.offsetParent !== null) {
+          renderMermaidWidget(widgetEl, newTheme);
+        }
+      });
+    } catch (e) {
+      console.warn('[AiReadCode] Error updating Mermaid theme:', e);
+    }
+  }
+
+  // 8. Global Delegated Click Handler
+
   // 7. Initialization on DOMContentLoaded
   function initReader() {
     applyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
@@ -569,6 +928,11 @@
     const targetCh = (hash && hash.length > 1) ? hash.replace(/^#/, '') : 'ch-01';
     window.switchChapter(targetCh, false);
     updateLangLinks(targetCh);
+
+    // Initial Mermaid render
+    if (typeof renderActiveChapterMermaids === 'function') {
+      renderActiveChapterMermaids(targetCh);
+    }
 
     // Auto load first FACT pill or default file
     setTimeout(() => {

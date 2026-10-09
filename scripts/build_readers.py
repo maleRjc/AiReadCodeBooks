@@ -1159,6 +1159,7 @@ READER_TEMPLATE = """<!DOCTYPE html>
       .then(data => { window.BOOK_SNIPPETS = data; })
       .catch(() => { window.BOOK_SNIPPETS = {}; });
   </script>
+  <script src="@@ASSETS_PATH@@mermaid.min.js"></script>
   <script src="@@ASSETS_PATH@@reader.js"></script>
 </body>
 </html>
