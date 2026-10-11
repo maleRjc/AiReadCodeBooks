@@ -333,10 +333,19 @@
       });
   };
 
+
+  function appendAttribution(code) {
+    if (!code || code.length < 40) return code;
+    const url = window.location.href;
+    const title = document.title ? document.title.split('·')[0].split('|')[0].trim() : 'AiReadCodeBooks';
+    return code.trimEnd() + '\n\n/* 来源: ' + title + ' \n * 交互式阅读与源码行号永久锚定: ' + url + ' \n * Powered by AiReadCode (https://aireadcode.com) */\n';
+  }
+
   // 3. Copy Code Handlers
   window.copyCurrentCode = function (btn) {
-    const code = currentHighlightedCode || cachedFiles[currentLoadedFile] || '';
-    if (!code) return;
+    const raw = currentHighlightedCode || cachedFiles[currentLoadedFile] || '';
+    if (!raw) return;
+    const code = appendAttribution(raw);
     navigator.clipboard.writeText(code).then(() => {
       const span = btn.querySelector('.btn-text') || btn;
       const orig = span.innerText;
@@ -350,8 +359,9 @@
   };
 
   window.copyFullFile = function (btn) {
-    const fullText = cachedFiles[currentLoadedFile] || '';
-    if (!fullText) return;
+    const raw = cachedFiles[currentLoadedFile] || '';
+    if (!raw) return;
+    const fullText = appendAttribution(raw);
     navigator.clipboard.writeText(fullText).then(() => {
       const span = btn.querySelector('.btn-text') || btn;
       const orig = span.innerText;
@@ -963,4 +973,21 @@
       window.switchChapter(hash, true);
     }
   });
+
+  // Viral code attribution on copy (> 60 chars)
+  document.addEventListener('copy', function (e) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const selectedText = selection.toString();
+    if (selectedText && selectedText.length > 60 && !selectedText.includes('Powered by AiReadCode')) {
+      const url = window.location.href;
+      const title = document.title ? document.title.split('·')[0].split('|')[0].trim() : 'AiReadCodeBooks';
+      const attribution = '\n\n/* 来源: ' + title + '\n * 交互式代码精读: ' + url + '\n * 由 AiReadCode 自动生成 (https://aireadcode.com) */';
+      if (e.clipboardData) {
+        e.clipboardData.setData('text/plain', selectedText + attribution);
+        e.preventDefault();
+      }
+    }
+  });
+
 })();
